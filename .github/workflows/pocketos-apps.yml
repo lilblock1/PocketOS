@@ -25,6 +25,18 @@ jobs:
           persist-credentials: false
       - name: Compile and test application code on host
         run: make -C apps BUILD_DIR="$PWD/host-app-output" check
+      - name: Render native shell previews (host)
+        run: |
+          mkdir -p ui-previews
+          for screen in HOME SETTINGS SYSTEM BATTERY MUSIC; do
+            host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-shell-previews
+          path: ui-previews/
+          if-no-files-found: error
+          retention-days: 14
       - name: Select prebuilt foundation and SDK
         id: pick
         env:
@@ -82,6 +94,10 @@ jobs:
           printf 'Battery\n' > fixture/sys/class/power_supply/battery/type
           printf '18\n' > fixture/sys/class/power_supply/battery/capacity
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-r1-runtime --root "$PWD/fixture" --status | grep -Fx 'battery_percent=18'
+          readelf -h target-app-output/pocketos-shell | grep -q MIPS
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview HOME target-app-output/HOME.ppm
+          cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
           cp previous-sdk/sdk-manifest.json target-app-output/
       - name: Upload application-only development artifact
         if: steps.pick.outputs.run_id != ''
