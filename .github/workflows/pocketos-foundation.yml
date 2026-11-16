@@ -2,7 +2,7 @@ name: PocketOS - Alpha foundation (NOT FIRMWARE)
 on:
   push:
     branches: [main]
-    paths: ['boards/**', 'tools/**', '.github/workflows/pocketos-foundation.yml']
+    paths: ['boards/**', 'tools/audit.py', 'tools/configure_abi.py', 'tools/extract_reference.py', '.github/workflows/pocketos-foundation.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -12,6 +12,7 @@ concurrency:
 
 jobs:
   foundation:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[pocketos-build]')
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -67,6 +68,16 @@ jobs:
           with config.open('a') as f:
               f.write('\nBR2_PACKAGE_HOST_LINUX_HEADERS_LICENSE_FILES="COPYING"\n')
           PY
+      - name: Restore compiled object cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: pocketos-ccache-v1-ubuntu24-137a566b-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            pocketos-ccache-v1-ubuntu24-137a566b-
+      - name: Enable Buildroot compiler caching
+        run: |
+          printf '\nBR2_CCACHE=y\nBR2_CCACHE_INITIAL_SETUP="--max-size=2G"\nBR2_CCACHE_USE_BASEDIR=y\n' >> generated-defconfig
       - name: Configure minimal MIPS Linux userspace
         run: |
           make -C buildroot-src O="$PWD/buildroot-output" BR2_DEFCONFIG="$PWD/generated-defconfig" defconfig
@@ -89,6 +100,18 @@ jobs:
         run: |
           make -C buildroot-src O="$PWD/buildroot-output" -j"$(nproc)"
           test -s buildroot-output/images/rootfs.tar.gz
+      - name: Report compiled object cache statistics
+        if: always()
+        run: |
+          if test -x buildroot-output/host/bin/ccache; then
+            buildroot-output/host/bin/ccache --show-stats
+          fi
+      - name: Persist compiled object cache
+        if: always() && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.buildroot-ccache
+          key: pocketos-ccache-v1-ubuntu24-137a566b-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Execute MIPS userspace and audit compatibility
         run: |
           mkdir -p foundation-artifact
