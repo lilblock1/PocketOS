@@ -2,8 +2,13 @@ name: PocketOS - R1 hardware compatibility audit
 on:
   push:
     branches: [main]
-    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', '.github/workflows/pocketos-hardware.yml']
+    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
   workflow_dispatch:
+    inputs:
+      foundation_run_id:
+        description: Successful foundation run (blank = latest available)
+        required: false
+        type: string
 permissions:
   actions: read
   contents: read
@@ -22,11 +27,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full squashfs-tools kmod
+      - name: Select existing successful foundation
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ inputs.foundation_run_id }}
+          REQUIRE_SDK: '0'
+        run: python3 tools/select_sdk.py
       - name: Reuse verified Phase 1 root filesystem artifact
         uses: actions/download-artifact@v4
         with:
           name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
-          run-id: 43789815253
+          run-id: ${{ steps.pick.outputs.run_id }}
           github-token: ${{ github.token }}
           path: previous-foundation
       - name: Verify previous foundation and reference identity
