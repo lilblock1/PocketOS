@@ -1,0 +1,62 @@
+name: PocketOS - R1 hardware compatibility audit
+on:
+  push:
+    branches: [main]
+    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', '.github/workflows/pocketos-hardware.yml']
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: pocketos-r1-hardware
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install reference inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full squashfs-tools kmod
+      - name: Reuse verified Phase 1 root filesystem artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
+          run-id: 43789815253
+          github-token: ${{ github.token }}
+          path: previous-foundation
+      - name: Verify previous foundation and reference identity
+        run: |
+          (cd previous-foundation && sha256sum --check SHA256SUMS)
+          cmp boards/hiby-r1/reference.json previous-foundation/reference.json
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p=Path('previous-foundation')
+          report=json.loads((p/'compatibility.json').read_text())
+          assert not report['flashable'] and report['fp_abi_matches']
+          fs=p/'PocketOS-rootfs-NOT-FIRMWARE.tar.gz'
+          assert hashlib.sha256(fs.read_bytes()).hexdigest()==report['candidate_tar_gz']['sha256']
+          PY
+      - name: Inspect original board support without executing it
+        run: |
+          url=$(python3 -c 'import json;print(json.load(open("boards/hiby-r1/reference.json"))["reference"]["url"])')
+          curl --fail --location --retry 3 "$url" -o reference.upt
+          python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
+          sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
+          mkdir -p hardware-report
+          sudo python3 tools/r1_hardware_audit.py reference-work/root previous-foundation/compatibility.json hardware-report/r1-compatibility.json
+          sudo chown "$(id -u):$(id -g)" hardware-report/r1-compatibility.json
+          sh -n hardware/hiby-r1/probe.sh
+          cp hardware/hiby-r1/probe.sh hardware/hiby-r1/README.md hardware-report/
+      - name: Upload report and physical-device read-only probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-phase2-R1-hardware-report-NOT-FIRMWARE
+          path: hardware-report/
+          if-no-files-found: error
+          retention-days: 14
