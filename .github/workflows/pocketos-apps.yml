@@ -100,6 +100,8 @@ jobs:
           cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
           readelf -h target-app-output/pocketos-wifi | grep -q MIPS
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-wifi --version)" = 'PocketOS Wi-Fi v1'
+          readelf -h target-app-output/pocketos-music | grep -q MIPS
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-music --version)" = 'PocketOS music v1'
           cp previous-sdk/sdk-manifest.json target-app-output/
       - name: Upload application-only development artifact
         if: steps.pick.outputs.run_id != ''

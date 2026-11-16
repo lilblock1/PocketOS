@@ -17,6 +17,10 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <dirent.h>
+#include <strings.h>
+#include <signal.h>
+#include <sys/wait.h>
 
 #define W 240
 #define H 320
@@ -44,6 +48,10 @@ static void apply_timezone(void) {
     tzset();
 }
 static int selected=0, battery=-1;
+static int allow_audio=0, music_count=0, music_index=0, music_top=0, music_pause=0, music_error=0, music_fd=-1;
+static pid_t music_pid=-1;
+static char music_files[32][128];
+static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0;
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
@@ -250,6 +258,64 @@ static void usage_text(int y,const char *name,int pct,unsigned long long free_mi
     text_at(21,y+23,b,1,muted);
     rect(21,y+37,198,8,edge);rect(21,y+37,198*pct/100,8,mint);
 }
+static void music_scan(void){
+    music_count=music_index=music_top=0;
+    DIR *d=opendir(music_dir);if(!d)return;
+    struct dirent *e;
+    while(music_count<32&&(e=readdir(d))){
+        size_t n=strlen(e->d_name);
+        if(n<5||n>=sizeof(music_files[0])||strcasecmp(e->d_name+n-4,".wav"))continue;
+        char path[512];int k=snprintf(path,sizeof(path),"%s/%s",music_dir,e->d_name);
+        struct stat st;
+        if(k<0||(size_t)k>=sizeof(path)||lstat(path,&st)!=0||!S_ISREG(st.st_mode))continue;
+        memcpy(music_files[music_count++],e->d_name,n+1);
+    }
+    closedir(d);
+}
+static int music_send(unsigned char c){
+    if(music_fd<0)return 0;
+    return write(music_fd,&c,1)==1;
+}
+static int music_reap(void){
+    if(music_pid<0)return 0;
+    int status=0;pid_t n=waitpid(music_pid,&status,WNOHANG);
+    if(n==0||(n<0&&errno==EINTR))return 0;
+    music_error=n<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0;
+    if(music_fd>=0)close(music_fd);
+    music_fd=-1;music_pid=-1;music_pause=0;return 1;
+}
+static void music_start(void){
+    if(!allow_audio||output!=0||music_count<1||music_pid>=0||access("/usr/bin/pocketos-music",X_OK)!=0){
+        music_error=1;return;
+    }
+    char path[512],v[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
+    if(n<0||(size_t)n>=sizeof(path)){music_error=1;return;}
+    snprintf(v,sizeof(v),"%d",volume>50?50:volume);
+    int f[2];if(pipe(f)!=0){music_error=1;return;}
+    int flags=fcntl(f[1],F_GETFL);
+    if(flags<0||fcntl(f[1],F_SETFL,flags|O_NONBLOCK)!=0){close(f[0]);close(f[1]);music_error=1;return;}
+    pid_t pid=fork();
+    if(pid==0){
+        close(f[1]);if(dup2(f[0],STDIN_FILENO)<0)_exit(126);close(f[0]);
+        execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled",(char*)NULL);
+        _exit(127);
+    }
+    close(f[0]);
+    if(pid<0){close(f[1]);music_error=1;return;}
+    music_pid=pid;music_fd=f[1];music_pause=0;music_error=0;
+}
+static void music_action(int action){
+    if(action==1){
+        if(music_pid<0)music_start();
+        else if(music_send(music_pause?201:200))music_pause=!music_pause;
+    } else if(action==2){
+        if(music_pid>=0){(void)music_send(202);close(music_fd);music_fd=-1;}
+    } else if(music_pid<0&&music_count){
+        music_index=(music_index+(action==0?music_count-1:1))%music_count;
+        if(music_index<music_top)music_top=music_index;
+        if(music_index>=music_top+4)music_top=music_index-3;
+    }
+}
 static void quick_tile(int i,const char *label,const char *value,int active) {
     int x=12+(i%2)*110,y=82+(i/2)*61;
     rounded(x,y,106,55,i==selected?edge:card);
@@ -274,6 +340,21 @@ static void render(void) {
         quick_tile(5,"SETTINGS","OPEN",1);
         text_at(12,270,"RADIO / AUDIO WRITES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
+    } else if(page==MUSIC){
+        char count[32];
+        snprintf(count,sizeof(count),"%d WAV TRACKS  /  SD MUSIC",music_count);
+        text_at(12,64,count,1,muted);
+        for(int i=0;i<4&&music_top+i<music_count;i++){
+            int idx=music_top+i,y=82+i*30;
+            char name[33];snprintf(name,sizeof(name),"%.32s",music_files[idx]);
+            rounded(12,y,216,26,idx==music_index?edge:card);
+            text_at(21,y+9,name,1,fg);
+        }
+        if(!music_count)text_at(12,100,"NO WAV TRACKS FOUND",1,muted);
+        text_at(12,213,music_pid>=0?(music_pause?"PAUSED":"PLAYBACK REQUESTED"):music_error?"PLAYBACK UNAVAILABLE":allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
+        const char *labels[]={"PREV",music_pid>=0?(music_pause?"GO":"PAUSE"):"PLAY","STOP","NEXT"};
+        for(int i=0;i<4;i++){int x=12+i*55;rounded(x,240,51,33,card);text_at(x+5,252,labels[i],1,fg);}
+        text_at(12,301,"BACK",2,mint);
     } else if(page==PREFERENCES) {
         text_at(12,64,"TAP TO CHANGE",1,muted);
         row(0,theme==0?"THEME: DARK":theme==1?"THEME: LIGHT":"HIGH CONTRAST");
@@ -396,7 +477,7 @@ static void activate(int i) {
         else return;
         selected=0;return;
     }
-    if(page==HOME&&i<6)page=home_items[i];
+    if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();}
     else if(page==SETTINGS&&i<7)page=setting_items[i];else return;
     selected=0;
 }
@@ -404,10 +485,17 @@ static void set_volume_target(int v){
     volume=v<0?0:v>100?100:v;
     /* Never pass a UI percentage directly to an unverified DAC register. */
     save_error=!save_preferences();
+    if(music_pid>=0)(void)music_send((unsigned char)(volume>50?50:volume));
 }
 static void tap(int x,int y) {
     if(y<26){if(page==CONTROL)back();else open_control();return;}
     if(y>=287&&page!=HOME){back();return;}
+    if(page==MUSIC){
+        if(x>=12&&x<228&&y>=82&&y<202&&music_pid<0){
+            int idx=music_top+(y-82)/30;if(idx<music_count)music_index=idx;
+        } else if(x>=12&&x<228&&y>=240&&y<273)music_action((x-12)/55);
+        return;
+    }
     if(page==SOUND&&x>=24&&x<=216&&y>=148&&y<=183){set_volume_target((x-24)*100/192);return;}
     if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){output=(output+1)%3;save_error=!save_preferences();return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
@@ -424,6 +512,10 @@ static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
     if(page==SOUND&&(code==KEY_ENTER||code==KEY_OK)){output=(output+1)%3;save_error=!save_preferences();return 1;}
+    if(page==MUSIC&&(code==KEY_ENTER||code==KEY_OK||code==KEY_PLAYPAUSE)){music_action(1);return 1;}
+    if(page==MUSIC&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_UP||code==KEY_DOWN||code==KEY_STOPCD)){
+        music_action(code==KEY_STOPCD?2:code==KEY_LEFT||code==KEY_UP?0:3);return 1;
+    }
     if(code==KEY_MENU){if(page==CONTROL)back();else open_control();}
     else if(code==KEY_ESC||code==KEY_BACK)back();
     else if(code==KEY_ENTER||code==KEY_OK||code==KEY_SELECT)activate(selected);
@@ -534,11 +626,15 @@ static int native(const char *input) {
     (void)update_clock(&clock_changed);
     load_preferences();(void)update_clock(&clock_changed);
     battery=sample_battery();sample_quick();render();present(&b);
+    (void)signal(SIGPIPE,SIG_IGN);
     for(;;){
+        if(music_reap()&&page==MUSIC){render();present(&b);}
         int timeout=update_clock(&clock_changed);
+        if(music_pid>=0&&timeout>1000)timeout=1000;
         if(clock_changed){render();present(&b);}
         struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
+        if(!rc&&music_pid>=0)continue;
         if(!rc){
             int n=sample_battery(),w=wifi_present,bt=bt_present,br=brightness_pct,audio=audio_present,ip=internal_pct,sp=sd_pct;
             unsigned long long i=internal_free,j=sd_free;
@@ -583,6 +679,7 @@ static int native(const char *input) {
         }
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
+    if(music_pid>=0){if(music_fd>=0)close(music_fd);(void)kill(music_pid,SIGTERM);}
     close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
@@ -633,11 +730,17 @@ int main(int argc,char **argv) {
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
+        if(page==MUSIC){music_count=3;strcpy(music_files[0],"Track 01.wav");strcpy(music_files[1],"Track 02.wav");strcpy(music_files[2],"Track 03.wav");}
         render();
         return ppm(argv[3]);
     }
     if(argc>=5&&!strcmp(argv[1],"--config")&&argv[2][0]=='/') {config_path=argv[2];argc-=2;argv+=2;}
-    if(argc==4&&!strcmp(argv[1],"--allow-backlight")){allow_backlight=1;argc--;argv++;}
+    while(argc>=4){
+        if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
+        else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
+        else break;
+        argc--;argv++;
+    }
     const char *tz=getenv("TZ");if(tz)original_tz=strdup(tz);
     if(argc==3&&!strcmp(argv[1],"--fb")&&!strncmp(argv[2],"/dev/input/event",16)) {
         const char *n=argv[2]+16;

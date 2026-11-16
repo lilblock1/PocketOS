@@ -2,7 +2,7 @@ CC ?= cc
 BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
-all: $(BUILD_DIR)/pocketos-info $(BUILD_DIR)/pocketos-r1-runtime $(BUILD_DIR)/pocketos-shell $(BUILD_DIR)/pocketos-wifi $(BUILD_DIR)/pocketos-bluetooth $(BUILD_DIR)/pocketos-update
+all: $(BUILD_DIR)/pocketos-info $(BUILD_DIR)/pocketos-r1-runtime $(BUILD_DIR)/pocketos-shell $(BUILD_DIR)/pocketos-wifi $(BUILD_DIR)/pocketos-bluetooth $(BUILD_DIR)/pocketos-update $(BUILD_DIR)/pocketos-music
 
 $(BUILD_DIR)/pocketos-info: pocketos-info.c
 	mkdir -p "$(BUILD_DIR)"
@@ -30,6 +30,10 @@ $(BUILD_DIR)/pocketos-update: pocketos-update.sh
 	cp "$<" "$@"
 	chmod 755 "$@"
 
+$(BUILD_DIR)/pocketos-music: pocketos-music.c
+	mkdir -p "$(BUILD_DIR)"
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
+
 check: all
 	test "$$($(BUILD_DIR)/pocketos-info --version)" = "PocketOS application SDK smoke test v1"
 	sh test-r1-runtime.sh "$(abspath $(BUILD_DIR)/pocketos-r1-runtime)"
@@ -37,3 +41,4 @@ check: all
 	python3 test-wifi.py "$(abspath $(BUILD_DIR)/pocketos-wifi)"
 	sh -n pocketos-bluetooth.sh
 	sh test-update.sh "$(abspath $(BUILD_DIR)/pocketos-update)" pack-update.py
+	python3 test-music.py "$(abspath $(BUILD_DIR)/pocketos-music)"
