@@ -54,3 +54,9 @@ done
 "$bin" --test-update-ui
 
 "$bin" --test-power
+
+"$bin" --boot-preview 0 "$tmp/boot0.ppm"
+"$bin" --boot-preview 3 "$tmp/boot3.ppm"
+test "$(wc -c < "$tmp/boot0.ppm")" -eq 230415
+if cmp -s "$tmp/boot0.ppm" "$tmp/boot3.ppm"; then exit 1; fi
+if "$bin" --boot-preview 4 "$tmp/bad.ppm"; then exit 1; fi

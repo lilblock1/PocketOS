@@ -1,0 +1,27 @@
+#!/bin/sh
+# Development rootfs only. Absent the trusted marker, this service is inert.
+set -eu
+case "${1:-}" in
+    start)
+        [ -f /etc/pocketos/autostart ] && [ ! -L /etc/pocketos/autostart ] || exit 0
+        [ -x /usr/bin/pocketos-start ] || exit 0
+        /usr/bin/pocketos-start </dev/null >/dev/null 2>&1 &
+        ;;
+    stop)
+        p=/run/pocketos-ui/pid
+        [ -f "$p" ] && [ ! -L "$p" ] || exit 0
+        read -r pid extra < "$p" || exit 0
+        case "$pid" in ''|*[!0-9]*) exit 0;; esac
+        [ -z "$extra" ] && [ "$pid" -gt 1 ] || exit 0
+        [ "$(stat -c '%u:%a' /run/pocketos-ui 2>/dev/null)" = "0:700" ] || exit 0
+        [ "$(stat -c '%u' "$p" 2>/dev/null)" = 0 ] || exit 0
+        # Do not signal arbitrary or stale PIDs.
+        [ -r "/proc/$pid/cmdline" ] || exit 0
+        tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq /usr/bin/pocketos-start || exit 0
+        kill -TERM "$pid" 2>/dev/null || :
+        ;;
+    status)
+        [ -r /run/pocketos-ui/status ] && cat /run/pocketos-ui/status || echo "PocketOS UI not started"
+        ;;
+    *) exit 2 ;;
+esac

@@ -1485,6 +1485,23 @@ static void present(struct fb *b) {
         }
     }
 }
+/* Native splash reuses the existing RGB565 canvas and font; no image asset. */
+static int boot_splash=0;
+static volatile sig_atomic_t shell_stopping=0;
+static void stop_shell(int sig){(void)sig;shell_stopping=1;}
+static void boot_frame(int frame){
+    bg=RGB(10,17,19);fg=RGB(239,246,246);mint=RGB(109,226,182);
+    rect(0,0,W,H,bg);
+    rounded(96,82,48,48,RGB(25,48,44));
+    rounded(104,90,32,32,mint);
+    rect(111,97,18,4,bg);rect(111,105,4,11,bg);rect(119,104,10,4,bg);
+    const char *name="PocketOS";
+    reader_print((W-reader_measure(name,29,0,1))/2,151,name,29,fg,bg,0,1,W);
+    const char *subtitle="A little more pocket.";
+    reader_print((W-reader_measure(subtitle,13,0,0))/2,190,subtitle,13,RGB(151,171,179),bg,0,0,W);
+    rounded(82,230,76,5,RGB(47,62,70));
+    rect(82,230,19*(frame+1),5,mint);
+}
 static int native(const char *input) {
     struct fb b={0};if(!fb_open(&b)){fputs("Unsupported or unavailable framebuffer\n",stderr);return 1;}
     int fd=open(input,O_RDONLY|O_NONBLOCK|O_CLOEXEC);
@@ -1495,6 +1512,15 @@ static int native(const char *input) {
     touch=touch&&ax.maximum>ax.minimum&&ay.maximum>ay.minimum;
     int rx=0,ry=0,have_x=0,have_y=0,down=0,pending=0,slot=0,dropped=0;
     int start_y=-1;
+    struct sigaction stop={.sa_handler=stop_shell};sigemptyset(&stop.sa_mask);
+    (void)sigaction(SIGTERM,&stop,NULL);(void)sigaction(SIGINT,&stop,NULL);
+    if(boot_splash){
+        /* At most three short delays. A pending key/touch immediately skips splash. */
+        for(int f=0;f<4&&!shell_stopping;f++){
+            boot_frame(f);present(&b);
+            if(f<3){struct pollfd skip={.fd=fd,.events=POLLIN};if(poll(&skip,1,80)!=0)break;}
+        }
+    }
     int clock_changed=0;
     (void)update_clock(&clock_changed);
     load_preferences();(void)update_clock(&clock_changed);
@@ -1502,7 +1528,7 @@ static int native(const char *input) {
     long long last_input=mono_ms(),next_sample=last_input+60000;
     int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
-    for(;;){
+    while(!shell_stopping){
         long long now=mono_ms();
         int busy=radio_pid>=0||update_pid>=0;
         if(saver!=old_saver){cpu_policy(saver);old_saver=saver;}
@@ -1599,7 +1625,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+    (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
 }
 static int selftest(void) {
     char label[16];
@@ -1635,6 +1661,10 @@ static int selftest(void) {
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==4&&!strcmp(argv[1],"--boot-preview")){
+        if(strlen(argv[2])!=1||argv[2][0]<'0'||argv[2][0]>'3')return 2;
+        boot_frame(argv[2][0]-'0');return ppm(argv[3]);
+    }
     if(argc==2&&!strcmp(argv[1],"--test-power")){
         if(idle_target(24,1,0,0,1)||idle_target(25,1,0,0,1)!=1||
            idle_target(60,1,0,0,1)!=2||idle_target(60,1,0,0,0)!=1||
@@ -1732,6 +1762,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
         else if(!strcmp(argv[1],"--allow-radio"))radio_allow=1;
         else if(!strcmp(argv[1],"--allow-updates"))update_allow=1;
+        else if(!strcmp(argv[1],"--boot-splash"))boot_splash=1;
         else if(!strcmp(argv[1],"--allow-idle-dim"))power_allow=1;
         else if(!strcmp(argv[1],"--allow-screen-off")){power_allow=1;power_blank=1;}
         else if(!strcmp(argv[1],"--allow-cpu-policy"))power_cpu_allow=1;
