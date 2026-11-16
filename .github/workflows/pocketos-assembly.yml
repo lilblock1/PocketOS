@@ -1,0 +1,139 @@
+name: PocketOS - R1 development assembly (NOT FIRMWARE)
+on:
+  workflow_run:
+    workflows: ['PocketOS - Alpha foundation (NOT FIRMWARE)']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      foundation_run_id:
+        description: Successful foundation build with matching SDK
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-r1-assembly
+  cancel-in-progress: false
+jobs:
+  assembly:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Install host tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-user p7zip-full squashfs-tools kmod python3-pil fonts-dejavu-core ffmpeg gnupg xz-utils pkg-config
+      - name: Select exact foundation
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ github.event.workflow_run.id || inputs.foundation_run_id }}
+        run: |
+          python3 tools/select_sdk.py
+          grep -q '^run_id=' "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-compiled-MIPS-SDK
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: previous-sdk
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: previous-foundation
+      - name: Verify SDK and foundation provenance
+        env:
+          FOUNDATION_RUN: ${{ steps.pick.outputs.run_id }}
+          FOUNDATION_COMMIT: ${{ steps.pick.outputs.commit }}
+        run: |
+          python3 tools/verify_sdk.py
+          mkdir -p sdk rootfs staging/rootfs reports
+          tar -xzf previous-sdk/pocketos-sdk.tar.gz -C sdk --no-same-owner --no-same-permissions
+          (cd sdk/pocketos-sdk && ./relocate-sdk.sh)
+          tar -xzf previous-foundation/PocketOS-rootfs-NOT-FIRMWARE.tar.gz -C rootfs --no-same-owner --no-same-permissions --exclude='./dev/*' --exclude='dev/*'
+      - name: Run host regression suite and compile all MIPS apps
+        run: |
+          python3 -m unittest discover -s tools -p 'test_r1_*.py'
+          make -C apps BUILD_DIR="$PWD/host-apps" check
+          compiler=
+          for candidate in "$PWD"/sdk/pocketos-sdk/bin/mipsel*-gcc; do
+            if [ -x "$candidate" ]; then compiler="$candidate"; break; fi
+          done
+          test -n "$compiler"
+          make -C apps CC="$compiler" CFLAGS="-Os -Wall -Wextra -Werror" LDFLAGS="-s" BUILD_DIR="$PWD/target-apps" all
+          for name in pocketos-info pocketos-r1-runtime pocketos-shell pocketos-wifi pocketos-music; do
+            timeout 30 qemu-mipsel -L "$PWD/rootfs" "target-apps/$name" --version
+          done
+          for test in --self-test --test-power --test-radio --test-update-ui; do
+            timeout 30 qemu-mipsel -L "$PWD/rootfs" target-apps/pocketos-shell "$test"
+          done
+          host-apps/pocketos-shell --boot-preview 3 reports/boot-host.ppm
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-apps/pocketos-shell --boot-preview 3 reports/boot-target.ppm
+          cmp reports/boot-host.ppm reports/boot-target.ppm
+      - name: Assemble guarded applications and target service tools (runner only)
+        run: |
+          sudo tar --numeric-owner -xzf previous-foundation/PocketOS-rootfs-NOT-FIRMWARE.tar.gz -C staging/rootfs
+          sudo python3 tools/r1_assemble.py stage staging/rootfs target-apps previous-foundation/compatibility.json reports/assembly.json
+          sudo chown "$(id -u):$(id -g)" reports/assembly.json
+          test ! -e staging/rootfs/etc/pocketos/autostart
+          test ! -e staging/rootfs/etc/pocketos/update-public.pem
+          test ! -e staging/rootfs/usr/bin/ffmpeg
+      - name: Verify reference and stage hardware evidence
+        run: |
+          url=$(python3 -c 'import json;print(json.load(open("boards/hiby-r1/reference.json"))["reference"]["url"])')
+          curl --fail --location --retry 3 "$url" -o reference.upt
+          python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
+          sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
+          sudo python3 tools/r1_hardware_audit.py reference-work/root previous-foundation/compatibility.json reports/r1-compatibility.json
+          sudo python3 tools/r1_stage.py reference-work/root reports/r1-compatibility.json previous-foundation/compatibility.json staging hardware/hiby-r1/probe.sh reports/r1-integration.json
+          sudo python3 tools/r1_init_plan.py staging reports/r1-integration.json reports/r1-init-plan.json
+          sudo mksquashfs staging/rootfs staging/size-only.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          sudo python3 tools/r1_boot_gate.py staging/rootfs reference-work/reference.squashfs staging/size-only.squashfs staging/reference-kernel.bin reports/r1-integration.json reports/r1-init-plan.json reports/r1-boot-readiness.json
+          sudo python3 tools/r1_assemble.py report staging/size-only.squashfs reference-work/reference.squashfs reports/assembly.json reports/r1-boot-readiness.json reports/phase4c.json
+          sudo chown -R "$(id -u):$(id -g)" reports
+          sudo rm -rf staging reference-work reference.upt
+      - name: Prepare development manifests
+        if: success()
+        run: |
+          cp previous-sdk/sdk-manifest.json reports/
+          cp hardware/hiby-r1/recovery.md hardware/hiby-r1/boot-probe.sh hardware/hiby-r1/probe.sh reports/
+          (cd target-apps && sha256sum pocketos-* S95pocketos reader-font-LICENSE.txt > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PocketOS-R1-assembly-report-NOT-FIRMWARE
+          path: reports/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: PocketOS-R1-MIPS-applications-NOT-FIRMWARE
+          path: |
+            target-apps/pocketos-*
+            target-apps/S95pocketos
+            target-apps/reader-font-LICENSE.txt
+            target-apps/SHA256SUMS
+            target-apps/README*
+          if-no-files-found: error
+      - name: Build and verify optional MIPS audio decoder on matching SDK
+        run: |
+          compiler=
+          for candidate in "$PWD"/sdk/pocketos-sdk/bin/mipsel*-gcc; do
+            if [ -x "$candidate" ]; then compiler="$candidate"; break; fi
+          done
+          test -n "$compiler"
+          POCKETOS_CC="$compiler" bash tools/build-audio-decoder.sh mipsel "$PWD/codec-work" "$PWD/codec-sd"
+          python3 tools/test-audio-decoder.py qemu-mipsel -L "$PWD/rootfs" "$PWD/codec-sd/pocketos-ffmpeg"
+          cp previous-sdk/sdk-manifest.json codec-sd/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-R1-optional-SD-decoder-NOT-FIRMWARE
+          path: codec-sd/
+          if-no-files-found: error
