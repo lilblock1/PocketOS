@@ -1,0 +1,88 @@
+name: PocketOS - Alpha foundation (NOT FIRMWARE)
+on:
+  push:
+    branches: [main]
+    paths: ['boards/**', 'tools/**', '.github/workflows/pocketos-foundation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pocketos-foundation
+  cancel-in-progress: false
+
+jobs:
+  foundation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install build and examination tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git rsync bc bzip2 cpio unzip file wget curl libncurses-dev python3 perl patch binutils bison flex gawk texinfo qemu-user p7zip-full squashfs-tools libssl-dev
+      - name: Verify immutable R1 reference and determine ABI
+        run: |
+          url=$(python3 -c 'import json;print(json.load(open("boards/hiby-r1/reference.json"))["reference"]["url"])')
+          curl --fail --location --retry 3 "$url" -o reference.upt
+          python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
+          sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
+          python3 tools/configure_abi.py reference-work/root boards/hiby-r1/pocketos_defconfig "$PWD/generated-defconfig"
+      - name: Check out pinned Buildroot
+        uses: actions/checkout@v4
+        with:
+          repository: buildroot/buildroot
+          ref: 137a566bf5353831d97c068a4c22e6df5b4d07a0
+          path: buildroot-src
+          persist-credentials: false
+      - name: Configure minimal MIPS Linux userspace
+        run: |
+          make -C buildroot-src O="$PWD/buildroot-output" BR2_DEFCONFIG="$PWD/generated-defconfig" defconfig
+          config=buildroot-output/.config
+          for symbol in BR2_mipsel BR2_mips_32r2 BR2_TOOLCHAIN_BUILDROOT_GLIBC BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_4_4 BR2_INIT_BUSYBOX BR2_TARGET_ROOTFS_TAR_GZIP; do
+            grep -qx "$symbol=y" "$config"
+          done
+          grep -qx 'BR2_DEFAULT_KERNEL_VERSION="4.4.302"' "$config"
+          if grep -qx 'BR2_LINUX_KERNEL=y' "$config"; then exit 1; fi
+          if grep -qx 'BR2_MIPS_SOFT_FLOAT=y' generated-defconfig; then
+            grep -qx 'BR2_MIPS_SOFT_FLOAT=y' "$config"
+          else
+            grep -qx '# BR2_MIPS_SOFT_FLOAT is not set' "$config"
+            for symbol in BR2_MIPS_FP32_MODE_32 BR2_MIPS_FP32_MODE_XX BR2_MIPS_FP32_MODE_64; do
+              if grep -qx "$symbol=y" generated-defconfig; then grep -qx "$symbol=y" "$config"; fi
+            done
+          fi
+      - name: Compile independent Linux root filesystem
+        run: |
+          make -C buildroot-src O="$PWD/buildroot-output" -j"$(nproc)"
+          test -s buildroot-output/images/rootfs.tar.gz
+      - name: Execute MIPS userspace and audit compatibility
+        run: |
+          mkdir -p foundation-artifact
+          root="$PWD/buildroot-output/target"
+          timeout 30 qemu-mipsel -L "$root" "$root/bin/busybox" true
+          timeout 30 qemu-mipsel -L "$root" "$root/bin/busybox" sh -c 'test "$(echo PocketOS)" = PocketOS'
+          grep -qx 'NAME=PocketOS' "$root/etc/pocketos-release"
+          sudo python3 tools/audit.py reference-work/root "$root" foundation-artifact/compatibility.json buildroot-output/images/rootfs.tar.gz reference-work/reference.squashfs
+          sudo chown "$(id -u):$(id -g)" foundation-artifact/compatibility.json
+          cp buildroot-output/images/rootfs.tar.gz foundation-artifact/PocketOS-rootfs-NOT-FIRMWARE.tar.gz
+          cp buildroot-output/.config foundation-artifact/buildroot.config
+          cp boards/hiby-r1/reference.json README.md foundation-artifact/
+          (cd foundation-artifact && sha256sum PocketOS-rootfs-NOT-FIRMWARE.tar.gz > SHA256SUMS)
+      - name: Collect dependency license and source materials
+        run: make -C buildroot-src O="$PWD/buildroot-output" legal-info
+      - name: Upload explicitly non-flashable artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
+          path: foundation-artifact/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload source and license materials
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-alpha-legal-info
+          path: buildroot-output/legal-info/
+          if-no-files-found: error
+          retention-days: 14
