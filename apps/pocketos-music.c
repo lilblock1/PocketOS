@@ -76,9 +76,21 @@ static void report_progress(uint32_t position){
     ssize_t n=write(progress_fd,msg,sizeof(msg));(void)n;
 }
 static void stop_signal(int n){(void)n;interrupted=1;}
+/* Only a launcher-verified root-owned RAM snapshot, or the trusted rootfs.
+ * Never execute a path directly from the removable card. */
+static const char *decoder_path(void){
+    struct stat run,dir,exe;
+    if(lstat("/run",&run)==0&&S_ISDIR(run.st_mode)&&run.st_uid==0&&!(run.st_mode&0022)&&
+       lstat("/run/pocketos-decoder",&dir)==0&&S_ISDIR(dir.st_mode)&&dir.st_uid==0&&(dir.st_mode&0777)==0700&&
+       lstat("/run/pocketos-decoder/ffmpeg",&exe)==0&&S_ISREG(exe.st_mode)&&exe.st_uid==0&&(exe.st_mode&0777)==0500&&
+       exe.st_size>0&&exe.st_size<=12582912&&access("/run/pocketos-decoder/ffmpeg",X_OK)==0)
+        return "/run/pocketos-decoder/ffmpeg";
+    return access("/usr/bin/ffmpeg",X_OK)==0?"/usr/bin/ffmpeg":NULL;
+}
 /* Local file descriptors only; no URL input, shell, or network protocols. */
 static int open_decoder(struct wav *w,const char *path,const char *format){
-    if(access("/usr/bin/ffmpeg",X_OK)!=0){fputs("Optional FFmpeg decoder unavailable\n",stderr);return 0;}
+    const char *decoder=decoder_path();
+    if(!decoder){fputs("Optional FFmpeg decoder unavailable\n",stderr);return 0;}
     int input=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
     struct stat st;
     if(input<0)return 0;
@@ -92,7 +104,7 @@ static int open_decoder(struct wav *w,const char *path,const char *format){
         if(dup2(input,3)<0||fcntl(3,F_SETFD,0)<0)_exit(126);
         if(input!=3)close(input);
         char seek[16];snprintf(seek,sizeof(seek),"%u",start_seconds);
-        execl("/usr/bin/ffmpeg","ffmpeg","-nostdin","-hide_banner","-loglevel","error","-xerror",
+        execl(decoder,"ffmpeg","-nostdin","-hide_banner","-loglevel","error","-xerror",
               "-threads","1","-filter_threads","1","-max_alloc","16777216",
               "-probesize","262144","-analyzeduration","1000000",
               "-protocol_whitelist","file,pipe","-f",format,"-ss",seek,"-i","/proc/self/fd/3",
@@ -253,7 +265,7 @@ int main(int argc,char **argv){
     int native_wav=(!format||!strcmp(format,"wav"))&&parse(&w,argv[2]);
     if(!native_wav&&w.f){fclose(w.f);w.f=NULL;}
     if(!native_wav&&format&&strcmp(format,"wav")){
-        if(!strcmp(mode,"--probe")){puts("Compressed input; optional decoder produces stereo 48000 Hz S16LE");return access("/usr/bin/ffmpeg",X_OK)!=0;}
+        if(!strcmp(mode,"--probe")){puts("Compressed input; optional decoder produces stereo 48000 Hz S16LE");return decoder_path()==NULL;}
         if(!open_decoder(&w,argv[2],format))return 1;
     } else if(!native_wav){fputs("Unsupported audio file\n",stderr);return 1;}
     if(native_wav){
