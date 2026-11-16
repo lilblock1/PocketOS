@@ -52,3 +52,5 @@ for screen in WI-FI BLUETOOTH; do
 done
 
 "$bin" --test-update-ui
+
+"$bin" --test-power

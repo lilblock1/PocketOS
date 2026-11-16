@@ -138,7 +138,7 @@ static int stream(struct wav *w,int out,int volume,int controlled){
     while(!interrupted&&(left||at<used||(w->decoder>0&&!eof))){
         if(controlled){
             struct pollfd c={.fd=STDIN_FILENO,.events=POLLIN};
-            int pc=poll(&c,1,paused?500:0);
+            int pc=poll(&c,1,paused?5000:0);
             if(pc<0){if(errno==EINTR)continue;return 1;}
             if(pc>0){
                 if(!(c.revents&POLLIN))return 2;

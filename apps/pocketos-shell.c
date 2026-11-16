@@ -24,6 +24,7 @@
 #include "pocketos-files.h"
 #include "pocketos-radio-ui.h"
 #include "pocketos-update-ui.h"
+#include "pocketos-power.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -70,7 +71,7 @@ static int music_pending=-1, music_manual_stop=0;
 static char books[BOOK_CAP][256],book_text[BOOK_ROWS][65],book_status[38];
 static int book_count=0,book_index=0,book_top=0,book_size=1,book_wide=0,book_eof=0,book_depth=0;
 static int book_theme=3,book_font=0,book_font_ok=0,book_menu=0,book_allow_save=0,book_dirty=0,book_save_error=0;
-static unsigned char book_atlas[95][16][12];
+static unsigned char (*book_atlas)[16][12]=NULL;
 static char book_title[65];
 static long long book_mtime=0;
 static off_t book_page_span=0;
@@ -341,6 +342,42 @@ static int write_backlight(const char *dir,int percent) {
     if(close(fd)!=0)ok=0;
     return ok&&read_number(dir,"brightness")==value;
 }
+/* Idle writes use exact raw levels and restore only changes we own. */
+static int power_raw(const char *dir,long value){
+    long max=read_number(dir,"max_brightness");
+    if(!allow_backlight||!power_allow||max<1||value<0||value>max||
+       (value==0&&!power_blank))return 0;
+    char v[32];snprintf(v,sizeof(v),"%ld",value);
+    return power_attr_write(dir,"brightness",v)&&read_number(dir,"brightness")==value;
+}
+static int power_wake(void){
+    if(!power_stage)return 1;
+    long actual=read_number(power_dir,"brightness");
+    if(actual<0)return 0;
+    if(actual==power_written&&!power_raw(power_dir,power_saved))return 0;
+    long max=read_number(power_dir,"max_brightness"),value=read_number(power_dir,"brightness");
+    if(max>0&&value>=0&&value<=max)brightness_pct=(int)(value*100/max);
+    power_stage=0;power_saved=power_written=-1;power_dir[0]=0;return 1;
+}
+static void power_idle(int target){
+    if(!power_allow||!allow_backlight||power_failed||!target||target<=power_stage)return;
+    if(!power_stage){
+        if(!backlight_dir[0]||!power_sysfs(backlight_dir)){power_failed=1;return;}
+        long value=read_number(backlight_dir,"brightness"),max=read_number(backlight_dir,"max_brightness");
+        if(value<=0||max<1||value>max){power_failed=1;return;}
+        strcpy(power_dir,backlight_dir);power_saved=value;
+    }
+    long max=read_number(power_dir,"max_brightness");
+    if(max<1){power_failed=1;return;}
+    long value=target==2?0:(max+9)/10;if(value>power_saved&&target==1)value=power_saved;
+    long current=read_number(power_dir,"brightness");
+    if(current<0||(power_stage&&current!=power_written)){power_failed=1;return;}
+    if(current!=value&&!power_raw(power_dir,value)){
+        /* A driver can reject verification after a successful write. Attempt restoration. */
+        (void)power_raw(power_dir,power_saved);power_failed=1;return;
+    }
+    power_written=value;power_stage=target;
+}
 static int change_brightness(int pct) {
     if(pct<10)pct=10;
     if(pct>100)pct=100;
@@ -592,15 +629,18 @@ static int book_height(void){return book_size==2?20:17;}
 static int book_pitch(void){return book_height()+(book_wide?3:0);}
 static int book_rows(void){return 238/book_pitch();}
 static void book_load_font(void){
-    book_font_ok=0;
+    free(book_atlas);book_atlas=NULL;book_font_ok=0;
     if(!book_font)return;
     char path[512];int n=snprintf(path,sizeof(path),"%s/.fonts/%s.pbf",book_dir,book_font==1?"serif":"dyslexic");
     if(n<0||(size_t)n>=sizeof(path))return;
     FILE *f=regular_file(path);
     if(f){char magic[4];
-        if(fread(magic,1,4,f)==4&&!memcmp(magic,"PBF1",4)&&
-           fread(book_atlas,1,sizeof(book_atlas),f)==sizeof(book_atlas)&&fgetc(f)==EOF)book_font_ok=1;
+        if(fread(magic,1,4,f)==4&&!memcmp(magic,"PBF1",4)){
+            book_atlas=malloc(95u*sizeof(*book_atlas));
+            if(book_atlas&&fread(book_atlas,sizeof(*book_atlas),95,f)==95&&fgetc(f)==EOF)book_font_ok=1;
+        }
         fclose(f);
+        if(!book_font_ok){free(book_atlas);book_atlas=NULL;}
     }
 }
 static int bookmark_path(char out[600]){
@@ -681,7 +721,7 @@ static void book_page(void){
     if(book_next<0||book_next>=book_bytes||book_next<=book_pos)book_eof=1;
     if(!book_page_span&&book_next>book_pos)book_page_span=book_next-book_pos;
 }
-static void book_close(void){if(book_file){book_save();fclose(book_file);}book_file=NULL;book_depth=0;book_menu=0;}
+static void book_close(void){if(book_file){book_save();fclose(book_file);}book_file=NULL;book_depth=0;book_menu=0;free(book_atlas);book_atlas=NULL;book_font_ok=0;}
 static int book_open(void){
     book_close();
     if(!book_count)return 0;
@@ -1061,6 +1101,19 @@ static void render(void) {
         if(brightness_pct>=0)rect(24,160,192*brightness_pct/100,12,mint);
         text_at(21,188,brightness_error?"WRITE FAILED":allow_backlight?"TAP BAR TO ADJUST":"READ ONLY - LOCKED",1,muted);
         text_at(12,301,"BACK",2,mint);
+    } else if(page==POWER){
+        char buf[64];
+        if(battery>=0)snprintf(buf,sizeof(buf),"%d%% remaining",battery);else strcpy(buf,"Battery unavailable");
+        reader_print(14,76,buf,25,fg,bg,0,1,228);
+        rounded(12,112,216,48,card);reader_print(22,120,"Battery saver",16,fg,card,0,1,220);
+        reader_print(22,140,saver?"Enabled":"Standard",12,mint,card,0,0,220);
+        if(ram_available>=0&&ram_total>0)snprintf(buf,sizeof(buf),"RAM: %ld / %ld MiB free",ram_available/1024,ram_total/1024);else strcpy(buf,"RAM unavailable");
+        reader_print(14,176,buf,13,fg,bg,0,0,228);
+        if(shell_rss>=0)snprintf(buf,sizeof(buf),"Shell RSS: %ld KiB",shell_rss);else strcpy(buf,"Shell RSS unavailable");
+        reader_print(14,196,buf,12,muted,bg,0,0,228);
+        reader_print(14,219,power_failed?"Idle control unavailable":power_allow?(power_blank?"Auto dim / screen off":"Auto dim enabled"):"Auto dim locked",12,muted,bg,0,0,228);
+        reader_print(14,239,cpu_changed?"Adaptive CPU requested":power_cpu_allow?"CPU policy unchanged":"CPU writes locked",12,muted,bg,0,0,228);
+        reader_print(14,259,"Suspend remains disabled",11,muted,bg,0,0,228);text_at(12,301,"BACK",2,mint);
     } else if(page==UPDATES){
         char version[64];snprintf(version,sizeof(version),"Selected: %u   Previous: %u",update_current,update_previous);
         reader_print(12,62,version,12,muted,bg,0,0,228);
@@ -1213,6 +1266,7 @@ static void update_choose(int i){
     }else if(i==0||i==1)(void)update_spawn(i==0?U_GITHUB:U_SD);
 }
 static void tap(int x,int y) {
+    if(page==POWER&&y>=112&&y<160){saver=!saver;save_error=!save_preferences();return;}
     if(page==UPDATES){
         if(update_pid>=0)return;
         if(update_confirm){if(y>=240&&y<279){update_confirm=U_NONE;if(x>=120)(void)update_spawn(U_ROLLBACK);}return;}
@@ -1296,6 +1350,7 @@ static void tap(int x,int y) {
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(page==POWER&&(code==KEY_ENTER||code==KEY_OK)){saver=!saver;save_error=!save_preferences();return 1;}
     if(page==UPDATES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(update_pid>=0)return 0;
@@ -1443,34 +1498,75 @@ static int native(const char *input) {
     int clock_changed=0;
     (void)update_clock(&clock_changed);
     load_preferences();(void)update_clock(&clock_changed);
-    battery=sample_battery();sample_quick();render();present(&b);
+    battery=sample_battery();sample_quick();power_memory();render();present(&b);
+    long long last_input=mono_ms(),next_sample=last_input+60000;
+    int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
     for(;;){
+        long long now=mono_ms();
+        int busy=radio_pid>=0||update_pid>=0;
+        if(saver!=old_saver){cpu_policy(saver);old_saver=saver;}
+        /* Do not switch off the display while a transfer is in progress. */
+        if(busy&&power_stage&&power_wake()){render();present(&b);}
+        if(now>=0&&last_input>=0&&!down&&!pending&&backlight_dir[0])
+            power_idle(idle_target((now-last_input)/1000,saver,page==READER,busy,power_blank));
         int report=music_read_report(), reaped=music_reap();
-        if(radio_poll()&&(page==WIFIUI||page==BTUI)){render();present(&b);}
-        if(update_poll()&&page==UPDATES){render();present(&b);}
-        if((report||reaped)&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
+        int radio_changed=radio_poll(),update_changed=update_poll(),sample_changed=0;
+        if(now>=0&&now>=next_sample){
+            int n=sample_battery(),oldwifi=wifi_present,oldbt=bt_present,oldaudio=audio_present;
+            int oldip=internal_pct,oldsp=sd_pct,oldbr=brightness_pct;
+            unsigned long long i=internal_free,j=sd_free;
+            long ram=ram_available,rss=shell_rss;
+            sample_quick();power_memory();
+            sample_changed=n!=battery||oldwifi!=wifi_present||oldbt!=bt_present||oldaudio!=audio_present||
+                oldip!=internal_pct||oldsp!=sd_pct||oldbr!=brightness_pct||i!=internal_free||j!=sd_free||
+                (page==POWER&&(ram!=ram_available||rss!=shell_rss));
+            battery=n;next_sample=now+(saver?120000:60000);
+        }
         int timeout=update_clock(&clock_changed);
-        if(music_pid>=0&&timeout>1000)timeout=1000;
+        if(power_stage)timeout=saver?60000:30000;
+        if(!power_stage&&((radio_changed&&(page==WIFIUI||page==BTUI))||
+              (update_changed&&page==UPDATES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
+              (page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(update_pid>=0&&timeout>500)timeout=500;
-        if(clock_changed&&page!=READER){render();present(&b);}
-        struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
-        if(rc<0){if(errno==EINTR)continue;break;}
-        if(!rc&&(music_pid>=0||radio_pid>=0||update_pid>=0))continue;
-        if(!rc){
-            int n=sample_battery(),w=wifi_present,bt=bt_present,br=brightness_pct,audio=audio_present,ip=internal_pct,sp=sd_pct;
-            unsigned long long i=internal_free,j=sd_free;
-            sample_quick();
-            if(n!=battery||w!=wifi_present||bt!=bt_present||br!=brightness_pct||audio!=audio_present||ip!=internal_pct||sp!=sd_pct||i!=internal_free||j!=sd_free){battery=n;if(page!=READER){render();present(&b);}}
-            continue;
+        if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
+        timeout=limit_wait(timeout,now,next_sample);
+        if(power_allow&&!power_failed&&allow_backlight&&!busy&&now>=0&&last_input>=0&&backlight_dir[0]){
+            long dim=page==READER?(saver?90:180):(saver?25:60);
+            long blank=page==READER?(saver?180:300):(saver?60:120);
+            if(!down&&!pending){
+                if(!power_stage)timeout=limit_wait(timeout,now,last_input+dim*1000);
+                else if(power_stage==1&&power_blank)timeout=limit_wait(timeout,now,last_input+blank*1000);
+            }
         }
-        if(!(p.revents&POLLIN)||(p.revents&(POLLERR|POLLHUP|POLLNVAL)))break;
+        struct pollfd p[2]={{.fd=fd,.events=POLLIN},{.fd=music_report,.events=POLLIN}};
+        int rc=poll(p,2,timeout);
+        if(rc<0){if(errno==EINTR)continue;break;}
+        if(!rc)continue;
+        if(p[1].revents&(POLLHUP|POLLERR|POLLNVAL)){
+            (void)music_read_report();if(music_report>=0)close(music_report);music_report=-1;
+            if(!power_stage&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
+        }
+        if(p[0].revents&(POLLERR|POLLHUP|POLLNVAL))break;
+        if(!(p[0].revents&POLLIN))continue;
         struct input_event e[16];ssize_t got=read(fd,e,sizeof(e));
         if(got<0){if(errno==EAGAIN||errno==EINTR)continue;break;}if(!got)break;
         int changed=0;
         for(size_t i=0;i<(size_t)got/sizeof(*e);i++){
             struct input_event v=e[i];
+            if((v.type==EV_KEY&&v.value==1)||v.type==EV_ABS){
+                long long activity=mono_ms();if(activity>=0)last_input=activity;
+                if(power_stage){
+                    if(power_wake()){changed=1;wake_gesture=1;down=pending=have_x=have_y=0;start_y=-1;}
+                    else power_failed=1;
+                }
+            }
+            /* Consume the wake gesture instead of accidentally activating a control. */
+            if(wake_gesture){
+                if((v.type==EV_KEY&&v.value==0)||(v.type==EV_ABS&&v.code==ABS_MT_TRACKING_ID&&v.value<0))wake_gesture=0;
+                continue;
+            }
             if(v.type==EV_SYN&&v.code==SYN_DROPPED){dropped=1;pending=down=have_x=have_y=0;start_y=-1;continue;}
             if(dropped){if(v.type==EV_SYN&&v.code==SYN_REPORT)dropped=0;continue;}
             if(v.type==EV_ABS&&v.code==ABS_MT_SLOT){slot=v.value;continue;}
@@ -1503,7 +1599,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+    (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
     char label[16];
@@ -1539,6 +1635,17 @@ static int selftest(void) {
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==2&&!strcmp(argv[1],"--test-power")){
+        if(idle_target(24,1,0,0,1)||idle_target(25,1,0,0,1)!=1||
+           idle_target(60,1,0,0,1)!=2||idle_target(60,1,0,0,0)!=1||
+           idle_target(60,1,1,0,1)||idle_target(600,1,0,1,1))return 1;
+        if(limit_wait(60000,1000,2500)!=1500||limit_wait(30000,1000,2000)!=1000)return 1;
+        if(!governor_listed("performance schedutil ondemand","schedutil")||governor_listed("performance schedutil","sched"))return 1;
+        power_memory();if(ram_total<=0)return 1;
+        power_idle(2);if(power_stage)return 1;
+        cpu_policy(1);if(cpu_changed)return 1;
+        return 0;
+    }
     if(argc==2&&!strcmp(argv[1],"--test-update-ui")){
         update_parse("POCKETOS SELECTION 8 7");
         update_parse("POCKETOS PROGRESS 60");
@@ -1607,6 +1714,7 @@ int main(int argc,char **argv) {
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
+        if(page==POWER){battery=78;ram_total=65536;ram_available=32768;shell_rss=1024;}
         if(page==UPDATES){update_current=12;update_previous=11;update_allow=1;}
         if(page==WIFIUI||page==BTUI){radio_mode=page==BTUI;radio_count=2;strcpy(radio_items[0].name,radio_mode?"Wireless Headphones":"Home Wi-Fi");strcpy(radio_items[1].name,radio_mode?"Portable Speaker":"Guest Network");strcpy(radio_items[0].address,"00:11:22:33:44:55");strcpy(radio_items[1].address,"00:11:22:33:44:56");radio_items[0].security=1;radio_items[0].signal=-48;radio_items[1].signal=-67;radio_message(radio_mode?"Choose a device":"Choose a network");}
         if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
@@ -1624,6 +1732,9 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
         else if(!strcmp(argv[1],"--allow-radio"))radio_allow=1;
         else if(!strcmp(argv[1],"--allow-updates"))update_allow=1;
+        else if(!strcmp(argv[1],"--allow-idle-dim"))power_allow=1;
+        else if(!strcmp(argv[1],"--allow-screen-off")){power_allow=1;power_blank=1;}
+        else if(!strcmp(argv[1],"--allow-cpu-policy"))power_cpu_allow=1;
         else break;
         argc--;argv++;
     }
