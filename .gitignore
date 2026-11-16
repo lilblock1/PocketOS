@@ -1,0 +1,6 @@
+/buildroot-src/
+/buildroot-output/
+/reference-work/
+/reference.upt
+/foundation-artifact/
+__pycache__/
