@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install host-only compressed audio test decoder
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg python3-pil fonts-dejavu-core
       - name: Compile and test application code on host
         run: make -C apps BUILD_DIR="$PWD/host-app-output" check
       - name: Render native shell previews (host)
@@ -101,6 +101,8 @@ jobs:
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview HOME target-app-output/HOME.ppm
           cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview READER target-app-output/READER.ppm
+          cmp ui-previews/READER.ppm target-app-output/READER.ppm
           readelf -h target-app-output/pocketos-wifi | grep -q MIPS
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-wifi --version)" = 'PocketOS Wi-Fi v1'
           readelf -h target-app-output/pocketos-music | grep -q MIPS
