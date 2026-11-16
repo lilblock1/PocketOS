@@ -1,0 +1,87 @@
+name: PocketOS - Applications (no Linux rebuild)
+on:
+  push:
+    branches: [main]
+    paths: ['apps/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', '.github/workflows/pocketos-apps.yml']
+  workflow_dispatch:
+    inputs:
+      foundation_run_id:
+        description: Successful foundation run with SDK (blank = latest available)
+        required: false
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-apps
+  cancel-in-progress: true
+jobs:
+  applications:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and test application code on host
+        run: make -C apps BUILD_DIR="$PWD/host-app-output" check
+      - name: Select prebuilt foundation and SDK
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN: ${{ inputs.foundation_run_id }}
+        run: python3 tools/select_sdk.py
+      - name: Download existing MIPS SDK
+        if: steps.pick.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-compiled-MIPS-SDK
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: previous-sdk
+      - name: Download matching existing rootfs
+        if: steps.pick.outputs.run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
+          run-id: ${{ steps.pick.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: previous-foundation
+      - name: Verify paired artifacts and relocate SDK
+        if: steps.pick.outputs.run_id != ''
+        env:
+          FOUNDATION_RUN: ${{ steps.pick.outputs.run_id }}
+          FOUNDATION_COMMIT: ${{ steps.pick.outputs.commit }}
+        run: |
+          python3 tools/verify_sdk.py
+          mkdir -p sdk rootfs
+          tar -xzf previous-sdk/pocketos-sdk.tar.gz -C sdk --no-same-owner --no-same-permissions
+          (cd sdk/pocketos-sdk && ./relocate-sdk.sh)
+          # Do not create device nodes; execution is entirely in user-mode QEMU.
+          tar -xzf previous-foundation/PocketOS-rootfs-NOT-FIRMWARE.tar.gz -C rootfs \
+            --no-same-owner --no-same-permissions --exclude='./dev/*' --exclude='dev/*'
+      - name: Cross-compile applications only and test against existing rootfs
+        if: steps.pick.outputs.run_id != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user
+          compiler=
+          for candidate in "$PWD"/sdk/pocketos-sdk/bin/mipsel*-gcc; do
+            if [ -x "$candidate" ]; then compiler="$candidate"; break; fi
+          done
+          test -n "$compiler"
+          make -C apps CC="$compiler" BUILD_DIR="$PWD/target-app-output" all
+          readelf -h target-app-output/pocketos-info | tee target-app-output/elf.txt
+          grep -q 'ELF32' target-app-output/elf.txt
+          grep -q 'little endian' target-app-output/elf.txt
+          grep -q 'MIPS' target-app-output/elf.txt
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-info --version)" = 'PocketOS application SDK smoke test v1'
+          cp previous-sdk/sdk-manifest.json target-app-output/
+      - name: Upload application-only development artifact
+        if: steps.pick.outputs.run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-applications-NOT-FIRMWARE
+          path: target-app-output/
+          if-no-files-found: error
+          retention-days: 14
