@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 static int fd=-1;
@@ -103,12 +104,19 @@ int main(int argc,char **argv){
     if(!strcmp(action,"status"))cmd="STATUS";
     else if(!strcmp(action,"results"))cmd="SCAN_RESULTS";
     else if(!strcmp(action,"scan")){cmd="SCAN";mut=1;}
+    else if(!strcmp(action,"scan-list")){cmd="SCAN";mut=1;}
     else if(!strcmp(action,"disconnect")){cmd="DISCONNECT";mut=1;}
     else if(!strcmp(action,"connect"))mut=1;
     else return 2;
     if(mut&&!opt){fputs("Radio actions require explicit --allow-radio.\n",stderr);return 2;}
     if(!start(socket)){fputs("Supplicant control socket unavailable.\n",stderr);return 1;}
     if(!cmd)return join_network();
+    if(!strcmp(action,"scan-list")){
+        if(!ok("SCAN"))return 1;
+        struct timespec delay={.tv_sec=4,.tv_nsec=0};
+        while(nanosleep(&delay,&delay)<0&&errno==EINTR){}
+        cmd="SCAN_RESULTS";mut=0;
+    }
     if(mut)return ok(cmd)?0:1;
     char r[16384];
     if(!request(cmd,r,sizeof(r))||!strncmp(r,"FAIL",4))return 1;

@@ -30,7 +30,7 @@ jobs:
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews
-          for screen in HOME SETTINGS SYSTEM BATTERY MUSIC BOOKS READER FILES CONTROL PREFERENCES DISPLAY STORAGE RADIOS SOUND UPDATES; do
+          for screen in HOME SETTINGS SYSTEM BATTERY MUSIC BOOKS READER FILES CONTROL PREFERENCES DISPLAY STORAGE RADIOS WI-FI BLUETOOTH SOUND UPDATES; do
             host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
           done
           host-app-output/pocketos-shell --preview 'NOW PLAYING' ui-previews/NOW-PLAYING.ppm

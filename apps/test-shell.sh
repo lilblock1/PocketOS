@@ -44,3 +44,9 @@ test ! -e "$tmp/sd/Downloads/renamed.txt"
 test ! -e "$tmp/sd/Downloads/example.txt"
 "$bin" --preview FILES "$tmp/FILES.ppm"
 test "$(wc -c < "$tmp/FILES.ppm")" -eq 230415
+
+"$bin" --test-radio
+for screen in WI-FI BLUETOOTH; do
+    "$bin" --preview "$screen" "$tmp/$screen.ppm"
+    test "$(wc -c < "$tmp/$screen.ppm")" -eq 230415
+done

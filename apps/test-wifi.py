@@ -14,7 +14,7 @@ class TestWifi(unittest.TestCase):
                         try: cmd, peer = server.recvfrom(2048)
                         except socket.timeout: continue
                         messages.append(cmd)
-                        reply = b"4\n" if cmd == b"ADD_NETWORK" else b"wpa_state=COMPLETED\n" if cmd == b"STATUS" else b"OK\n"
+                        reply = b"4\n" if cmd == b"ADD_NETWORK" else b"wpa_state=COMPLETED\n" if cmd == b"STATUS" else b"00:11:22:33:44:55\t2412\t-50\t[ESS]\tTest Network\n" if cmd == b"SCAN_RESULTS" else b"OK\n"
                         server.sendto(reply, peer)
                 thread = threading.Thread(target=run); thread.start()
                 try:
@@ -22,6 +22,7 @@ class TestWifi(unittest.TestCase):
                     self.assertNotEqual(subprocess.run(base+["scan"],capture_output=True).returncode,0)
                     self.assertIn(b"COMPLETED",subprocess.check_output(base+["status"]))
                     self.assertEqual(subprocess.run(base+["--allow-radio","scan"]).returncode,0)
+                    self.assertIn(b"Test Network",subprocess.check_output(base+["--allow-radio","scan-list"],timeout=12))
                     p=subprocess.run(base+["--allow-radio","connect"],input=b'Test Network\nsafe"pass\\word\n',capture_output=True)
                     self.assertEqual(p.returncode,0)
                     self.assertNotIn(b"safe",p.stdout+p.stderr)

@@ -22,6 +22,7 @@
 #include "pocketos-audio-formats.h"
 #include "pocketos-reader-font.h"
 #include "pocketos-files.h"
+#include "pocketos-radio-ui.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -31,7 +32,7 @@
 static uint16_t canvas[W*H];
 static uint16_t bg=RGB(13,19,24), card=RGB(25,35,43), edge=RGB(47,62,70),
     fg=RGB(239,246,246), muted=RGB(151,171,179), mint=RGB(109,226,182);
-enum page { HOME, MUSIC, BOOKS, GAMES, FILES, SETTINGS, DIAGNOSTICS, DISPLAY, SOUND, RADIO, POWER, STORAGE, UPDATES, PREFERENCES, CONTROL, NOWPLAYING, READER };
+enum page { HOME, MUSIC, BOOKS, GAMES, FILES, SETTINGS, DIAGNOSTICS, DISPLAY, SOUND, RADIO, POWER, STORAGE, UPDATES, PREFERENCES, CONTROL, NOWPLAYING, READER, WIFIUI, BTUI };
 static enum page page=HOME, return_page=HOME;
 static int return_selected=0, clock24=0, theme=0, readable=0, saver=0, save_error=0;
 static const char *config_path=NULL;
@@ -81,7 +82,7 @@ static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0;
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
-static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER"};
+static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
 static const enum page setting_items[]={DISPLAY,SOUND,RADIO,POWER,STORAGE,UPDATES,PREFERENCES};
 static const unsigned char glyph[][7]={
@@ -514,7 +515,7 @@ static void music_start(void){
     int rf=fcntl(r[0],F_GETFL);
     if(rf<0||fcntl(r[0],F_SETFL,rf|O_NONBLOCK)!=0||fcntl(r[0],F_SETFD,FD_CLOEXEC)!=0){close(f[0]);close(f[1]);close(r[0]);close(r[1]);music_error=1;return;}
     int flags=fcntl(f[1],F_GETFL);
-    if(flags<0||fcntl(f[1],F_SETFL,flags|O_NONBLOCK)!=0){close(f[0]);close(f[1]);close(r[0]);close(r[1]);music_error=1;return;}
+    if(flags<0||fcntl(f[1],F_SETFL,flags|O_NONBLOCK)!=0||fcntl(f[1],F_SETFD,FD_CLOEXEC)!=0){close(f[0]);close(f[1]);close(r[0]);close(r[1]);music_error=1;return;}
     pid_t pid=fork();
     if(pid==0){
         close(f[1]);if(dup2(f[0],STDIN_FILENO)<0)_exit(126);close(f[0]);
@@ -785,6 +786,65 @@ static void fm_edit_char(int x,int y){
         else if(fm_name_ok(fm_rename)){fm_panel=0;fm_confirm=3;}
     }else if(y>=288){fm_panel=0;fm_clip=0;}
 }
+static const char *radio_keys(void){
+    static const char *const layers[]={
+        "abcdefghijklmnopqrstuvwxyz0123456789.-_ ",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_ ",
+        "!\"#$%&'()*+,-./:;<=>?@[\\]^_\x60{|}~ 0123456"
+    };
+    return layers[radio_key_layer];
+}
+static void radio_open(int bluetooth){
+    if(radio_pid>=0)return;
+    radio_clear_key();radio_mode=bluetooth;radio_count=radio_top=radio_index=0;
+    page=bluetooth?BTUI:WIFIUI;radio_message(radio_allow?"Tap Scan to discover":"Radio changes locked");
+}
+static void radio_choose(void){
+    if(radio_pid>=0||!radio_count)return;
+    if(radio_mode){(void)radio_spawn(R_BT_PAIR,radio_items[radio_index].address);return;}
+    struct radio_item *item=&radio_items[radio_index];
+    if(!radio_allow){radio_message("Radio changes locked");return;}
+    if(item->security==2){radio_message("Security type not supported yet");return;}
+    snprintf(radio_ssid,sizeof(radio_ssid),"%.32s",item->name);
+    radio_security=item->security;radio_clear_key();radio_keyboard=1;
+    radio_message(radio_security?"Enter Wi-Fi password":"Open network - confirm Join");
+}
+static void radio_tap(int x,int y){
+    if(radio_keyboard){
+        if(y>=99&&y<239&&x>=8&&x<232&&radio_security){
+            int i=(y-99)/28*8+(x-8)/28;
+            const char *keys=radio_keys();
+            if(i>=0&&(size_t)i<strlen(keys)){
+                size_t n=strlen(radio_key);
+                if(n<64){radio_key[n]=keys[i];radio_key[n+1]=0;}
+            }
+        }else if(y>=245&&y<277){
+            if(x<74)radio_key_layer=(radio_key_layer+1)%3;
+            else if(x<148){size_t n=strlen(radio_key);if(n)radio_key[n-1]=0;}
+            else{
+                size_t n=strlen(radio_key);
+                if(radio_security&&n<8){radio_message("Password must have 8+ characters");return;}
+                if(radio_security&&n==64){for(size_t i=0;i<n;i++)if(!isxdigit((unsigned char)radio_key[i])){radio_message("64 characters must be hexadecimal");return;}}
+                if(radio_spawn(R_WIFI_JOIN,NULL))radio_clear_key();
+            }
+        }else if(y>=288)radio_clear_key();
+        return;
+    }
+    if(radio_pid>=0)return;
+    if(y>=83&&y<219){
+        int i=radio_top+(y-83)/34;
+        if(i<radio_count){radio_index=i;radio_message(radio_mode?"Select Pair or Connect":"Select Join");}
+    }else if(y>=224&&y<250){
+        if(x<82)radio_select(-1);
+        else if(x<156)radio_choose();
+        else radio_select(1);
+    }else if(y>=254&&y<282){
+        if(x<82)(void)radio_spawn(radio_mode?R_BT_SCAN:R_WIFI_SCAN,NULL);
+        else if(x<156)(void)radio_spawn(radio_mode?R_BT_STATUS:R_WIFI_STATUS,NULL);
+        else if(radio_mode){if(radio_count)(void)radio_spawn(R_BT_CONNECT,radio_items[radio_index].address);}
+        else (void)radio_spawn(R_WIFI_DISCONNECT,NULL);
+    }
+}
 static void quick_tile(int i,const char *label,const char *value,int active) {
     int x=12+(i%2)*110,y=82+(i/2)*61;
     rounded(x,y,106,55,i==selected?edge:card);
@@ -807,7 +867,7 @@ static void render(void) {
         snprintf(v,sizeof(v),"%d%% TARGET",volume);quick_tile(3,"VOLUME",v,0);
         quick_tile(4,"BATTERY SAVER",saver?"PREFERRED":"STANDARD",saver);
         quick_tile(5,"SETTINGS","OPEN",1);
-        text_at(12,270,"RADIO / AUDIO WRITES LOCKED",1,muted);
+        text_at(12,270,radio_allow?"RADIO CONTROLS ENABLED":"RADIO CHANGES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
     } else if(page==FILES){
         if(fm_confirm){
@@ -1028,18 +1088,38 @@ static void render(void) {
         text_at(21,223,"OUTPUT PREFERENCE",1,muted);
         text_at(21,239,outputs[output],2,fg);
         text_at(12,301,"BACK",2,mint);
-    } else if(page==RADIO){
-        rounded(12,81,216,125,card);
-        if(page==RADIO){
-            text_at(21,94,wifi_present?"WI-FI: DETECTED":"WI-FI: UNKNOWN",2,fg);
-            text_at(21,117,bt_present?"BT: DETECTED":"BT: UNKNOWN",2,fg);
-            text_at(21,149,"BACKEND CLI AVAILABLE",1,muted);
-        } else {
-            text_at(21,94,"AUDIO OUTPUT",2,fg);
-            text_at(21,122,audio_present?"PCM DEVICE DETECTED":"PCM NOT DETECTED",1,mint);
-            text_at(21,149,"MIXER NOT VERIFIED",1,muted);
+    } else if(page==WIFIUI||page==BTUI){
+        if(radio_keyboard){
+            reader_print(12,60,radio_ssid,16,fg,bg,0,1,228);
+            char mask[65];size_t n=strlen(radio_key);memset(mask,'*',n);mask[n]=0;
+            reader_print(12,80,radio_security?mask:"Unsecured network",13,mint,bg,0,0,228);
+            if(radio_security){const char *keys=radio_keys();for(int i=0;i<40&&(size_t)i<strlen(keys);i++){int x=8+i%8*28,y=99+i/8*28;char c[2]={keys[i],0};rounded(x,y,26,26,card);reader_print(x+8,y+4,c,17,fg,card,0,0,x+25);}}
+            text_at(12,254,"SHIFT",1,mint);text_at(85,254,"ERASE",1,mint);text_at(170,254,"JOIN",1,mint);
+            reader_print(12,278,radio_note,10,muted,bg,0,0,228);
+            text_at(12,301,"CANCEL",2,mint);
+        }else{
+            reader_print(12,65,radio_note,12,muted,bg,0,0,228);
+            for(int j=0;j<4&&radio_top+j<radio_count;j++){
+                int i=radio_top+j,y=83+j*34;uint16_t tile=i==radio_index?edge:card;rounded(12,y,216,31,tile);
+                reader_print(20,y+4,radio_items[i].name,14,fg,tile,0,0,222);
+                char info[40];
+                if(radio_mode)snprintf(info,sizeof(info),"%s",radio_items[i].address);
+                else snprintf(info,sizeof(info),"%s  %d dBm",radio_items[i].security==0?"Open":radio_items[i].security==1?"WPA-PSK":"Unsupported",radio_items[i].signal);
+                reader_print(20,y+18,info,10,muted,tile,0,0,222);
+            }
+            const char *labels[]={"UP",radio_mode?"PAIR":"JOIN","DOWN","SCAN","STATUS",radio_mode?"CONNECT":"DISCONN"};
+            for(int i=0;i<6;i++){int x=12+i%3*74,y=224+i/3*30;rounded(x,y,70,26,card);text_at(x+5,y+9,labels[i],1,mint);}
+            text_at(12,301,"BACK",2,mint);
+            if(radio_mode&&radio_count)text_at(134,301,"DISCONNECT",1,mint);
         }
-        text_at(21,174,"UI CONNECTION PENDING",1,muted);
+    } else if(page==RADIO){
+        rounded(12,81,216,60,card);
+        reader_print(21,91,"Wi-Fi",18,fg,card,0,1,220);
+        reader_print(21,116,wifi_present?"Interface detected":"Interface not detected",12,muted,card,0,0,220);
+        rounded(12,153,216,60,card);
+        reader_print(21,163,"Bluetooth",18,fg,card,0,1,220);
+        reader_print(21,188,bt_present?"Adapter detected":"Adapter not detected",12,muted,card,0,0,220);
+        reader_print(12,239,radio_allow?"Manual scans only":"Radio changes locked",12,muted,bg,0,0,228);
         text_at(12,301,"BACK",2,mint);
     } else {
         rounded(12,81,216,92,card);
@@ -1062,10 +1142,12 @@ static void render(void) {
 }
 static void open_control(void) {
     if(page==CONTROL)return;
+    if(radio_keyboard)radio_clear_key();
     return_page=page;return_selected=selected;page=CONTROL;selected=0;
 }
 static void back(void) {
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
+    if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
     if(page==FILES){if(fm_confirm||fm_panel){fm_confirm=fm_panel=0;return;}fm_close();page=HOME;selected=0;return;}
@@ -1083,7 +1165,7 @@ static void activate(int i) {
         save_error=!save_preferences();return;
     }
     if(page==CONTROL) {
-        if(i==0||i==1)page=RADIO;
+        if(i==0||i==1){radio_open(i==1);return;}
         else if(i==2)page=DISPLAY;
         else if(i==3)page=SOUND;
         else if(i==4){saver=!saver;save_error=!save_preferences();return;}
@@ -1103,6 +1185,14 @@ static void set_volume_target(int v){
 }
 static void tap(int x,int y) {
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
+    if(page==WIFIUI||page==BTUI){
+        if(!radio_keyboard&&y>=288){
+            if(page==BTUI&&x>=125&&radio_count&&radio_pid<0)(void)radio_spawn(R_BT_DISCONNECT,radio_items[radio_index].address);
+            else back();
+        }else radio_tap(x,y);
+        return;
+    }
+    if(page==RADIO&&y>=81&&y<214){radio_open(y>=153);return;}
     if(page==FILES){
         if(fm_confirm){if(y>=241&&y<285){if(x>=120)fm_apply();else{fm_confirm=0;fm_note("CANCELLED");}}return;}
         if(fm_panel==2){fm_edit_char(x,y);return;}
@@ -1170,6 +1260,16 @@ static void tap(int x,int y) {
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(page==WIFIUI||page==BTUI){
+        if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
+        if(!radio_keyboard&&radio_pid<0){
+            if(code==KEY_UP||code==KEY_DOWN){radio_select(code==KEY_UP?-1:1);return 1;}
+            if(code==KEY_ENTER||code==KEY_OK){radio_choose();return 1;}
+            if(code==KEY_MENU){(void)radio_spawn(radio_mode?R_BT_SCAN:R_WIFI_SCAN,NULL);return 1;}
+        }
+        return 0;
+    }
+    if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){radio_open(code==KEY_DOWN);return 1;}
     if(page==FILES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(fm_confirm||fm_panel)return 0;
@@ -1303,13 +1403,15 @@ static int native(const char *input) {
     (void)signal(SIGPIPE,SIG_IGN);
     for(;;){
         int report=music_read_report(), reaped=music_reap();
+        if(radio_poll()&&(page==WIFIUI||page==BTUI)){render();present(&b);}
         if((report||reaped)&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
         int timeout=update_clock(&clock_changed);
         if(music_pid>=0&&timeout>1000)timeout=1000;
+        if(radio_pid>=0&&timeout>200)timeout=200;
         if(clock_changed&&page!=READER){render();present(&b);}
         struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
-        if(!rc&&music_pid>=0)continue;
+        if(!rc&&(music_pid>=0||radio_pid>=0))continue;
         if(!rc){
             int n=sample_battery(),w=wifi_present,bt=bt_present,br=brightness_pct,audio=audio_present,ip=internal_pct,sp=sd_pct;
             unsigned long long i=internal_free,j=sd_free;
@@ -1355,7 +1457,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+    radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
     char label[16];
@@ -1391,6 +1493,18 @@ static int selftest(void) {
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==2&&!strcmp(argv[1],"--test-radio")){
+        char scan[]="bssid / frequency / signal level / flags / ssid\n00:11:22:33:44:55\t2412\t-50\t[WPA2-PSK-CCMP][ESS]\tHome\\x20WiFi\n00:11:22:33:44:56\t2412\t-70\t[ESS]\tGuest\n00:11:22:33:44:57\t2412\t-90\t[WPA2-PSK-CCMP][ESS]\tHome WiFi\n";
+        radio_parse_wifi(scan);
+        if(radio_count!=2||strcmp(radio_items[0].name,"Home WiFi")||radio_items[0].signal!=-50||radio_items[1].security!=0)return 1;
+        if(radio_spawn(R_WIFI_SCAN,NULL)||radio_pid>=0)return 1;
+        radio_allow=1;page=WIFIUI;radio_choose();if(!radio_keyboard||strcmp(radio_ssid,"Home WiFi"))return 1;
+        radio_tap(10,101);if(strcmp(radio_key,"a"))return 1;
+        radio_tap(2,300);if(radio_keyboard||radio_key[0])return 1;
+        char devices[]="Device 00:11:22:33:44:55 Headphones\nDevice invalid device\n";
+        radio_parse_bt(devices);if(radio_count!=1||strcmp(radio_items[0].name,"Headphones"))return 1;
+        radio_close();return 0;
+    }
     if(argc==3&&!strcmp(argv[1],"--test-files")&&argv[2][0]=='/'){
         if(!fm_attach(argv[2])||!fm_scan()||!fm_enter("Documents"))return 1;
         if(fm_open_dir("../")>=0||fm_enter("link"))return 1;
@@ -1436,6 +1550,7 @@ int main(int argc,char **argv) {
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
+        if(page==WIFIUI||page==BTUI){radio_mode=page==BTUI;radio_count=2;strcpy(radio_items[0].name,radio_mode?"Wireless Headphones":"Home Wi-Fi");strcpy(radio_items[1].name,radio_mode?"Portable Speaker":"Guest Network");strcpy(radio_items[0].address,"00:11:22:33:44:55");strcpy(radio_items[1].address,"00:11:22:33:44:56");radio_items[0].security=1;radio_items[0].signal=-48;radio_items[1].signal=-67;radio_message(radio_mode?"Choose a device":"Choose a network");}
         if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}
         if(page==READER){strcpy(book_title,"The Quiet Woods");const char *demo[]={"Chapter One","The town appeared just after","dusk, a scatter of warm lights","against the hillside. After a","long day on the road, it felt","almost unreal, quiet and","strangely familiar.","","He paused at the edge of the","square, listening to a distant","bell. Beyond the rooftops,","a train sighed into the night."};for(unsigned i=0;i<sizeof(demo)/sizeof(demo[0]);i++)snprintf(book_text[i],65,"%s",demo[i]);book_bytes=99000;book_pos=11500;book_next=12000;book_page_span=500;battery=78;strcpy(clock_label,"22:08");}
@@ -1449,6 +1564,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
         else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
+        else if(!strcmp(argv[1],"--allow-radio"))radio_allow=1;
         else break;
         argc--;argv++;
     }
