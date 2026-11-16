@@ -36,6 +36,37 @@ jobs:
           ref: 137a566bf5353831d97c068a4c22e6df5b4d07a0
           path: buildroot-src
           persist-credentials: false
+      - name: Restore cached upstream source archives
+        uses: actions/cache@v4
+        with:
+          path: buildroot-src/dl
+          key: pocketos-downloads-137a566b-linux44-v1
+      - name: Verify Linux 4.4 archive and version-specific license
+        run: |
+          # Archive SHA-256 from kernel.org/pub/linux/kernel/v4.x/sha256sums.asc.
+          # The pre-SPDX 4.4 COPYING file contains the complete GPLv2 and
+          # syscall exception; modern kernel LICENSES/* files do not exist.
+          mkdir -p buildroot-src/dl/linux
+          archive=buildroot-src/dl/linux/linux-4.4.302.tar.xz
+          if [ ! -f "$archive" ]; then
+            curl --fail --location --retry 3 https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.4.302.tar.xz -o "$archive"
+          fi
+          printf '%s  %s\n' '35017bb40b604e0b577fc2b87e727632b46608a2ba3a4f5858b9177f58f376b3' "$archive" | sha256sum --check
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/gregkh/linux/a09b2d8f61ea0e9ae735c400399b97966a9418d6/COPYING -o linux44-COPYING
+          printf '%s  linux44-COPYING\n' 'af8067302947c01fd9eee72befa54c7e3ef8a48fecde7fd71277f2290b2bf0f7' | sha256sum --check
+          tar -xOf "$archive" linux-4.4.302/COPYING | cmp - linux44-COPYING
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('buildroot-src/package/linux-headers/linux-headers.hash')
+          s = p.read_text()
+          old = 'sha256  fb5a425bd3b3cd6071a3a9aff9909a859e7c1158d54d32e07658398cd67eb6a0  COPYING'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'sha256  af8067302947c01fd9eee72befa54c7e3ef8a48fecde7fd71277f2290b2bf0f7  COPYING') +
+              '\nsha256  35017bb40b604e0b577fc2b87e727632b46608a2ba3a4f5858b9177f58f376b3  linux-4.4.302.tar.xz\n')
+          config = Path('generated-defconfig')
+          with config.open('a') as f:
+              f.write('\nBR2_PACKAGE_HOST_LINUX_HEADERS_LICENSE_FILES="COPYING"\n')
+          PY
       - name: Configure minimal MIPS Linux userspace
         run: |
           make -C buildroot-src O="$PWD/buildroot-output" BR2_DEFCONFIG="$PWD/generated-defconfig" defconfig
@@ -44,6 +75,7 @@ jobs:
             grep -qx "$symbol=y" "$config"
           done
           grep -qx 'BR2_DEFAULT_KERNEL_VERSION="4.4.302"' "$config"
+          grep -qx 'BR2_PACKAGE_HOST_LINUX_HEADERS_LICENSE_FILES="COPYING"' "$config"
           if grep -qx 'BR2_LINUX_KERNEL=y' "$config"; then exit 1; fi
           if grep -qx 'BR2_MIPS_SOFT_FLOAT=y' generated-defconfig; then
             grep -qx 'BR2_MIPS_SOFT_FLOAT=y' "$config"
