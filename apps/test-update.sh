@@ -24,3 +24,13 @@ run rollback
 test "$(run status)" = '1 2 2'
 if run sd "$tmp/v2"; then exit 1; fi
 test -f "$tmp/sd/PocketOS-updates/versions/2/data-test"
+
+# Fixed SD inbox and structured UI protocol; stage without executing payloads.
+python3 "$packer" --sequence 3 --key "$tmp/private.pem" --output "$tmp/sd/PocketOS-inbox" "$tmp/data-test"
+run --ui sd-inbox > "$tmp/ui.log"
+grep -Fx 'POCKETOS PROGRESS 100' "$tmp/ui.log"
+grep -Fx 'POCKETOS SELECTION 3 1' "$tmp/ui.log"
+test "$(run --ui status)" = 'POCKETOS SELECTION 3 1'
+if run --ui sd-inbox > "$tmp/ui-replay"; then exit 1; fi
+grep -q '^POCKETOS ERROR ' "$tmp/ui-replay"
+test "$(run status)" = '3 1 3'

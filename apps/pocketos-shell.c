@@ -23,6 +23,7 @@
 #include "pocketos-reader-font.h"
 #include "pocketos-files.h"
 #include "pocketos-radio-ui.h"
+#include "pocketos-update-ui.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -1061,16 +1062,35 @@ static void render(void) {
         text_at(21,188,brightness_error?"WRITE FAILED":allow_backlight?"TAP BAR TO ADJUST":"READ ONLY - LOCKED",1,muted);
         text_at(12,301,"BACK",2,mint);
     } else if(page==UPDATES){
-        text_at(12,64,"SIGNED TEST PACKAGES",1,muted);
-        rounded(12,82,216,61,card);
-        text_at(21,93,"SD CARD",2,fg);
-        text_at(21,121,"COPY SIGNED PACKAGE TO SD",1,muted);
-        rounded(12,154,216,61,card);
-        text_at(21,165,"GITHUB",2,fg);
-        text_at(21,193,"TEST CHANNEL - STAGING ONLY",1,muted);
-        text_at(12,237,"UPDATER CLI AVAILABLE",1,mint);
-        text_at(12,254,"INSTALLATION LOCKED",1,muted);
-        text_at(12,301,"BACK",2,mint);
+        char version[64];snprintf(version,sizeof(version),"Selected: %u   Previous: %u",update_current,update_previous);
+        reader_print(12,62,version,12,muted,bg,0,0,228);
+        if(update_pid>=0){
+            reader_print(12,102,update_active==U_STATUS?"Reading status":"Verifying and staging",18,fg,bg,0,1,228);
+            rect(12,142,216,8,edge);rect(12,142,216*update_percent/100,8,mint);
+            char pct[16];snprintf(pct,sizeof(pct),"%d%%",update_percent);
+            reader_print(12,160,pct,17,mint,bg,0,0,228);
+            reader_print(12,190,update_note,12,muted,bg,0,0,228);
+            reader_print(12,231,"Keep microSD inserted",13,fg,bg,0,0,228);
+        }else if(update_confirm){
+            reader_print(12,94,"Select previous version?",18,fg,bg,0,1,228);
+            reader_print(12,130,"Rollback rechecks signatures.",12,muted,bg,0,0,228);
+            reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
+            rounded(12,240,104,36,card);rounded(124,240,104,36,mint);
+            reader_print(20,250,"Cancel",15,fg,card,0,0,112);
+            reader_print(132,250,"Confirm",15,bg,mint,0,1,225);
+        }else{
+            const char *const labels[]={"GitHub test updates","Stage from microSD","Roll back selection"};
+            const char *const detail[]={"Download signed test-latest","PocketOS-inbox folder","Return to previous package"};
+            for(int i=0;i<3;i++){
+                int y=81+i*49;rounded(12,y,216,44,card);
+                if(selected==i)rect(12,y+4,2,36,mint);
+                reader_print(20,y+5,labels[i],16,fg,card,0,1,226);
+                reader_print(20,y+24,detail[i],11,muted,card,0,0,226);
+            }
+            reader_print(12,239,update_note,12,mint,bg,0,0,228);
+            reader_print(12,256,update_allow?"SD staging only / no flash":"Updates locked",11,muted,bg,0,0,228);
+            text_at(12,301,"BACK",2,mint);text_at(157,301,"REFRESH",1,mint);
+        }
     } else if(page==STORAGE){
         rounded(12,81,216,170,card);
         usage_text(94,"INTERNAL DATA",internal_pct,internal_free);
@@ -1146,6 +1166,7 @@ static void open_control(void) {
     return_page=page;return_selected=selected;page=CONTROL;selected=0;
 }
 static void back(void) {
+    if(page==UPDATES){if(update_pid>=0)return;if(update_confirm){update_confirm=U_NONE;return;}page=SETTINGS;selected=5;return;}
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
     if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
@@ -1174,7 +1195,7 @@ static void activate(int i) {
         selected=0;return;
     }
     if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
-    else if(page==SETTINGS&&i<7)page=setting_items[i];else return;
+    else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
     selected=0;
 }
 static void set_volume_target(int v){
@@ -1183,7 +1204,22 @@ static void set_volume_target(int v){
     save_error=!save_preferences();
     if(music_pid>=0)(void)music_send((unsigned char)(volume>50?50:volume));
 }
+static void update_choose(int i){
+    if(update_pid>=0)return;
+    if(i==2){
+        if(!update_allow){update_message("Update actions locked");return;}
+        if(!update_previous){update_message("No previous staged version");return;}
+        update_confirm=U_ROLLBACK;
+    }else if(i==0||i==1)(void)update_spawn(i==0?U_GITHUB:U_SD);
+}
 static void tap(int x,int y) {
+    if(page==UPDATES){
+        if(update_pid>=0)return;
+        if(update_confirm){if(y>=240&&y<279){update_confirm=U_NONE;if(x>=120)(void)update_spawn(U_ROLLBACK);}return;}
+        if(y>=81&&y<228){selected=(y-81)/49;update_choose(selected);}
+        else if(y>=287){if(x<120)back();else (void)update_spawn(U_STATUS);}
+        return;
+    }
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
     if(page==WIFIUI||page==BTUI){
         if(!radio_keyboard&&y>=288){
@@ -1260,6 +1296,14 @@ static void tap(int x,int y) {
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(page==UPDATES){
+        if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
+        if(update_pid>=0)return 0;
+        if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){update_confirm=U_NONE;(void)update_spawn(U_ROLLBACK);return 1;}return 0;}
+        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+3+(code==KEY_UP?-1:1))%3;return 1;}
+        if(code==KEY_ENTER||code==KEY_OK){update_choose(selected);return 1;}
+        return 0;
+    }
     if(page==WIFIUI||page==BTUI){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(!radio_keyboard&&radio_pid<0){
@@ -1404,14 +1448,16 @@ static int native(const char *input) {
     for(;;){
         int report=music_read_report(), reaped=music_reap();
         if(radio_poll()&&(page==WIFIUI||page==BTUI)){render();present(&b);}
+        if(update_poll()&&page==UPDATES){render();present(&b);}
         if((report||reaped)&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
         int timeout=update_clock(&clock_changed);
         if(music_pid>=0&&timeout>1000)timeout=1000;
         if(radio_pid>=0&&timeout>200)timeout=200;
+        if(update_pid>=0&&timeout>500)timeout=500;
         if(clock_changed&&page!=READER){render();present(&b);}
         struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
-        if(!rc&&(music_pid>=0||radio_pid>=0))continue;
+        if(!rc&&(music_pid>=0||radio_pid>=0||update_pid>=0))continue;
         if(!rc){
             int n=sample_battery(),w=wifi_present,bt=bt_present,br=brightness_pct,audio=audio_present,ip=internal_pct,sp=sd_pct;
             unsigned long long i=internal_free,j=sd_free;
@@ -1445,7 +1491,7 @@ static int native(const char *input) {
                     int64_t py=((int64_t)ry-ay.minimum)*(b.v.yres-1)/((int64_t)ay.maximum-ay.minimum);
                     if(px>=b.ox&&px<(int64_t)b.ox+b.vw&&py>=b.oy&&py<(int64_t)b.oy+b.vh){
                         int y=(int)((py-b.oy)*H/b.vh);
-                        if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL)open_control();
+                        if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL&&page!=UPDATES)open_control();
                         else if(page==CONTROL&&start_y>=0&&start_y-y>=40)back();
                         else tap((int)((px-b.ox)*W/b.vw),y);
                         changed=1;
@@ -1457,7 +1503,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+    update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
     char label[16];
@@ -1493,6 +1539,17 @@ static int selftest(void) {
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==2&&!strcmp(argv[1],"--test-update-ui")){
+        update_parse("POCKETOS SELECTION 8 7");
+        update_parse("POCKETOS PROGRESS 60");
+        update_parse("POCKETOS PROGRESS 1000");
+        if(update_current!=8||update_previous!=7||update_percent!=60)return 1;
+        if(update_spawn(U_GITHUB)||update_pid>=0)return 1;
+        page=UPDATES;update_allow=1;
+        update_choose(2);if(update_confirm!=U_ROLLBACK)return 1;
+        tap(20,260);if(update_confirm||update_pid>=0)return 1;
+        render();update_close();return 0;
+    }
     if(argc==2&&!strcmp(argv[1],"--test-radio")){
         char scan[]="bssid / frequency / signal level / flags / ssid\n00:11:22:33:44:55\t2412\t-50\t[WPA2-PSK-CCMP][ESS]\tHome\\x20WiFi\n00:11:22:33:44:56\t2412\t-70\t[ESS]\tGuest\n00:11:22:33:44:57\t2412\t-90\t[WPA2-PSK-CCMP][ESS]\tHome WiFi\n";
         radio_parse_wifi(scan);
@@ -1550,6 +1607,7 @@ int main(int argc,char **argv) {
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
+        if(page==UPDATES){update_current=12;update_previous=11;update_allow=1;}
         if(page==WIFIUI||page==BTUI){radio_mode=page==BTUI;radio_count=2;strcpy(radio_items[0].name,radio_mode?"Wireless Headphones":"Home Wi-Fi");strcpy(radio_items[1].name,radio_mode?"Portable Speaker":"Guest Network");strcpy(radio_items[0].address,"00:11:22:33:44:55");strcpy(radio_items[1].address,"00:11:22:33:44:56");radio_items[0].security=1;radio_items[0].signal=-48;radio_items[1].signal=-67;radio_message(radio_mode?"Choose a device":"Choose a network");}
         if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}
@@ -1565,6 +1623,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
         else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
         else if(!strcmp(argv[1],"--allow-radio"))radio_allow=1;
+        else if(!strcmp(argv[1],"--allow-updates"))update_allow=1;
         else break;
         argc--;argv++;
     }

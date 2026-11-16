@@ -50,3 +50,5 @@ for screen in WI-FI BLUETOOTH; do
     "$bin" --preview "$screen" "$tmp/$screen.ppm"
     test "$(wc -c < "$tmp/$screen.ppm")" -eq 230415
 done
+
+"$bin" --test-update-ui
