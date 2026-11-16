@@ -127,13 +127,46 @@ jobs:
           (cd foundation-artifact && sha256sum PocketOS-rootfs-NOT-FIRMWARE.tar.gz > SHA256SUMS)
       - name: Collect dependency license and source materials
         run: make -C buildroot-src O="$PWD/buildroot-output" legal-info
+      - name: Export reusable compiled MIPS toolchain SDK
+        env:
+          FOUNDATION_COMMIT: ${{ github.sha }}
+          FOUNDATION_RUN: ${{ github.run_id }}
+        run: |
+          make -C buildroot-src O="$PWD/buildroot-output" BR2_SDK_PREFIX=pocketos-sdk sdk
+          mkdir -p sdk-artifact
+          cp buildroot-output/images/pocketos-sdk.tar.gz sdk-artifact/
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          def sha(p):
+              with open(p,'rb') as stream: return hashlib.file_digest(stream,'sha256').hexdigest()
+          a=Path('foundation-artifact')
+          s=Path('sdk-artifact')
+          fs=a/'PocketOS-rootfs-NOT-FIRMWARE.tar.gz'
+          sdk=s/'pocketos-sdk.tar.gz'
+          report=json.loads((a/'compatibility.json').read_text())
+          assert report['flashable'] is False and report['fp_abi_matches']
+          stamp={'schema':1,'flashable':False,'commit':os.environ['FOUNDATION_COMMIT'],
+                 'run_id':int(os.environ['FOUNDATION_RUN']),
+                 'config_sha256':sha(a/'buildroot.config'),'rootfs_sha256':sha(fs),
+                 'reference_sha256':sha(a/'reference.json'),'sdk_sha256':sha(sdk)}
+          assert stamp['rootfs_sha256']==report['candidate_tar_gz']['sha256']
+          (s/'sdk-manifest.json').write_text(json.dumps(stamp,indent=2)+'\n')
+          PY
+      - name: Upload reusable compiler and target sysroot (not firmware)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-compiled-MIPS-SDK
+          path: sdk-artifact/
+          if-no-files-found: error
+          retention-days: 90
       - name: Upload explicitly non-flashable artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE
           path: foundation-artifact/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
       - name: Upload source and license materials
         uses: actions/upload-artifact@v4
         with:
