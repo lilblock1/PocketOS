@@ -14,6 +14,12 @@ case "$action" in
     *) exit 2 ;;
 esac
 command -v bluetoothctl >/dev/null 2>&1 || { echo 'RADIO_ERROR=bt-service'; exit 1; }
+case "$action" in
+    scan|discover|pair|connect)
+        if [ -x /usr/sbin/pocketos-radio-service ]; then
+            /usr/sbin/pocketos-radio-service bluetooth-start || { echo 'RADIO_ERROR=bt-start-failed'; exit 1; }
+        fi ;;
+esac
 # Do not attempt to initialize a UART, change shared radio power, or start a
 # daemon until the board-specific transport has been verified.
 show=$(bluetoothctl --timeout 5 show 2>&1) || { echo 'RADIO_ERROR=bt-service'; exit 1; }

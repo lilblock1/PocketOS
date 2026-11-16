@@ -80,6 +80,16 @@ if [ -e "$audio_marker" ] || [ -L "$audio_marker" ]; then
     fi
     case " $feature_args " in *' --allow-audio '*) ;; *) feature_args="$feature_args --allow-audio";; esac
 fi
+# Radio controls can be enabled independently of broad development features.
+radio_marker="$root/etc/pocketos/radio-enable"
+if [ -e "$radio_marker" ] || [ -L "$radio_marker" ]; then
+    [ -f "$radio_marker" ] && [ ! -L "$radio_marker" ] || die "Unsafe radio marker"
+    [ "$(wc -c < "$radio_marker")" -eq 20 ] && grep -Fxq POCKETOS-R1-RADIO-1 "$radio_marker" || die "Invalid radio marker"
+    if [ "$fixture" -eq 0 ]; then
+        case "$("$stat_cmd" -c '%u:%a' "$radio_marker")" in 0:400|0:600) ;; *) die "Untrusted radio marker";; esac
+    fi
+    case " $feature_args " in *' --allow-radio '*) ;; *) feature_args="$feature_args --allow-radio";; esac
+fi
 # Kernel suspend failed physical testing. Only software Smart Sleep is supported.
 smart_marker="$root/etc/pocketos/smart-sleep-enable"
 if [ -e "$smart_marker" ] || [ -L "$smart_marker" ]; then

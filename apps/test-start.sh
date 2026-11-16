@@ -94,3 +94,8 @@ printf 'POCKETOS-R1-AUDIO-1\n' > "$tmp/etc/pocketos/audio-enable"
 printf 'POCKETOS-R1-SMART-SLEEP-1\n' > "$tmp/etc/pocketos/smart-sleep-enable"
 "$start" --fixture "$tmp" "$tmp/features-ok"
 grep -Fx -- '--boot-splash --unblank-display --allow-audio --allow-smart-sleep --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'POCKETOS-R1-RADIO-1\n' > "$tmp/etc/pocketos/radio-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -F -- '--allow-radio' "$tmp/features-ok.log"
+printf 'invalid\n' > "$tmp/etc/pocketos/radio-enable"
+if "$start" --fixture "$tmp" "$tmp/features-ok"; then exit 1; fi

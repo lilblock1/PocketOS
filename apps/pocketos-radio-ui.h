@@ -22,7 +22,7 @@ static pid_t radio_pid=-1;
 static int radio_fd=-1,radio_overflow;
 static size_t radio_used;
 static char radio_buffer[RADIO_OUT+1],radio_note[70],radio_ssid[33],radio_key[65];
-static int radio_keyboard,radio_key_layer,radio_security;
+static int radio_keyboard,radio_key_layer,radio_security,radio_show_key;
 static struct timespec radio_deadline;
 static void radio_wipe(void *buf,size_t n){volatile unsigned char *p=buf;while(n--)*p++=0;}
 static void radio_message(const char *msg){snprintf(radio_note,sizeof(radio_note),"%.69s",msg);}
@@ -182,7 +182,7 @@ static int radio_poll(void){
     else radio_message("Bluetooth request sent; verify device");
     return 1;
 }
-static void radio_clear_key(void){radio_wipe(radio_key,sizeof(radio_key));radio_keyboard=radio_key_layer=0;}
+static void radio_clear_key(void){radio_wipe(radio_key,sizeof(radio_key));radio_keyboard=radio_key_layer=radio_show_key=0;}
 static void radio_close(void){
     radio_clear_key();
     if(radio_pid>=0){(void)kill(-radio_pid,SIGKILL);(void)kill(radio_pid,SIGKILL);(void)waitpid(radio_pid,NULL,0);}

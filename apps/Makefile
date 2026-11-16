@@ -2,6 +2,10 @@ CC ?= cc
 BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
+all: $(BUILD_DIR)/pocketos-timeout
+$(BUILD_DIR)/pocketos-timeout: pocketos-timeout.c
+	mkdir -p "$(BUILD_DIR)"
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 all: $(BUILD_DIR)/pocketos-info $(BUILD_DIR)/pocketos-stat $(BUILD_DIR)/pocketos-book-prepare $(BUILD_DIR)/book-prepare-LICENSE.txt $(BUILD_DIR)/pocketos-r1-runtime $(BUILD_DIR)/pocketos-shell $(BUILD_DIR)/pocketos-wifi $(BUILD_DIR)/pocketos-bluetooth $(BUILD_DIR)/pocketos-update $(BUILD_DIR)/pocketos-decoder $(BUILD_DIR)/pocketos-music $(BUILD_DIR)/pocketos-start $(BUILD_DIR)/S95pocketos
 
 BOOK_SRC = ../third_party/sonix-epub/epub_arena.c ../third_party/sonix-epub/epub_zip.c ../third_party/sonix-epub/epub_xml.c
@@ -68,6 +72,7 @@ $(BUILD_DIR)/S95pocketos: ../boards/hiby-r1/rootfs-overlay/etc/init.d/S95pocketo
 	chmod 755 "$@"
 
 check: all
+	python3 test-timeout.py "$(abspath $(BUILD_DIR)/pocketos-timeout)"
 	"$(BUILD_DIR)/pocketos-shell" --test-smart-sleep
 	python3 test-stat.py "$(abspath $(BUILD_DIR)/pocketos-stat)"
 	python3 test-native-books.py "$(abspath $(BUILD_DIR)/pocketos-book-prepare)"

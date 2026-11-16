@@ -142,7 +142,7 @@ done:
 static int ensure_service(void){
     pid_t pid=fork();
     if(pid<0)return 0;
-    if(pid==0){execl("/usr/sbin/pocketos-wifi-service","pocketos-wifi-service","start",(char*)NULL);_exit(127);}
+    if(pid==0){execl("/usr/sbin/pocketos-radio-service","pocketos-radio-service","wifi-start",(char*)NULL);_exit(127);}
     int status;pid_t got;
     do{got=waitpid(pid,&status,0);}while(got<0&&errno==EINTR);
     return got==pid&&WIFEXITED(status)&&WEXITSTATUS(status)==0;
@@ -162,7 +162,7 @@ int main(int argc,char **argv){
     else if(!strcmp(action,"connect"))mut=1;
     else return 2;
     if(mut&&!opt){fputs("Radio actions require explicit --allow-radio.\n",stderr);return 2;}
-    if(!custom&&access("/usr/sbin/pocketos-wifi-service",X_OK)==0){
+    if(!custom&&access("/usr/sbin/pocketos-radio-service",X_OK)==0){
         socket="/run/pocketos-wifi/wlan0";
         if(mut&&strcmp(action,"disconnect")&&!ensure_service()){
             puts("RADIO_ERROR=wifi-start-failed");return 1;

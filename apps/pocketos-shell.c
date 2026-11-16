@@ -1099,6 +1099,7 @@ static void radio_choose(void){
 }
 static void radio_tap(int x,int y){
     if(radio_keyboard){
+        if(radio_security&&x>=180&&y>=55&&y<79){radio_show_key=!radio_show_key;return;}
         if(y>=99&&y<239&&x>=8&&x<232&&radio_security){
             int i=(y-99)/28*8+(x-8)/28;
             const char *keys=radio_keys();
@@ -1436,9 +1437,12 @@ static void render(void) {
         }
     } else if(page==WIFIUI||page==BTUI){
         if(radio_keyboard){
-            reader_print(12,60,radio_ssid,16,fg,bg,0,1,228);
+            reader_print(12,60,radio_ssid,16,fg,bg,0,1,178);
+            if(radio_security){rounded(182,56,46,22,card);reader_print(188,60,radio_show_key?"Hide":"Show",12,mint,card,0,0,226);}
             char mask[65];size_t n=strlen(radio_key);memset(mask,'*',n);mask[n]=0;
-            reader_print(12,80,radio_security?mask:"Unsecured network",13,mint,bg,0,0,228);
+            const char *password=radio_show_key?radio_key:mask;
+            if(n>30)password+=n-30;
+            reader_print(12,80,radio_security?password:"Unsecured network",13,mint,bg,0,0,228);
             if(radio_security){const char *keys=radio_keys();for(int i=0;i<40&&(size_t)i<strlen(keys);i++){int x=8+i%8*28,y=99+i/8*28;char c[2]={keys[i],0};rounded(x,y,26,26,card);reader_print(x+8,y+4,c,17,fg,card,0,0,x+25);}}
             text_at(12,254,"SHIFT",1,mint);text_at(85,254,"ERASE",1,mint);text_at(170,254,"JOIN",1,mint);
             reader_print(12,278,radio_note,10,muted,bg,0,0,228);
@@ -2127,7 +2131,8 @@ int main(int argc,char **argv) {
         if(radio_spawn(R_WIFI_SCAN,NULL)||radio_pid>=0)return 1;
         radio_allow=1;page=WIFIUI;radio_choose();if(!radio_keyboard||strcmp(radio_ssid,"Home WiFi"))return 1;
         radio_tap(10,101);if(strcmp(radio_key,"a"))return 1;
-        radio_tap(2,300);if(radio_keyboard||radio_key[0])return 1;
+        radio_tap(190,65);if(!radio_show_key)return 1;
+        radio_tap(2,300);if(radio_keyboard||radio_key[0]||radio_show_key)return 1;
         char devices[]="Device 00:11:22:33:44:55 Headphones\nDevice invalid device\n";
         radio_parse_bt(devices);if(radio_count!=1||strcmp(radio_items[0].name,"Headphones"))return 1;
         radio_close();return 0;
