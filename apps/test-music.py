@@ -15,6 +15,15 @@ class Music(unittest.TestCase):
             self.assertEqual(subprocess.check_output([bin,"--decode",str(f),"50"]),quarter)
             f.write_bytes(f.read_bytes()[:-1])
             self.assertNotEqual(subprocess.run([bin,"--probe",str(f)],capture_output=True).returncode,0)
+    def test_seek(self):
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/"seek.wav"
+            first=struct.pack("<h",1234)*8000
+            second=struct.pack("<h",-1234)*8000
+            with wave.open(str(f),"wb") as w:
+                w.setnchannels(1);w.setsampwidth(2);w.setframerate(8000);w.writeframes(first+second)
+            self.assertEqual(subprocess.check_output([bin,"--decode",str(f),"100","--start","1"]),second)
+            self.assertNotEqual(subprocess.run([bin,"--decode",str(f),"100","--start","2"],capture_output=True).returncode,0)
     def test_24bit(self):
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/"test.wav"

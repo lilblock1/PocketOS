@@ -67,7 +67,14 @@ static void gain(unsigned char *p,size_t n,unsigned bits,int volume){
     }
 }
 static volatile sig_atomic_t interrupted=0;
-static int stopped=0;
+static int stopped=0, progress_fd=-1;
+static unsigned start_seconds=0;
+static uint32_t total_seconds=0;
+static void report_progress(uint32_t position){
+    if(progress_fd<0)return;
+    uint32_t msg[2]={position,total_seconds};
+    ssize_t n=write(progress_fd,msg,sizeof(msg));(void)n;
+}
 static void stop_signal(int n){(void)n;interrupted=1;}
 /* Local file descriptors only; no URL input, shell, or network protocols. */
 static int open_decoder(struct wav *w,const char *path,const char *format){
@@ -84,10 +91,11 @@ static int open_decoder(struct wav *w,const char *path,const char *format){
         close(p[1]);
         if(dup2(input,3)<0||fcntl(3,F_SETFD,0)<0)_exit(126);
         if(input!=3)close(input);
+        char seek[16];snprintf(seek,sizeof(seek),"%u",start_seconds);
         execl("/usr/bin/ffmpeg","ffmpeg","-nostdin","-hide_banner","-loglevel","error","-xerror",
               "-threads","1","-filter_threads","1","-max_alloc","16777216",
               "-probesize","262144","-analyzeduration","1000000",
-              "-protocol_whitelist","file,pipe","-f",format,"-i","/proc/self/fd/3",
+              "-protocol_whitelist","file,pipe","-f",format,"-ss",seek,"-i","/proc/self/fd/3",
               "-map","0:a:0","-vn","-sn","-dn","-ac","2","-ar","48000",
               "-c:a","pcm_s16le","-f","s16le","pipe:1",(char*)NULL);
         _exit(127);
@@ -113,6 +121,8 @@ static int stream(struct wav *w,int out,int volume,int controlled){
     unsigned char b[8192],incoming[4096],commands[64];
     size_t left=w->bytes,used=0,at=0;
     int paused=0,eof=0,decoded_any=0;
+    uint64_t sent=0;uint32_t last=start_seconds;
+    report_progress(last);
     while(!interrupted&&(left||at<used||(w->decoder>0&&!eof))){
         if(controlled){
             struct pollfd c={.fd=STDIN_FILENO,.events=POLLIN};
@@ -185,7 +195,9 @@ static int stream(struct wav *w,int out,int volume,int controlled){
         ssize_t wrote=write(out,b+at,n);
         if(wrote<0){if(errno==EAGAIN||errno==EINTR)continue;return 1;}
         if(!wrote)return 1;
-        at+=(size_t)wrote;
+        at+=(size_t)wrote;sent+=(size_t)wrote;
+        uint32_t now=start_seconds+(uint32_t)(sent/((uint64_t)w->frame*w->rate));
+        if(now!=last){report_progress(now);last=now;}
     }
     return interrupted?2:(w->decoder>0&&!decoded_any?1:0);
 }
@@ -213,14 +225,27 @@ static int playback(struct wav *w,int volume,int controlled){
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS music v1");return 0;}
-    if(argc<3||argc>5)return 2;
+    if(argc<3||argc>9)return 2;
     const char *mode=argv[1];int volume=25,controlled=0;
     if(argc>=4){
         char *end;long v=strtol(argv[3],&end,10);
         if(end==argv[3]||*end||v<0||v>100)return 2;
         volume=(int)v;
     }
-    if(argc==5){if(strcmp(argv[4],"--controlled"))return 2;controlled=1;}
+    for(int i=4;i<argc;i++){
+        if(!strcmp(argv[i],"--controlled"))controlled=1;
+        else if(!strcmp(argv[i],"--start")&&i+1<argc){
+            char *end;long v=strtol(argv[++i],&end,10);
+            if(end==argv[i]||*end||v<0||v>604800)return 2;
+            start_seconds=(unsigned)v;
+        } else if(!strcmp(argv[i],"--progress-fd")&&i+1<argc){
+            char *end;long v=strtol(argv[++i],&end,10);
+            if(end==argv[i]||*end||v<3||v>1024)return 2;
+            progress_fd=(int)v;
+            int flags=fcntl(progress_fd,F_GETFL);
+            if(flags<0||fcntl(progress_fd,F_SETFL,flags|O_NONBLOCK)!=0||fcntl(progress_fd,F_SETFD,FD_CLOEXEC)!=0)return 2;
+        } else return 2;
+    }
     if(strcmp(mode,"--probe")&&strcmp(mode,"--decode")&&strcmp(mode,"--allow-play"))return 2;
     if(controlled&&strcmp(mode,"--allow-play"))return 2;
     struct wav w={.decoder_fd=-1};
@@ -231,6 +256,12 @@ int main(int argc,char **argv){
         if(!strcmp(mode,"--probe")){puts("Compressed input; optional decoder produces stereo 48000 Hz S16LE");return access("/usr/bin/ffmpeg",X_OK)!=0;}
         if(!open_decoder(&w,argv[2],format))return 1;
     } else if(!native_wav){fputs("Unsupported audio file\n",stderr);return 1;}
+    if(native_wav){
+        total_seconds=(uint32_t)((uint64_t)w.bytes/(w.rate*w.frame));
+        uint64_t skip=(uint64_t)start_seconds*w.rate*w.frame;
+        if(start_seconds&&((uint64_t)w.bytes<=skip||fseeko(w.f,w.offset+(off_t)skip,SEEK_SET)!=0)){fclose(w.f);return 1;}
+        w.bytes-=(uint32_t)skip;
+    }
     int rc=0;
     struct sigaction sa={.sa_handler=stop_signal};sigemptyset(&sa.sa_mask);
     (void)sigaction(SIGTERM,&sa,NULL);(void)sigaction(SIGINT,&sa,NULL);

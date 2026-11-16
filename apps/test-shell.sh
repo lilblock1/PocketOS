@@ -19,3 +19,6 @@ printf '100\n' > "$tmp/backlight/max_brightness"
 printf '75\n' > "$tmp/backlight/brightness"
 "$bin" --test-backlight "$tmp/backlight"
 test "$(cat "$tmp/backlight/brightness")" = 50
+
+"$bin" --preview 'NOW PLAYING' "$tmp/now.ppm"
+test "$(wc -c < "$tmp/now.ppm")" -eq 230415
