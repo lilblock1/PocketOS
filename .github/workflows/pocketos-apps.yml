@@ -28,7 +28,7 @@ jobs:
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews
-          for screen in HOME SETTINGS SYSTEM BATTERY MUSIC; do
+          for screen in HOME SETTINGS SYSTEM BATTERY MUSIC CONTROL PREFERENCES; do
             host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
           done
       - uses: actions/upload-artifact@v4
