@@ -28,7 +28,7 @@ if [ "${1:-}" = "--verify-fixture" ]; then
     echo "Fixture verified; not activated"
     exit 0
 fi
-[ "$#" -eq 1 ] || die "Usage: pocketos-decoder status | activate"
+[ "$#" -eq 1 ] || die "Usage: pocketos-decoder status | activate | ensure"
 cache=/run/pocketos-decoder
 if [ "$1" = status ]; then
     if [ -x "$cache/ffmpeg" ] && [ ! -L "$cache/ffmpeg" ]; then echo "RAM decoder cache present"
@@ -36,7 +36,7 @@ if [ "$1" = status ]; then
     else echo "Optional decoder inactive"; fi
     exit 0
 fi
-[ "$1" = activate ] || die "Unknown action"
+case "$1" in activate|ensure) ;; *) die "Unknown action";; esac
 [ "$(id -u)" -eq 0 ] || die "Activation requires trusted system service"
 # Never silently stage into internal flash or fall back to an unmounted SD folder.
 awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts || die "/run RAM filesystem not mounted"
@@ -49,6 +49,23 @@ case "$(stat -c '%u:%a' "$digest")" in 0:444|0:400|0:644|0:600) ;; *) die "Unsaf
 [ ! -L "$cache" ] || die "Unsafe cache"
 mkdir -p "$cache"
 [ "$(stat -c '%u:%a' "$cache")" = "0:700" ] || die "Unsafe cache owner"
+# An already verified, root-owned RAM snapshot can be reused without another
+# copy or allocation. Validate against the trusted digest, not the SD hash.
+if [ "$1" = ensure ] && [ -f "$cache/ffmpeg" ] && [ ! -L "$cache/ffmpeg" ] &&
+   [ "$(stat -c '%u:%a' "$cache/ffmpeg")" = "0:500" ] &&
+   [ "$(wc -c < "$digest")" -eq 65 ]; then
+    read -r expected < "$digest" || die "Invalid digest"
+    case "$expected" in *[!0-9a-f]*) die "Invalid digest";; esac
+    [ "${#expected}" -eq 64 ] || die "Invalid digest"
+    size=$(wc -c < "$cache/ffmpeg")
+    if [ "$size" -gt 0 ] && [ "$size" -le "$limit" ]; then
+        actual=$(sha256sum "$cache/ffmpeg")
+        if [ "${actual%% *}" = "$expected" ]; then
+            echo "Verified decoder already cached in RAM"
+            exit 0
+        fi
+    fi
+fi
 # Bounded cache and leave headroom for audio process memory.
 size=$(wc -c < /mnt/sd_0/PocketOS-codecs/pocketos-ffmpeg)
 [ "$size" -gt 0 ] && [ "$size" -le "$limit" ] || die "Decoder size invalid"
