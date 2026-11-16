@@ -62,7 +62,7 @@ wifi_start(){
     if ! alive "$wifi/monitor.pid" wpa_cli; then
         wpa_cli -B -P "$wifi/monitor.pid" -p "$wifi" -i wlan0 -a /usr/sbin/pocketos-network-event
     fi
-    if wpa_cli -p "$wifi" -i wlan0 status | grep -Fxq wpa_state=COMPLETED; then
+    if ! alive "$wifi/dhcp.pid" udhcpc && wpa_cli -p "$wifi" -i wlan0 status | grep -Fxq wpa_state=COMPLETED; then
         /usr/sbin/pocketos-network-event wlan0 CONNECTED
     fi
 }
@@ -97,7 +97,7 @@ bluetooth_start(){
     dbus-uuidgen --ensure=/var/lib/dbus/machine-id
     if [ ! -S /run/dbus/system_bus_socket ]; then dbus-daemon --system; fi
     if ! alive "$bt/bluez.pid" bluetoothd; then
-        nohup setsid /usr/libexec/bluetooth/bluetoothd -n -E -C > "$bt/bluez.log" 2>&1 </dev/null &
+        nohup setsid "$package/bin/bluetoothd" -n -C > "$bt/bluez.log" 2>&1 </dev/null &
         echo "$!" > "$bt/bluez.pid"
     fi
     n=0
@@ -110,5 +110,9 @@ bluetooth_start(){
         LD_LIBRARY_PATH="$package/lib" nohup setsid "$package/bin/bluealsa" -p a2dp-source -c SBC > "$bt/bluealsa.log" 2>&1 </dev/null &
         echo "$!" > "$bt/bluealsa.pid"
     fi
+    n=0
+    until LD_LIBRARY_PATH="$package/lib" "$package/bin/bluealsa-cli" list-pcms >/dev/null 2>&1; do
+        n=$((n+1)); [ "$n" -lt 30 ] || return 1; sleep 0.1
+    done
 }
 case "$action" in wifi-start) wifi_start;; bluetooth-start) bluetooth_start;; esac

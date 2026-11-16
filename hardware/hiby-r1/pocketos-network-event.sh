@@ -7,6 +7,7 @@ state=/run/pocketos-wifi
 [ -d "$state" ] && [ ! -L "$state" ] || exit 1
 case "$2" in
     CONNECTED)
+        printf 'connecting\n' > "$state/connection"
         # Idempotent across repeated association events. A foreground process
         # in a private session renews its lease until explicitly stopped.
         if [ -r "$state/dhcp.pid" ]; then
@@ -17,6 +18,7 @@ case "$2" in
         nohup setsid udhcpc -f -i wlan0 -p "$state/dhcp.pid" -s /usr/sbin/pocketos-udhcpc > "$state/dhcp.log" 2>&1 </dev/null &
         ;;
     DISCONNECTED)
+        printf 'disconnected\n' > "$state/connection"
         # The DHCP client remains responsible for renewal after reassociation.
         # Do not leave a usable address/default route on a disconnected link.
         ip addr flush dev wlan0 scope global

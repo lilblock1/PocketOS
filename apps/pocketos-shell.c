@@ -1088,7 +1088,8 @@ static void radio_open(int bluetooth){
     page=bluetooth?BTUI:WIFIUI;radio_message(radio_allow?"Tap Scan to discover":"Radio changes locked");
 }
 static void radio_choose(void){
-    if(radio_pid>=0||!radio_count)return;
+    if(!radio_count)return;
+    if(radio_pid>=0){if(radio_active==R_BT_SCAN)radio_cancel_scan();else return;}
     if(radio_mode){(void)radio_spawn(R_BT_PAIR,radio_items[radio_index].address);return;}
     struct radio_item *item=&radio_items[radio_index];
     if(!radio_allow){radio_message("Radio changes locked");return;}
@@ -1119,7 +1120,7 @@ static void radio_tap(int x,int y){
         }else if(y>=288)radio_clear_key();
         return;
     }
-    if(radio_pid>=0)return;
+    if(radio_pid>=0&&radio_active!=R_BT_SCAN)return;
     if(y>=83&&y<219){
         int i=radio_top+(y-83)/34;
         if(i<radio_count){radio_index=i;radio_message(radio_mode?"Select Pair or Connect":"Select Join");}
@@ -1160,7 +1161,7 @@ static void render(void) {
     if(page==CONTROL) {
         char v[16];
         text_at(12,64,"SWIPE UP OR TAP CLOSE",1,muted);
-        quick_tile(0,"WI-FI",wifi_present?"DETECTED":"UNAVAILABLE",wifi_present);
+        quick_tile(0,"WI-FI",radio_wifi_state()==2?"CONNECTED":radio_wifi_state()==1?"CONNECTING":"NOT CONNECTED",radio_wifi_state()==2);
         quick_tile(1,"BLUETOOTH",bt_present?"DETECTED":"UNAVAILABLE",bt_present);
         if(brightness_pct>=0)snprintf(v,sizeof(v),"%d%%",brightness_pct);
         else snprintf(v,sizeof(v),"UNAVAILABLE");
@@ -1465,7 +1466,7 @@ static void render(void) {
     } else if(page==RADIO){
         rounded(12,81,216,60,card);
         reader_print(21,91,"Wi-Fi",18,fg,card,0,1,220);
-        reader_print(21,116,wifi_present?"Interface detected":"Interface not detected",12,muted,card,0,0,220);
+        reader_print(21,116,radio_wifi_state()==2?"Connected":radio_wifi_state()==1?"Connecting...":"Not connected",12,muted,card,0,0,220);
         rounded(12,153,216,60,card);
         reader_print(21,163,"Bluetooth",18,fg,card,0,1,220);
         reader_print(21,188,bt_present?"Adapter detected":"Adapter not detected",12,muted,card,0,0,220);
@@ -1501,7 +1502,7 @@ static void back(void) {
     if(volume_warning){volume_warning=0;return;}
     if(page==UPDATES){if(update_pid>=0)return;if(update_confirm){update_confirm=U_NONE;return;}page=SETTINGS;selected=5;return;}
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
-    if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_pid>=0)return;page=RADIO;return;}
+    if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_active==R_BT_SCAN)radio_cancel_scan();if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
     if(page==FILES){if(fm_confirm||fm_panel){fm_confirm=fm_panel=0;return;}fm_close();page=HOME;selected=0;return;}
@@ -1891,6 +1892,7 @@ static int native(const char *input) {
               (update_changed&&page==UPDATES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
               (page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
+        if(radio_wifi_wait&&timeout>250)timeout=250;
         if(update_pid>=0&&timeout>500)timeout=500;
         if(book_prepare_pid>=0&&timeout>200)timeout=200;
         if(((music_pid>=0&&!music_pause)||volume_extended)&&timeout>500)timeout=500;

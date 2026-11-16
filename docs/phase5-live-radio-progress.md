@@ -19,6 +19,24 @@ Physical R1 observations, using RAM-only service/application overlays:
 - Bootloader, kernel, recovery and boot-selection hashes match their saved
   values. No MTD writes or recovery operations were performed.
 
+## Later physical checks
+
+Wi-Fi association, DHCP, DNS and an HTTPS request succeeded. Native HTTPS
+returned HTTP 200. Connection labels now use Connected / Connecting / Not
+connected. Password Show/Hide is available only on the device and resets on exit.
+
+The SDK build of BlueZ with audio support and SBC-only BlueALSA starts in RAM;
+the SBC source endpoints register successfully. Pairing and audible Bluetooth
+playback are still unverified. Bluetooth discovery now streams cached names and
+new discoveries, allowing the user to select/pair without waiting for a full
+classic inquiry. Routine controller queries have bounded execution, and the
+pairing command registers a NoInputNoOutput agent. These latest UI/helper
+changes are in testing; do not confuse source synchronization with deployment.
+
+After Bluetooth is fixed, the requested next feature is on-device online and
+microSD updates, with recovery/bootloader preserved. Then measure and optimize
+memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.
+
 Keep device identifiers, network names/passwords, books/music, flash backups,
 private paths and raw logs out of commits. Only source and sanitized status
 belong here. Next: verify real Wi-Fi connectivity and wireless audio, then

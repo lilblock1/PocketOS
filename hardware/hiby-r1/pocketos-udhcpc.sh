@@ -8,6 +8,7 @@ ipv4(){
 }
 case "${1:-}" in
     deconfig|nak)
+        printf 'connecting\n' > /run/pocketos-wifi/connection
         ip addr flush dev wlan0 scope global
         ip route flush dev wlan0 || :
         ;;
@@ -28,6 +29,7 @@ case "${1:-}" in
         for server in ${dns:-}; do ipv4 "$server" || exit 1; printf 'nameserver %s\n' "$server" >> "$tmp"; done
         mv -f "$tmp" /tmp/resolv.conf
         printf '%s\n' "$ip" > /run/pocketos-wifi/ipv4
+        printf 'connected\n' > /run/pocketos-wifi/connection
         ;;
     *) exit 0;;
 esac

@@ -25,7 +25,7 @@ esac
             self.assertNotIn('scan on',log.read_text())
             self.assertNotEqual(run('on','discover').returncode,0)
             self.assertIn(b'Powered: no',run('off','status').stdout)
-            r=run('scan-fail','--allow-radio','discover');self.assertNotEqual(r.returncode,0);self.assertNotIn(b'Test Headphones',r.stdout)
+            r=run('scan-fail','--allow-radio','discover');self.assertNotEqual(r.returncode,0)
             r=run('on','--allow-radio','discover');self.assertEqual(r.returncode,0);self.assertIn(b'Test Headphones',r.stdout)
 
 if __name__=='__main__': unittest.main()

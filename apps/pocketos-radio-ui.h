@@ -21,8 +21,16 @@ static enum radio_job radio_active;
 static pid_t radio_pid=-1;
 static int radio_fd=-1,radio_overflow;
 static size_t radio_used;
+static size_t radio_parsed;
 static char radio_buffer[RADIO_OUT+1],radio_note[70],radio_ssid[33],radio_key[65];
 static int radio_keyboard,radio_key_layer,radio_security,radio_show_key;
+static time_t radio_wifi_wait;
+static int radio_wifi_state(void){
+    FILE *f=fopen("/run/pocketos-wifi/connection","r");char value[24]={0};
+    if(!f)return 0;
+    int valid=fgets(value,sizeof(value),f)!=NULL;fclose(f);
+    return valid&&!strcmp(value,"connected\n")?2:valid&&!strcmp(value,"connecting\n")?1:0;
+}
 static struct timespec radio_deadline;
 static void radio_wipe(void *buf,size_t n){volatile unsigned char *p=buf;while(n--)*p++=0;}
 static void radio_message(const char *msg){snprintf(radio_note,sizeof(radio_note),"%.69s",msg);}
@@ -130,7 +138,7 @@ static int radio_spawn(enum radio_job job,const char *arg){
         radio_wipe(input,sizeof(input));radio_wipe(radio_key,sizeof(radio_key));
     }
     close(in[1]);
-    radio_pid=pid;radio_fd=out[0];radio_active=job;radio_used=0;radio_overflow=0;
+    radio_pid=pid;radio_fd=out[0];radio_active=job;radio_used=radio_parsed=0;radio_overflow=0;
     if(clock_gettime(CLOCK_MONOTONIC,&radio_deadline)!=0)radio_deadline.tv_sec=0;
     else radio_deadline.tv_sec+=45;
     radio_message(job==R_WIFI_SCAN||job==R_BT_SCAN?"Scanning...":"Working...");
@@ -144,12 +152,38 @@ static void radio_drain(void){
         memcpy(radio_buffer+radio_used,chunk,(size_t)n);radio_used+=(size_t)n;
     }
 }
+static void radio_cancel_scan(void){
+    if(radio_pid<0||radio_active!=R_BT_SCAN)return;
+    (void)kill(-radio_pid,SIGTERM);(void)kill(radio_pid,SIGTERM);
+    (void)waitpid(radio_pid,NULL,0);
+    if(radio_fd>=0)close(radio_fd);
+    radio_pid=-1;radio_fd=-1;radio_active=R_NONE;
+}
 static int radio_poll(void){
-    if(radio_pid<0)return 0;
+    if(radio_pid<0){
+        if(radio_wifi_wait){
+            struct timespec now;
+            if(radio_wifi_state()==2){radio_wifi_wait=0;radio_message("Connected");return 1;}
+            if(clock_gettime(CLOCK_MONOTONIC,&now)||now.tv_sec>=radio_wifi_wait){radio_wifi_wait=0;radio_message("Could not connect");return 1;}
+        }
+        return 0;
+    }
     radio_drain();
     int status=0;pid_t pid=waitpid(radio_pid,&status,WNOHANG);
     struct timespec now;
-    if(pid==0&&clock_gettime(CLOCK_MONOTONIC,&now)==0&&now.tv_sec<radio_deadline.tv_sec)return 0;
+    if(pid==0&&clock_gettime(CLOCK_MONOTONIC,&now)==0&&now.tv_sec<radio_deadline.tv_sec){
+        if(radio_active==R_BT_SCAN&&radio_parsed!=radio_used){
+            char snapshot[RADIO_OUT+1],selected[18]="";
+            if(radio_count)strcpy(selected,radio_items[radio_index].address);
+            memcpy(snapshot,radio_buffer,radio_used);snapshot[radio_used]=0;
+            char *end=strrchr(snapshot,'\n');if(!end)return 0;end[1]=0;
+            radio_parse_bt(snapshot);radio_parsed=radio_used;
+            for(int i=0;i<radio_count;i++)if(!strcmp(selected,radio_items[i].address))radio_index=i;
+            radio_top=radio_index>=4?radio_index-3:0;
+            radio_message(radio_count?"Scanning... select a device":"Scanning...");return 1;
+        }
+        return 0;
+    }
     int timed_out=pid==0;
     if(timed_out){(void)kill(-radio_pid,SIGKILL);(void)kill(radio_pid,SIGKILL);(void)waitpid(radio_pid,&status,0);}
     else if(pid<0&&errno==EINTR)return 0;
@@ -164,20 +198,21 @@ static int radio_poll(void){
         else if(strstr(radio_buffer,"RADIO_ERROR=bt-service"))radio_message("Bluetooth service unavailable");
         else if(strstr(radio_buffer,"RADIO_ERROR=bt-controller"))radio_message("Bluetooth controller not ready");
         else if(strstr(radio_buffer,"RADIO_ERROR=bt-power"))radio_message("Bluetooth adapter not powered");
+        else if(strstr(radio_buffer,"RADIO_ERROR=bt-start-failed"))radio_message("Bluetooth could not start");
+        else if(strstr(radio_buffer,"RADIO_ERROR=bt-device-missing"))radio_message("Device not available; scan again");
         else radio_message("Request failed / service unavailable");
         return 1;
     }
     if(job==R_WIFI_SCAN){radio_parse_wifi(radio_buffer);radio_message(radio_count?"Choose a network":"No supported networks found");}
     else if(job==R_BT_SCAN){radio_parse_bt(radio_buffer);radio_message(radio_count?"Choose a device":"No devices listed");}
     else if(job==R_WIFI_STATUS){
-        if(!strstr(radio_buffer,"wpa_state=COMPLETED"))radio_message("Wi-Fi not associated");
-        else if(strstr(radio_buffer,"pocketos_ipv4=none"))radio_message("Wi-Fi associated; no IPv4 address");
-        else if(strstr(radio_buffer,"pocketos_ipv4=unknown")||!strstr(radio_buffer,"pocketos_ipv4="))radio_message("Wi-Fi associated; IP not verified");
-        else radio_message("Wi-Fi associated; IPv4 present");
+        if(!strstr(radio_buffer,"wpa_state=COMPLETED"))radio_message("Not connected");
+        else if(strstr(radio_buffer,"pocketos_ipv4=none")||strstr(radio_buffer,"pocketos_ipv4=unknown")||!strstr(radio_buffer,"pocketos_ipv4="))radio_message("Connecting...");
+        else radio_message("Connected");
     }else if(job==R_BT_STATUS){
         radio_message(strstr(radio_buffer,"Powered: yes")?"Bluetooth powered on":"Bluetooth not powered / unknown");
-    }else if(job==R_WIFI_JOIN)radio_message("Association requested; check status");
-    else if(job==R_WIFI_DISCONNECT)radio_message("Disconnect requested");
+    }else if(job==R_WIFI_JOIN){struct timespec now;if(!clock_gettime(CLOCK_MONOTONIC,&now))radio_wifi_wait=now.tv_sec+25;radio_message("Connecting...");}
+    else if(job==R_WIFI_DISCONNECT){radio_wifi_wait=0;radio_message("Not connected");}
     else if(strstr(radio_buffer,"Failed")||strstr(radio_buffer,"not available"))radio_message("Bluetooth request failed");
     else radio_message("Bluetooth request sent; verify device");
     return 1;
