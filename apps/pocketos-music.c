@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "pocketos-audio-formats.h"
 
 struct wav { FILE *f; uint32_t bytes,rate; unsigned channels,bits,frame; off_t offset; int decoder_fd; pid_t decoder; };
 static uint32_t le(const unsigned char *p,unsigned n){
@@ -69,15 +70,6 @@ static volatile sig_atomic_t interrupted=0;
 static int stopped=0;
 static void stop_signal(int n){(void)n;interrupted=1;}
 /* Local file descriptors only; no URL input, shell, or network protocols. */
-static const char *demuxer(const char *path){
-    const char *e=strrchr(path,'.');if(!e)return NULL;
-    if(!strcasecmp(e,".flac"))return "flac";
-    if(!strcasecmp(e,".mp3"))return "mp3";
-    if(!strcasecmp(e,".aac"))return "aac";
-    if(!strcasecmp(e,".m4a")||!strcasecmp(e,".mp4"))return "mov";
-    if(!strcasecmp(e,".ogg")||!strcasecmp(e,".oga")||!strcasecmp(e,".opus"))return "ogg";
-    return NULL;
-}
 static int open_decoder(struct wav *w,const char *path,const char *format){
     if(access("/usr/bin/ffmpeg",X_OK)!=0){fputs("Optional FFmpeg decoder unavailable\n",stderr);return 0;}
     int input=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK);
@@ -92,7 +84,7 @@ static int open_decoder(struct wav *w,const char *path,const char *format){
         close(p[1]);
         if(dup2(input,3)<0||fcntl(3,F_SETFD,0)<0)_exit(126);
         if(input!=3)close(input);
-        execl("/usr/bin/ffmpeg","ffmpeg","-nostdin","-hide_banner","-loglevel","error",
+        execl("/usr/bin/ffmpeg","ffmpeg","-nostdin","-hide_banner","-loglevel","error","-xerror",
               "-threads","1","-filter_threads","1","-max_alloc","16777216",
               "-probesize","262144","-analyzeduration","1000000",
               "-protocol_whitelist","file,pipe","-f",format,"-i","/proc/self/fd/3",
@@ -118,9 +110,9 @@ static int finish_decoder(struct wav *w,int abort_decode){
     return !abort_decode&&(got!=w->decoder||!WIFEXITED(status)||WEXITSTATUS(status)!=0);
 }
 static int stream(struct wav *w,int out,int volume,int controlled){
-    unsigned char b[8192],commands[64];
+    unsigned char b[8192],incoming[4096],commands[64];
     size_t left=w->bytes,used=0,at=0;
-    int paused=0,eof=0;
+    int paused=0,eof=0,decoded_any=0;
     while(!interrupted&&(left||at<used||(w->decoder>0&&!eof))){
         if(controlled){
             struct pollfd c={.fd=STDIN_FILENO,.events=POLLIN};
@@ -163,9 +155,16 @@ static int stream(struct wav *w,int out,int volume,int controlled){
                         continue;
                     }
                     if(in.revents&(POLLERR|POLLNVAL))return 1;
-                    ssize_t n=read(w->decoder_fd,b+used,cap-used);
+                    if(used>=sizeof(b)||cap>sizeof(b)||used>=cap)return 1;
+                    size_t room=cap-used;
+                    if(room>sizeof(incoming))room=sizeof(incoming);
+                    ssize_t n=read(w->decoder_fd,incoming,room);
                     if(n<0){if(errno==EAGAIN||errno==EINTR)continue;return 1;}
-                    if(!n)eof=1;else used+=(size_t)n;
+                    if(!n)eof=1;
+                    else {
+                        if((size_t)n>room)return 1;
+                        memcpy(b+used,incoming,(size_t)n);used+=(size_t)n;decoded_any=1;
+                    }
                 }
                 if(!used){if(eof)break;continue;}
                 if(used%w->frame)return 1;
@@ -188,7 +187,7 @@ static int stream(struct wav *w,int out,int volume,int controlled){
         if(!wrote)return 1;
         at+=(size_t)wrote;
     }
-    return interrupted?2:0;
+    return interrupted?2:(w->decoder>0&&!decoded_any?1:0);
 }
 static int playback(struct wav *w,int volume,int controlled){
     if(access("/usr/bin/aplay",X_OK)!=0){fputs("ALSA aplay unavailable\n",stderr);return 1;}
@@ -225,11 +224,13 @@ int main(int argc,char **argv){
     if(strcmp(mode,"--probe")&&strcmp(mode,"--decode")&&strcmp(mode,"--allow-play"))return 2;
     if(controlled&&strcmp(mode,"--allow-play"))return 2;
     struct wav w={.decoder_fd=-1};
-    const char *format=demuxer(argv[2]);
-    if(format){
+    const char *format=pocketos_demuxer(argv[2]);
+    int native_wav=(!format||!strcmp(format,"wav"))&&parse(&w,argv[2]);
+    if(!native_wav&&w.f){fclose(w.f);w.f=NULL;}
+    if(!native_wav&&format&&strcmp(format,"wav")){
         if(!strcmp(mode,"--probe")){puts("Compressed input; optional decoder produces stereo 48000 Hz S16LE");return access("/usr/bin/ffmpeg",X_OK)!=0;}
         if(!open_decoder(&w,argv[2],format))return 1;
-    } else if(!parse(&w,argv[2])){if(w.f)fclose(w.f);fputs("Unsupported or malformed PCM WAV\n",stderr);return 1;}
+    } else if(!native_wav){fputs("Unsupported audio file\n",stderr);return 1;}
     int rc=0;
     struct sigaction sa={.sa_handler=stop_signal};sigemptyset(&sa.sa_mask);
     (void)sigaction(SIGTERM,&sa,NULL);(void)sigaction(SIGINT,&sa,NULL);

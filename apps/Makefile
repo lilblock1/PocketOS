@@ -12,7 +12,7 @@ $(BUILD_DIR)/pocketos-r1-runtime: pocketos-r1-runtime.c
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
-$(BUILD_DIR)/pocketos-shell: pocketos-shell.c
+$(BUILD_DIR)/pocketos-shell: pocketos-shell.c pocketos-audio-formats.h
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
@@ -30,7 +30,7 @@ $(BUILD_DIR)/pocketos-update: pocketos-update.sh
 	cp "$<" "$@"
 	chmod 755 "$@"
 
-$(BUILD_DIR)/pocketos-music: pocketos-music.c
+$(BUILD_DIR)/pocketos-music: pocketos-music.c pocketos-audio-formats.h
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 

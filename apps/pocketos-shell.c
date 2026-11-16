@@ -19,6 +19,7 @@
 #include <sys/statvfs.h>
 #include <dirent.h>
 #include <strings.h>
+#include "pocketos-audio-formats.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -259,12 +260,7 @@ static void usage_text(int y,const char *name,int pct,unsigned long long free_mi
     text_at(21,y+23,b,1,muted);
     rect(21,y+37,198,8,edge);rect(21,y+37,198*pct/100,8,mint);
 }
-static int audio_name(const char *p){
-    const char *e=strrchr(p,'.');if(!e)return 0;
-    const char *const ext[]={".wav",".flac",".mp3",".aac",".m4a",".mp4",".ogg",".oga",".opus"};
-    for(size_t i=0;i<sizeof(ext)/sizeof(ext[0]);i++)if(!strcasecmp(e,ext[i]))return 1;
-    return 0;
-}
+static int audio_name(const char *p){return pocketos_demuxer(p)!=NULL;}
 static int compare_tracks(const void *a,const void *b){return strcmp(a,b);}
 static void scan_folder(const char *relative,int depth,int *budget){
     if(depth>6||music_count>=128||*budget<=0)return;

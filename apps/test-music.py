@@ -30,7 +30,7 @@ class Music(unittest.TestCase):
             raw=struct.pack("<hh",-12000,12000)*9600
             with wave.open(str(f),"wb") as w:
                 w.setnchannels(2);w.setsampwidth(2);w.setframerate(48000);w.writeframes(raw)
-            for ext,codec in [("flac","flac"),("mp3","libmp3lame"),("aac","aac"),("m4a","aac"),("ogg","libvorbis"),("opus","libopus")]:
+            for ext,codec in [("flac","flac"),("mp3","libmp3lame"),("aac","aac"),("m4a","aac"),("ogg","libvorbis"),("opus","libopus"),("wma","wmav2"),("aiff","pcm_s16be"),("wv","wavpack"),("tta","tta"),("ac3","ac3"),("eac3","eac3"),("caf","pcm_s16le"),("au","pcm_s16be"),("mka","flac"),("mp2","mp2")]:
                 with self.subTest(ext=ext):
                     path=f.with_suffix("."+ext)
                     subprocess.run(["ffmpeg","-v","error","-i",str(f),"-c:a",codec,str(path)],check=True)
@@ -38,6 +38,9 @@ class Music(unittest.TestCase):
                     self.assertGreater(len(pcm),0)
                     self.assertEqual(len(pcm)%4,0)
                     if ext=="flac":self.assertEqual(pcm,raw)
+            alac=f.with_name("apple.m4a")
+            subprocess.run(["ffmpeg","-v","error","-i",str(f),"-c:a","alac",str(alac)],check=True)
+            self.assertEqual(subprocess.check_output([bin,"--decode",str(alac)],timeout=20),raw)
             bad=f.with_suffix(".mp3")
             bad.write_bytes(b"not audio")
             self.assertNotEqual(subprocess.run([bin,"--decode",str(bad)],capture_output=True,timeout=20).returncode,0)
