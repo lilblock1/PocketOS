@@ -76,6 +76,12 @@ jobs:
           grep -q 'little endian' target-app-output/elf.txt
           grep -q 'MIPS' target-app-output/elf.txt
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-info --version)" = 'PocketOS application SDK smoke test v1'
+          readelf -h target-app-output/pocketos-r1-runtime | grep -q MIPS
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-r1-runtime --version)" = 'PocketOS R1 runtime v1'
+          mkdir -p fixture/sys/class/power_supply/battery
+          printf 'Battery\n' > fixture/sys/class/power_supply/battery/type
+          printf '18\n' > fixture/sys/class/power_supply/battery/capacity
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-r1-runtime --root "$PWD/fixture" --status | grep -Fx 'battery_percent=18'
           cp previous-sdk/sdk-manifest.json target-app-output/
       - name: Upload application-only development artifact
         if: steps.pick.outputs.run_id != ''

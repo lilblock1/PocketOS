@@ -1,0 +1,7 @@
+# Phase 2D: native runtime service foundation
+
+The native C program pocketos-r1-runtime reads only fixed Linux device/sysfs interfaces. Its --status command exits immediately; --watch is opt-in, wakes on inotify directory notifications with a 60-second fallback (sysfs events may not propagate) and reports only changed snapshots. It does not start at boot and needs no extra external libraries. Audio PCM, framebuffer, input events, removable SD, radio interface presence, battery and backlight capabilities are reported; interface presence is not a functional test.
+
+--policy IDLE_SECONDS PLAYING_0_OR_1 BUSY_0_OR_1 recommends dimming at 60 seconds and suspend after 300 seconds only during known discharging, unplugged, inactive operation with charge above 10%. The caller is responsible for supplying current activity including transfers. This policy is advisory, with no hardware changes. No charger, DAC register, backlight, block device, network, mount or suspend writes are enabled. Thresholds are provisional and require R1 measurements. Values of -1 indicate unknown. No radio credentials or raw input events are collected.
+
+Host tests use synthetic sysfs/device entries. The application workflow cross-compiles only if a paired MIPS SDK is available, and runs a QEMU loader/fixture smoke test; otherwise it remains host-only. No foundation rebuild, firmware packaging, or device installation is performed. Native playback, touch dispatch, radio activation, safe SD mounting and suspend/resume are still blocked by physical verification and runtime dependencies.

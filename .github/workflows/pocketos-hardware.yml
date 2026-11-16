@@ -2,7 +2,7 @@ name: PocketOS - R1 hardware compatibility audit
 on:
   push:
     branches: [main]
-    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', 'tools/r1_stage.py', 'tools/test_r1_stage.py', 'tools/r1_init_plan.py', 'tools/test_r1_init_plan.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
+    paths: ['hardware/hiby-r1/**', 'apps/**', 'tools/r1_hardware_audit.py', 'tools/r1_stage.py', 'tools/test_r1_stage.py', 'tools/r1_init_plan.py', 'tools/test_r1_init_plan.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -67,6 +67,8 @@ jobs:
           cp hardware/hiby-r1/probe.sh hardware/hiby-r1/README.md hardware-report/
       - name: Unit-test offline hardware staging
         run: python3 -m unittest discover -s tools -p 'test_r1_*.py'
+      - name: Test R1 runtime services on synthetic hardware
+        run: make -C apps BUILD_DIR="$PWD/host-runtime" check
       - name: Assemble and verify non-flashable R1 development tree (runner only)
         run: |
           mkdir -p staging/rootfs
