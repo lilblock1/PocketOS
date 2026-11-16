@@ -21,6 +21,7 @@
 #include <strings.h>
 #include "pocketos-audio-formats.h"
 #include "pocketos-reader-font.h"
+#include "pocketos-files.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -74,6 +75,8 @@ static off_t book_page_span=0;
 static off_t book_offsets[BOOK_HISTORY],book_pos=0,book_next=0,book_bytes=0;
 static const char *book_dir="/mnt/sd_0/Books";
 static FILE *book_file=NULL;
+static int fm_allow=0,fm_panel=0,fm_confirm=0,fm_preview=0;
+static char fm_message[40],fm_rename[64];
 static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0;
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
@@ -710,6 +713,78 @@ static void book_select(int direction){
     if(book_index>=book_top+4)book_top=book_index-3;
     book_status[0]=0;
 }
+static void fm_note(const char *text){snprintf(fm_message,sizeof(fm_message),"%.39s",text);}
+static void fm_start(void){
+    fm_panel=fm_confirm=0;fm_message[0]=0;
+    int pct;unsigned long long space;
+    if(!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
+        fm_close();fm_note("MICROSD NOT AVAILABLE");
+    }
+}
+static void fm_open_media(void){
+    if(fm_count<1)return;
+    struct fm_item *i=&fm_items[fm_index];
+    if(i->dir){if(!fm_enter(i->name))fm_note("CANNOT OPEN FOLDER");else fm_message[0]=0;return;}
+    char rel[FM_PATH+256];int n=snprintf(rel,sizeof(rel),"%s%s%s",fm_dir,*fm_dir?"/":"",i->name);
+    if(n<0||(size_t)n>=sizeof(rel))return;
+    if(!strncmp(rel,"Music/",6)&&audio_name(rel)){
+        if(music_pid>=0){fm_note("STOP ACTIVE MUSIC FIRST");return;}
+        music_list=0;music_scan();
+        for(int j=0;j<music_count;j++)if(!strcmp(music_files[j],rel+6)){music_select(j);page=NOWPLAYING;return;}
+    }else if(!strncmp(rel,"Books/",6)&&book_kind(rel)){
+        book_scan();
+        for(int j=0;j<book_count;j++)if(!strcmp(books[j],rel+6)){
+            book_index=j;book_top=j>=4?j-3:0;
+            if(!book_open())page=BOOKS;
+            return;
+        }
+    }
+    fm_note("NO APP / MOVE TO MUSIC OR BOOKS");
+}
+static void fm_operation(int action){
+    fm_panel=0;
+    if(!fm_allow){fm_note("FILE WRITES LOCKED");return;}
+    if(music_pid>=0||book_file){fm_note("CLOSE ACTIVE MEDIA FIRST");return;}
+    if(action==2){
+        if(!fm_clip){fm_note("NOTHING TO PASTE");return;}
+        if(!fm_user_dir(fm_dir)){fm_note("OPEN A USER FOLDER");return;}
+        fm_confirm=1;return;
+    }
+    if(!fm_count||fm_items[fm_index].dir){fm_note("SELECT A REGULAR FILE");return;}
+    const char *name=fm_items[fm_index].name;
+    if(!fm_capture(name,action==0?1:2)){fm_note("PROTECTED LOCATION OR FILE");return;}
+    if(action==0||action==1)fm_note(action==0?"COPIED TO CLIPBOARD":"MOVE: CHOOSE DESTINATION");
+    else if(action==3){fm_confirm=2;}
+    else if(action==4){
+        if(strlen(name)>=sizeof(fm_rename)){fm_clip=0;fm_note("NAME TOO LONG TO EDIT");return;}
+        strcpy(fm_rename,name);fm_panel=2;
+    }
+}
+static void fm_apply(void){
+    int action=fm_confirm;fm_confirm=0;
+    if(!fm_allow||music_pid>=0||book_file){fm_clip=0;fm_note("FILE WRITES LOCKED");return;}
+    int result=0;
+    if(action==1)result=fm_transfer(fm_source_name,fm_clip==2);
+    else if(action==2)result=fm_delete();
+    else if(action==3)result=fm_transfer(fm_rename,1);
+    fm_note(result==2?"COPIED; SOURCE NOT REMOVED":result?"DONE":"FAILED / EXISTS / NO SPACE");
+    if(action!=1)fm_clip=0;
+    (void)fm_scan();
+}
+static void fm_edit_char(int x,int y){
+    const char *keys="abcdefghijklmnopqrstuvwxyz0123456789.-_ ";
+    if(y>=104&&y<244&&x>=10&&x<230){
+        int idx=(y-104)/28*8+(x-10)/28;
+        if(idx>=0&&idx<40){
+            size_t n=strlen(fm_rename);
+            if(n+1<sizeof(fm_rename)){fm_rename[n]=keys[idx];fm_rename[n+1]=0;}
+        }
+    }else if(y>=251&&y<280){
+        if(x<85){size_t n=strlen(fm_rename);if(n)fm_rename[n-1]=0;}
+        else if(x<151)fm_rename[0]=0;
+        else if(fm_name_ok(fm_rename)){fm_panel=0;fm_confirm=3;}
+    }else if(y>=288){fm_panel=0;fm_clip=0;}
+}
 static void quick_tile(int i,const char *label,const char *value,int active) {
     int x=12+(i%2)*110,y=82+(i/2)*61;
     rounded(x,y,106,55,i==selected?edge:card);
@@ -734,6 +809,47 @@ static void render(void) {
         quick_tile(5,"SETTINGS","OPEN",1);
         text_at(12,270,"RADIO / AUDIO WRITES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
+    } else if(page==FILES){
+        if(fm_confirm){
+            reader_print(14,65,"Confirm file operation",17,fg,bg,0,1,228);
+            reader_print(14,103,fm_confirm==2?"Delete permanently?":fm_confirm==3?"Rename file?":fm_clip==2?"Move file here?":"Copy file here?",16,fg,bg,0,0,228);
+            reader_print(14,144,fm_source_name,14,muted,bg,0,0,228);
+            if(fm_confirm==3)reader_print(14,168,fm_rename,14,mint,bg,0,0,228);
+            rounded(12,246,102,35,card);rounded(126,246,102,35,mint);
+            text_at(23,259,"CANCEL",1,fg);text_at(139,259,"CONFIRM",1,bg);
+        }else if(fm_panel==2){
+            reader_print(14,65,"Rename file",17,fg,bg,0,1,228);
+            reader_print(14,88,fm_rename,14,mint,bg,0,0,228);
+            const char *keys="abcdefghijklmnopqrstuvwxyz0123456789.-_ ";
+            for(int k=0;k<40;k++){int x=10+k%8*28,y=104+k/8*28;char c[2]={keys[k],0};rounded(x,y,26,26,card);reader_print(x+8,y+5,c,15,fg,card,0,0,x+25);}
+            text_at(14,260,"ERASE",1,mint);text_at(87,260,"CLEAR",1,mint);text_at(163,260,"OK",1,mint);
+            text_at(14,301,"CANCEL",2,mint);
+        }else if(fm_panel==1){
+            const char *const labels[]={"COPY","MOVE","PASTE HERE","DELETE","RENAME"};
+            for(int i=0;i<5;i++){rounded(12,78+39*i,216,34,card);reader_print(22,86+39*i,labels[i],16,fg,card,0,0,220);}
+            text_at(12,301,"CANCEL",2,mint);
+        }else{
+            char location[40],info[40];snprintf(location,sizeof(location),"SD / %.33s",fm_dir);
+            reader_print(12,63,location,13,muted,bg,0,0,228);
+            for(int j=0;j<5&&fm_top+j<fm_count;j++){
+                int i=fm_top+j,y=84+31*j;uint16_t tile=i==fm_index?edge:card;
+                rounded(12,y,216,28,tile);
+                if(fm_items[i].dir){rect(20,y+9,18,13,mint);rect(20,y+5,9,6,mint);}
+                else{rect(23,y+5,12,18,muted);rect(25,y+10,8,1,tile);rect(25,y+13,8,1,tile);}
+                reader_print(45,y+3,fm_items[i].name,13,fg,tile,0,0,223);
+                if(fm_items[i].dir)strcpy(info,"Folder");
+                else snprintf(info,sizeof(info),"%llu KiB",fm_items[i].bytes/1024ULL);
+                reader_print(45,y+17,info,9,muted,tile,0,0,215);
+            }
+            if(!fm_count)text_at(12,112,fm_root<0&&!fm_preview?"NO MICROSD":"EMPTY FOLDER",1,muted);
+            if(fm_message[0])text_at(12,245,fm_message,1,muted);
+            else if(fm_clip)text_at(12,245,fm_clip==2?"MOVE READY":"COPY READY",1,mint);
+            else if(fm_truncated)text_at(12,245,"LIST LIMITED TO 160 ITEMS",1,muted);
+            else text_at(12,245,fm_allow?"MICROSD USER FILES":"READ ONLY",1,muted);
+            const char *const buttons[]={"UP","OPEN","MORE","DOWN"};
+            for(int j=0;j<4;j++){int x=12+j*55;rounded(x,261,51,24,card);text_at(x+5,269,buttons[j],1,mint);}
+            text_at(12,301,"BACK",2,mint);text_at(143,301,"PARENT",1,mint);
+        }
     } else if(page==BOOKS){
         rect(0,27,W,293,bg);
         book_print(14,39,"Your library",12,19,fg,bg,0);
@@ -952,6 +1068,7 @@ static void back(void) {
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
+    if(page==FILES){if(fm_confirm||fm_panel){fm_confirm=fm_panel=0;return;}fm_close();page=HOME;selected=0;return;}
     page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
 }
 static void activate(int i) {
@@ -974,7 +1091,7 @@ static void activate(int i) {
         else return;
         selected=0;return;
     }
-    if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();}
+    if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
     else if(page==SETTINGS&&i<7)page=setting_items[i];else return;
     selected=0;
 }
@@ -986,6 +1103,19 @@ static void set_volume_target(int v){
 }
 static void tap(int x,int y) {
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
+    if(page==FILES){
+        if(fm_confirm){if(y>=241&&y<285){if(x>=120)fm_apply();else{fm_confirm=0;fm_note("CANCELLED");}}return;}
+        if(fm_panel==2){fm_edit_char(x,y);return;}
+        if(fm_panel==1){if(y>=78&&y<273)fm_operation((y-78)/39);else if(y>=288)fm_panel=0;return;}
+        if(y>=84&&y<239){
+            int idx=fm_top+(y-84)/31;
+            if(idx<fm_count){if(fm_index==idx)fm_open_media();else fm_index=idx;}
+        }else if(y>=261&&y<285){
+            int action=(x-12)/55;
+            if(action==0)fm_select(-1);else if(action==1)fm_open_media();else if(action==2)fm_panel=1;else fm_select(1);
+        }else if(y>=288){if(x<120)back();else (void)fm_up();}
+        return;
+    }
     if(page==READER){
         if(book_menu){
             if(y>=275){if(x<115){book_menu=0;back();}else{book_menu=0;book_page();}return;}
@@ -1040,6 +1170,14 @@ static void tap(int x,int y) {
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(page==FILES){
+        if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
+        if(fm_confirm||fm_panel)return 0;
+        if(code==KEY_UP||code==KEY_DOWN){fm_select(code==KEY_UP?-1:1);return 1;}
+        if(code==KEY_ENTER||code==KEY_OK||code==KEY_RIGHT){fm_open_media();return 1;}
+        if(code==KEY_LEFT){(void)fm_up();return 1;}
+        if(code==KEY_MENU){fm_panel=1;return 1;}
+    }
     if(page==READER&&(code==KEY_ENTER||code==KEY_OK)){book_menu=!book_menu;return 1;}
     if(page==READER&&!book_menu&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_PAGEUP||code==KEY_PAGEDOWN)){
         book_turn(code==KEY_RIGHT||code==KEY_PAGEDOWN);return 1;
@@ -1217,7 +1355,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+    fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
     char label[16];
@@ -1253,6 +1391,16 @@ static int selftest(void) {
 int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==3&&!strcmp(argv[1],"--test-files")&&argv[2][0]=='/'){
+        if(!fm_attach(argv[2])||!fm_scan()||!fm_enter("Documents"))return 1;
+        if(fm_open_dir("../")>=0||fm_enter("link"))return 1;
+        if(!fm_capture("example.txt",1)||!fm_up()||!fm_enter("Downloads"))return 1;
+        if(fm_transfer("existing.txt",0)||!fm_transfer("example.txt",0))return 1;
+        if(!fm_capture("example.txt",2)||fm_transfer("../bad",1)||!fm_transfer("renamed.txt",1))return 1;
+        if(!fm_capture("renamed.txt",2)||!fm_delete())return 1;
+        if(!fm_up()||!fm_enter("PocketOS-updates")||fm_capture("protected.txt",2))return 1;
+        fm_close();return 0;
+    }
     if(argc==3&&!strcmp(argv[1],"--test-books")&&argv[2][0]=='/'){
         book_dir=argv[2];book_scan();
         for(int i=0;i<book_count;i++)if(!strcmp(books[i],"example.txt")){book_index=i;break;}
@@ -1288,6 +1436,7 @@ int main(int argc,char **argv) {
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
+        if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}
         if(page==READER){strcpy(book_title,"The Quiet Woods");const char *demo[]={"Chapter One","The town appeared just after","dusk, a scatter of warm lights","against the hillside. After a","long day on the road, it felt","almost unreal, quiet and","strangely familiar.","","He paused at the edge of the","square, listening to a distant","bell. Beyond the rooftops,","a train sighed into the night."};for(unsigned i=0;i<sizeof(demo)/sizeof(demo[0]);i++)snprintf(book_text[i],65,"%s",demo[i]);book_bytes=99000;book_pos=11500;book_next=12000;book_page_span=500;battery=78;strcpy(clock_label,"22:08");}
         if(page==MUSIC||page==NOWPLAYING){music_count=3;strcpy(music_files[0],"Track 01.flac");strcpy(music_files[1],"Track 02.mp3");strcpy(music_files[2],"Track 03.wav");strcpy(track_title,"Track 01");strcpy(track_artist,"Demo Artist");strcpy(track_album,"Demo Album");music_pos=45;music_length=210;}
@@ -1299,6 +1448,7 @@ int main(int argc,char **argv) {
         if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
+        else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
         else break;
         argc--;argv++;
     }

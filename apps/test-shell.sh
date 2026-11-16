@@ -30,3 +30,17 @@ i=0; while [ "$i" -lt 80 ]; do printf 'Line of text %s\n' "$i" >> "$tmp/books/ex
 "$bin" --preview BOOKS "$tmp/BOOKS.ppm"
 "$bin" --preview READER "$tmp/READER.ppm"
 test "$(wc -c < "$tmp/READER.ppm")" -eq 230415
+
+mkdir -p "$tmp/sd/Documents" "$tmp/sd/Downloads" "$tmp/sd/PocketOS-updates"
+printf 'file manager test\n' > "$tmp/sd/Documents/example.txt"
+printf 'preserve\n' > "$tmp/sd/Downloads/existing.txt"
+printf 'protected\n' > "$tmp/sd/PocketOS-updates/protected.txt"
+ln -s "$tmp" "$tmp/sd/Documents/link"
+"$bin" --test-files "$tmp/sd"
+test "$(cat "$tmp/sd/Documents/example.txt")" = 'file manager test'
+test "$(cat "$tmp/sd/Downloads/existing.txt")" = preserve
+test "$(cat "$tmp/sd/PocketOS-updates/protected.txt")" = protected
+test ! -e "$tmp/sd/Downloads/renamed.txt"
+test ! -e "$tmp/sd/Downloads/example.txt"
+"$bin" --preview FILES "$tmp/FILES.ppm"
+test "$(wc -c < "$tmp/FILES.ppm")" -eq 230415

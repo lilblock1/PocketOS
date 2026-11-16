@@ -17,7 +17,7 @@ $(BUILD_DIR)/pocketos-reader-font.h: generate-reader-font.py
 	/usr/bin/python3 generate-reader-font.py "$@"
 	cp /usr/share/doc/fonts-dejavu-core/copyright "$(BUILD_DIR)/reader-font-LICENSE.txt"
 
-$(BUILD_DIR)/pocketos-shell: pocketos-shell.c pocketos-audio-formats.h $(BUILD_DIR)/pocketos-reader-font.h
+$(BUILD_DIR)/pocketos-shell: pocketos-shell.c pocketos-audio-formats.h pocketos-files.h $(BUILD_DIR)/pocketos-reader-font.h
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) -I"$(BUILD_DIR)" $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
