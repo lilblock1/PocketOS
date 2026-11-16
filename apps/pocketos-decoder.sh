@@ -60,5 +60,12 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 snapshot /mnt/sd_0/PocketOS-codecs/pocketos-ffmpeg "$digest" "$work/ffmpeg"
 chmod 500 "$work/ffmpeg"
+# A matching checksum alone does not prove this build can execute on the R1.
+# Check the protected copy before replacing a working cache.
+command -v timeout >/dev/null 2>&1 || die "Runtime check requires timeout"
+if ! (ulimit -f 64; LC_ALL=C timeout -k 2 10 "$work/ffmpeg" -version > "$work/version.txt" 2>&1); then
+    die "Decoder runtime check failed (ABI, loader, or execution error)"
+fi
+grep -q '^ffmpeg version ' "$work/version.txt" || die "Unexpected decoder version output"
 mv -f "$work/ffmpeg" "$cache/ffmpeg"
 echo "Verified decoder cached in RAM; no internal storage written"
