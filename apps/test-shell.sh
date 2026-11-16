@@ -12,7 +12,7 @@ done
 if cmp -s "$tmp/HOME.ppm" "$tmp/SETTINGS.ppm"; then exit 1; fi
 if "$bin" --preview UNKNOWN "$tmp/no.ppm"; then exit 1; fi
 "$bin" --test-config "$tmp/preferences"
-test "$(cat "$tmp/preferences")" = 'POCKETOS2 2 1 1 1 3'
+test "$(cat "$tmp/preferences")" = 'POCKETOS3 2 1 1 1 3 37 2'
 
 mkdir "$tmp/backlight"
 printf '100\n' > "$tmp/backlight/max_brightness"

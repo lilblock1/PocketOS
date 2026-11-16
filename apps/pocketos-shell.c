@@ -44,6 +44,8 @@ static void apply_timezone(void) {
     tzset();
 }
 static int selected=0, battery=-1;
+static int volume=25, output=0;
+static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
 static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
@@ -83,15 +85,16 @@ static void load_preferences(void) {
     struct stat st;
     if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||st.st_size>128){close(fd);return;}
     FILE *f=fdopen(fd,"r");if(!f){close(fd);return;}
-    int a,b,c,d,z=0;char extra,version[16];
+    int a,b,c,d,z=0,v=25,o=0;char extra,version[16];
     int n=0;
     if(fscanf(f,"%15s",version)==1) {
         if(!strcmp(version,"POCKETOS1")) n=fscanf(f,"%d %d %d %d %c",&a,&b,&c,&d,&extra)==4;
         if(!strcmp(version,"POCKETOS2")) n=fscanf(f,"%d %d %d %d %d %c",&a,&b,&c,&d,&z,&extra)==5;
+        if(!strcmp(version,"POCKETOS3")) n=fscanf(f,"%d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&extra)==7;
     }
     fclose(f);
-    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6){
-        theme=a;clock24=b;readable=c;saver=d;timezone_choice=z;apply_timezone();
+    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6&&v>=0&&v<=100&&o>=0&&o<3){
+        theme=a;clock24=b;readable=c;saver=d;timezone_choice=z;volume=v;output=o;apply_timezone();
     }
 }
 static int save_preferences(void) {
@@ -101,7 +104,7 @@ static int save_preferences(void) {
     if(n<0||(size_t)n>=sizeof(tmp))return 0;
     int fd=mkstemp(tmp);if(fd<0)return 0;
     FILE *f=fdopen(fd,"w");if(!f){close(fd);unlink(tmp);return 0;}
-    int ok=fprintf(f,"POCKETOS2 %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice)>0;
+    int ok=fprintf(f,"POCKETOS3 %d %d %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice,volume,output)>0;
     if(fflush(f)!=0||fsync(fd)!=0)ok=0;
     if(fclose(f)!=0)ok=0;
     if(ok&&rename(tmp,config_path)==0)return 1;
@@ -266,7 +269,7 @@ static void render(void) {
         if(brightness_pct>=0)snprintf(v,sizeof(v),"%d%%",brightness_pct);
         else snprintf(v,sizeof(v),"UNAVAILABLE");
         quick_tile(2,"BRIGHTNESS",v,brightness_pct>=0);
-        quick_tile(3,"VOLUME",audio_present?"PCM DETECTED":"NOT CONNECTED",audio_present);
+        snprintf(v,sizeof(v),"%d%% TARGET",volume);quick_tile(3,"VOLUME",v,0);
         quick_tile(4,"BATTERY SAVER",saver?"PREFERRED":"STANDARD",saver);
         quick_tile(5,"SETTINGS","OPEN",1);
         text_at(12,270,"RADIO / AUDIO WRITES LOCKED",1,muted);
@@ -311,18 +314,29 @@ static void render(void) {
         usage_text(174,"MICROSD",sd_pct,sd_free);
         text_at(12,268,"NO FORMAT OR MOUNT ACTIONS",1,muted);
         text_at(12,301,"BACK",2,mint);
-    } else if(page==RADIO||page==SOUND){
+    } else if(page==SOUND){
+        char b[16];snprintf(b,sizeof(b),"%d%%",volume);
+        rounded(12,81,216,122,card);
+        text_at(21,93,"VOLUME TARGET",2,fg);
+        text_at(21,119,b,3,mint);
+        rect(24,160,192,12,edge);rect(24,160,192*volume/100,12,mint);
+        text_at(21,188,"PLAYBACK NOT CONNECTED",1,muted);
+        rounded(12,213,216,49,card);
+        text_at(21,223,"OUTPUT PREFERENCE",1,muted);
+        text_at(21,239,outputs[output],2,fg);
+        text_at(12,301,"BACK",2,mint);
+    } else if(page==RADIO){
         rounded(12,81,216,125,card);
         if(page==RADIO){
             text_at(21,94,wifi_present?"WI-FI: DETECTED":"WI-FI: UNKNOWN",2,fg);
             text_at(21,117,bt_present?"BT: DETECTED":"BT: UNKNOWN",2,fg);
-            text_at(21,149,"SCAN / PAIRING NOT READY",1,muted);
+            text_at(21,149,"BACKEND CLI AVAILABLE",1,muted);
         } else {
             text_at(21,94,"AUDIO OUTPUT",2,fg);
             text_at(21,122,audio_present?"PCM DEVICE DETECTED":"PCM NOT DETECTED",1,mint);
             text_at(21,149,"MIXER NOT VERIFIED",1,muted);
         }
-        text_at(21,174,"HARDWARE WRITES LOCKED",1,muted);
+        text_at(21,174,"UI CONNECTION PENDING",1,muted);
         text_at(12,301,"BACK",2,mint);
     } else {
         rounded(12,81,216,92,card);
@@ -375,9 +389,16 @@ static void activate(int i) {
     else if(page==SETTINGS&&i<7)page=setting_items[i];else return;
     selected=0;
 }
+static void set_volume_target(int v){
+    volume=v<0?0:v>100?100:v;
+    /* Never pass a UI percentage directly to an unverified DAC register. */
+    save_error=!save_preferences();
+}
 static void tap(int x,int y) {
     if(y<26){if(page==CONTROL)back();else open_control();return;}
     if(y>=287&&page!=HOME){back();return;}
+    if(page==SOUND&&x>=24&&x<=216&&y>=148&&y<=183){set_volume_target((x-24)*100/192);return;}
+    if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){output=(output+1)%3;save_error=!save_preferences();return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
     if(x<12||x>=228||y<80)return;
     if(page==HOME&&y<278) {
@@ -390,6 +411,8 @@ static void tap(int x,int y) {
 }
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
+    if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(page==SOUND&&(code==KEY_ENTER||code==KEY_OK)){output=(output+1)%3;save_error=!save_preferences();return 1;}
     if(code==KEY_MENU){if(page==CONTROL)back();else open_control();}
     else if(code==KEY_ESC||code==KEY_BACK)back();
     else if(code==KEY_ENTER||code==KEY_OK||code==KEY_SELECT)activate(selected);
@@ -573,6 +596,9 @@ static int selftest(void) {
     format_clock(&test,label);if(strcmp(label,"23:59"))return 1;
     tap(20,82);if(theme!=1)return 1;
     tap(20,200);if(timezone_choice!=1)return 1;
+    page=SOUND;tap(120,162);if(volume!=50)return 1;
+    key(KEY_VOLUMEUP);if(volume!=55)return 1;
+    tap(30,230);if(output!=1)return 1;
     render();return 0;
 }
 int main(int argc,char **argv) {
@@ -585,10 +611,10 @@ int main(int argc,char **argv) {
         return !write_backlight(argv[2],50);
     }
     if(argc==3&&!strcmp(argv[1],"--test-config")&&argv[2][0]=='/') {
-        config_path=argv[2];theme=2;clock24=readable=saver=1;timezone_choice=3;
+        config_path=argv[2];theme=2;clock24=readable=saver=1;timezone_choice=3;volume=37;output=2;
         if(!save_preferences())return 1;
-        theme=clock24=readable=saver=timezone_choice=0;load_preferences();
-        return !(theme==2&&clock24&&readable&&saver&&timezone_choice==3);
+        theme=clock24=readable=saver=timezone_choice=volume=output=0;load_preferences();
+        return !(theme==2&&clock24&&readable&&saver&&timezone_choice==3&&volume==37&&output==2);
     }
     if(argc==4&&!strcmp(argv[1],"--preview")){
         int found=0;for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++)if(!strcmp(argv[2],titles[i])){page=(enum page)i;found=1;}

@@ -98,6 +98,8 @@ jobs:
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview HOME target-app-output/HOME.ppm
           cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
+          readelf -h target-app-output/pocketos-wifi | grep -q MIPS
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-wifi --version)" = 'PocketOS Wi-Fi v1'
           cp previous-sdk/sdk-manifest.json target-app-output/
       - name: Upload application-only development artifact
         if: steps.pick.outputs.run_id != ''
