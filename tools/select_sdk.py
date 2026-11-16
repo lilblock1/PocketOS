@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select a successful main-branch foundation run with both live artifacts."""
+"""Select a successful main-branch foundation run with live rootfs and optional SDK."""
 import json
 import os
 import subprocess
@@ -7,7 +7,10 @@ import sys
 
 repo=os.environ["GITHUB_REPOSITORY"]
 requested=os.environ.get("REQUESTED_RUN","").strip()
-artifact_names={"PocketOS-compiled-MIPS-SDK","PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE"}
+require_sdk=os.environ.get("REQUIRE_SDK","1")!="0"
+artifact_names={"PocketOS-0.1.0-alpha-foundation-NOT-FIRMWARE"}
+if require_sdk:
+    artifact_names.add("PocketOS-compiled-MIPS-SDK")
 
 def api(path):
     return json.loads(subprocess.check_output(["gh","api",path],text=True))
@@ -35,8 +38,8 @@ for run in runs:
         selected=run
         break
 if not selected:
-    if requested:
-        sys.exit("Requested run has no successful, unexpired SDK/rootfs pair.")
+    if requested or not require_sdk:
+        sys.exit("No matching successful, unexpired foundation artifact(s). Select a valid foundation run; no rebuild is started.")
     print("::notice::No reusable compiled SDK yet. Host checks only; do not start a foundation build automatically.")
 else:
     with open(os.environ["GITHUB_OUTPUT"],"a") as f:
