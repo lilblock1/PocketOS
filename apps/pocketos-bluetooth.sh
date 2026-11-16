@@ -13,13 +13,21 @@ case "$action" in
         printf '%s\n' "$1" | grep -Eq '^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$' || exit 2 ;;
     *) exit 2 ;;
 esac
-command -v bluetoothctl >/dev/null 2>&1 || { echo 'BlueZ client unavailable' >&2; exit 1; }
+command -v bluetoothctl >/dev/null 2>&1 || { echo 'RADIO_ERROR=bt-service'; exit 1; }
+# Do not attempt to initialize a UART, change shared radio power, or start a
+# daemon until the board-specific transport has been verified.
+show=$(bluetoothctl --timeout 5 show 2>&1) || { echo 'RADIO_ERROR=bt-service'; exit 1; }
+printf '%s\n' "$show" | grep -q 'Controller [0-9A-Fa-f]' || { echo 'RADIO_ERROR=bt-controller'; exit 1; }
+if [ "$action" = status ]; then printf '%s\n' "$show"; exit 0; fi
+printf '%s\n' "$show" | grep -q 'Powered: yes' || { echo 'RADIO_ERROR=bt-power'; exit 1; }
 case "$action" in
-    status) exec bluetoothctl --timeout 5 show ;;
     devices) exec bluetoothctl --timeout 5 devices ;;
     discover)
-        bluetoothctl --timeout 10 scan on >/dev/null 2>&1 || :
+        # Report discovery errors rather than silently returning the old cache.
+        result=0
+        bluetoothctl --timeout 10 scan on >/dev/null 2>&1 || result=1
         bluetoothctl --timeout 5 scan off >/dev/null 2>&1 || :
+        [ "$result" -eq 0 ] || exit 1
         exec bluetoothctl --timeout 5 devices ;;
     scan) exec bluetoothctl --timeout 10 scan on ;;
     stop-scan) exec bluetoothctl --timeout 5 scan off ;;
