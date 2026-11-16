@@ -5,7 +5,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 test "$("$bin" --version)" = 'PocketOS shell v1'
 "$bin" --self-test
-for page in HOME SETTINGS SYSTEM BATTERY MUSIC CONTROL PREFERENCES DISPLAY STORAGE RADIOS SOUND; do
+for page in HOME SETTINGS SYSTEM BATTERY MUSIC CONTROL PREFERENCES DISPLAY STORAGE RADIOS SOUND UPDATES; do
     "$bin" --preview "$page" "$tmp/$page.ppm"
     test "$(wc -c < "$tmp/$page.ppm")" -eq 230415
 done

@@ -308,6 +308,17 @@ static void render(void) {
         if(brightness_pct>=0)rect(24,160,192*brightness_pct/100,12,mint);
         text_at(21,188,brightness_error?"WRITE FAILED":allow_backlight?"TAP BAR TO ADJUST":"READ ONLY - LOCKED",1,muted);
         text_at(12,301,"BACK",2,mint);
+    } else if(page==UPDATES){
+        text_at(12,64,"SIGNED TEST PACKAGES",1,muted);
+        rounded(12,82,216,61,card);
+        text_at(21,93,"SD CARD",2,fg);
+        text_at(21,121,"COPY SIGNED PACKAGE TO SD",1,muted);
+        rounded(12,154,216,61,card);
+        text_at(21,165,"GITHUB",2,fg);
+        text_at(21,193,"TEST CHANNEL - STAGING ONLY",1,muted);
+        text_at(12,237,"UPDATER CLI AVAILABLE",1,mint);
+        text_at(12,254,"INSTALLATION LOCKED",1,muted);
+        text_at(12,301,"BACK",2,mint);
     } else if(page==STORAGE){
         rounded(12,81,216,170,card);
         usage_text(94,"INTERNAL DATA",internal_pct,internal_free);
