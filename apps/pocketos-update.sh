@@ -3,15 +3,18 @@
 set -eu
 ui=0
 progress(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS PROGRESS %s\n' "$1"; fi; }
+phase(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS PHASE %s\n' "$1"; fi; }
+bytes(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS BYTES %s %s\n' "$1" "$2"; fi; }
 selection(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS SELECTION %s %s\n' "$1" "$2"; fi; }
 die(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS ERROR %s\n' "$*"; else printf '%s\n' "$*" >&2; fi; exit 1; }
 mode=""
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
 root=/mnt/sd_0
 key=/etc/pocketos/update-public.pem
+stat_cmd=/usr/bin/pocketos-stat
 if [ "$#" -ge 1 ] && [ "$1" = "--fixture" ]; then
     [ "$#" -ge 4 ] || die "fixture needs root and public key"
-    root=$2; key=$3; shift 3
+    root=$2; key=$3; stat_cmd=stat; shift 3
 else
     awk '$2=="/mnt/sd_0" {found=1} END {exit !found}' /proc/mounts || die "microSD not mounted"
 fi
@@ -41,8 +44,12 @@ mkdir -p "$store"
 [ ! -L "$store/versions" ] || die "Unsafe versions directory"
 mkdir -p "$store/versions"
 mkdir "$store/.lock" 2>/dev/null || die "Update already running or previous update interrupted"
-work=""
-cleanup(){ [ -z "$work" ] || rm -rf "$work"; rmdir "$store/.lock" 2>/dev/null || :; }
+work="" transfer_pid=""
+cleanup(){
+    if [ -n "$transfer_pid" ]; then kill "$transfer_pid" 2>/dev/null || :; wait "$transfer_pid" 2>/dev/null || :; fi
+    [ -z "$work" ] || rm -rf "$work"
+    rmdir "$store/.lock" 2>/dev/null || :
+}
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 work=$(mktemp -d "$store/.stage.XXXXXX")
@@ -90,14 +97,18 @@ verify_payload(){
         actual=$(sha256sum "$dir/$name"); [ "${actual%% *}" = "$hash" ] || die "Package checksum mismatch"
     done
 }
+phase MANIFEST
 progress 2
 if [ "$mode" = rollback ]; then
     [ "$#" -eq 0 ] && [ "$previous" != 0 ] || die "No previous staged version"
     [ -d "$store/versions/$previous" ] && [ ! -L "$store/versions/$previous" ] || die "Previous directory unavailable"
+    phase VERIFY
     verify_payload "$store/versions/$previous"
-    progress 90
+    phase SAVE
+    progress 95
     select_version "$previous" "$current" "$high"
     selection "$previous" "$current"
+    phase DONE
     progress 100
     echo "Previous package selected; no execution or firmware flash."
     exit 0
@@ -117,18 +128,40 @@ case "$mode" in
         source="https://github.com/lilblock1/PocketOS/releases/download/$tag" ;;
     *) die "Unknown operation";;
 esac
+# Payload progress is based on signed byte counts, not number of files.
+# Only report bytes observed in the private staging file; never trust HTTP length.
+report_transfer(){
+    partial=$("$stat_cmd" -c %s "$work/$transfer_name" 2>/dev/null) || partial=0
+    case "$partial" in ''|*[!0-9]*) partial=0;; esac
+    [ "$partial" -le "$transfer_limit" ] || partial=$transfer_limit
+    observed=$((transferred+partial))
+    if [ "$observed" -ne "$last_report" ]; then
+        bytes "$observed" "$total"
+        progress "$(awk -v n="$observed" -v t="$total" 'BEGIN {printf "%d",15+65*n/t}')"
+        last_report=$observed
+    fi
+}
 fetch(){
-    name=$1 limit=$2
+    transfer_name=$1 transfer_limit=$2
     if [ "$mode" = sd ]; then
-        [ -f "$source/$name" ] && [ ! -L "$source/$name" ] || die "Missing package file"
-        [ "$(wc -c < "$source/$name")" -le "$limit" ] || die "File exceeds limit"
-        cp "$source/$name" "$work/$name"
+        [ -f "$source/$transfer_name" ] && [ ! -L "$source/$transfer_name" ] || die "Missing package file"
+        [ "$(wc -c < "$source/$transfer_name")" -le "$transfer_limit" ] || die "File exceeds limit"
+        cp "$source/$transfer_name" "$work/$transfer_name" &
     else
         curl --fail --silent --show-error --location --max-redirs 5 \
             --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 300 \
-            --max-filesize "$limit" --output "$work/$name" "$source/$name" || die "GitHub download failed"
+            --max-filesize "$transfer_limit" --output "$work/$transfer_name" "$source/$transfer_name" &
     fi
-    [ "$(wc -c < "$work/$name")" -le "$limit" ] || die "Downloaded file exceeds limit"
+    transfer_pid=$!
+    if [ "${3:-}" = payload ] && [ "$ui" -eq 1 ]; then
+        while kill -0 "$transfer_pid" 2>/dev/null; do
+            report_transfer
+            sleep 1
+        done
+    fi
+    if wait "$transfer_pid"; then transfer_pid=""; else transfer_pid=""; die "Package transfer failed"; fi
+    [ "$(wc -c < "$work/$transfer_name")" -le "$transfer_limit" ] || die "Downloaded file exceeds limit"
+    if [ "${3:-}" = payload ] && [ "$ui" -eq 1 ]; then report_transfer; fi
 }
 fetch manifest 32768
 fetch manifest.sig 8192
@@ -141,14 +174,25 @@ required=$(awk 'NR>1 {sum+=$2} END {printf "%.0f\n", int((sum+1023)/1024)+16384}
 free=$(df -Pk "$store" | awk 'NR==2 {print $4}')
 case "$free" in ''|*[!0-9]*) die "Cannot determine SD free space";; esac
 [ "$free" -ge "$required" ] || die "Insufficient microSD storage (includes 16 MiB reserve)"
-count=$(awk 'END {print NR-1}' "$work/manifest")
-tail -n +2 "$work/manifest" | (done_count=0; while read -r hash size name; do
-    fetch "$name" "$size"
-    [ "$(wc -c < "$work/$name")" -eq "$size" ] || die "Wrong package size"
-    actual=$(sha256sum "$work/$name"); [ "${actual%% *}" = "$hash" ] || die "Package checksum mismatch"
-    done_count=$((done_count+1)); progress "$((15+75*done_count/count))"
-done)
+if [ "$ui" -eq 1 ]; then command -v "$stat_cmd" >/dev/null || die "File size helper unavailable"; fi
+total=$(awk 'NR>1 {sum+=$2} END {printf "%.0f\n",sum}' "$work/manifest")
+transferred=0 last_report=0
+if [ "$mode" = github ]; then phase DOWNLOAD; else phase COPY; fi
+bytes 0 "$total"
+# Keep the transfer PID in the parent so interrupted jobs can be cleaned up.
+{
+    read -r header
+    while read -r hash size name; do
+        fetch "$name" "$size" payload
+        [ "$(wc -c < "$work/$name")" -eq "$size" ] || die "Wrong package size"
+        transferred=$((transferred+size))
+    done
+} < "$work/manifest"
+phase VERIFY
+progress 80
 verify_payload "$work"
+progress 95
+phase SAVE
 mkdir "$work/payload"
 mv "$work/manifest" "$work/manifest.sig" "$work/payload/"
 tail -n +2 "$work/payload/manifest" | while read -r hash size name; do mv "$work/$name" "$work/payload/$name"; done
@@ -156,5 +200,6 @@ sync
 mv "$work/payload" "$store/versions/$seq"
 select_version "$seq" "$current" "$seq"
 selection "$seq" "$current"
+phase DONE
 progress 100
 echo "Signed SD update staged and selected: $seq. Application activation and firmware installation remain disabled."

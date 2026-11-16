@@ -156,11 +156,24 @@ static int radio_poll(void){
     radio_drain();
     close(radio_fd);radio_fd=-1;radio_pid=-1;radio_buffer[radio_used]=0;
     enum radio_job job=radio_active;radio_active=R_NONE;
-    if(timed_out||pid<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0||radio_overflow){radio_message("Request failed / service unavailable");return 1;}
+    if(timed_out||pid<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0||radio_overflow){
+        if(timed_out)radio_message("Radio request timed out");
+        else if(strstr(radio_buffer,"RADIO_ERROR=wifi-start-failed"))radio_message("Wi-Fi driver or service failed to start");
+        else if(strstr(radio_buffer,"RADIO_ERROR=supplicant-unavailable"))radio_message("Wi-Fi service not running");
+        else if(strstr(radio_buffer,"RADIO_ERROR=scan-incomplete"))radio_message("Wi-Fi scan incomplete; retry");
+        else if(strstr(radio_buffer,"RADIO_ERROR=bt-service"))radio_message("Bluetooth service unavailable");
+        else if(strstr(radio_buffer,"RADIO_ERROR=bt-controller"))radio_message("Bluetooth controller not ready");
+        else if(strstr(radio_buffer,"RADIO_ERROR=bt-power"))radio_message("Bluetooth adapter not powered");
+        else radio_message("Request failed / service unavailable");
+        return 1;
+    }
     if(job==R_WIFI_SCAN){radio_parse_wifi(radio_buffer);radio_message(radio_count?"Choose a network":"No supported networks found");}
     else if(job==R_BT_SCAN){radio_parse_bt(radio_buffer);radio_message(radio_count?"Choose a device":"No devices listed");}
     else if(job==R_WIFI_STATUS){
-        radio_message(strstr(radio_buffer,"wpa_state=COMPLETED")?"Wi-Fi associated; IP not verified":"Wi-Fi not associated");
+        if(!strstr(radio_buffer,"wpa_state=COMPLETED"))radio_message("Wi-Fi not associated");
+        else if(strstr(radio_buffer,"pocketos_ipv4=none"))radio_message("Wi-Fi associated; no IPv4 address");
+        else if(strstr(radio_buffer,"pocketos_ipv4=unknown")||!strstr(radio_buffer,"pocketos_ipv4="))radio_message("Wi-Fi associated; IP not verified");
+        else radio_message("Wi-Fi associated; IPv4 present");
     }else if(job==R_BT_STATUS){
         radio_message(strstr(radio_buffer,"Powered: yes")?"Bluetooth powered on":"Bluetooth not powered / unknown");
     }else if(job==R_WIFI_JOIN)radio_message("Association requested; check status");

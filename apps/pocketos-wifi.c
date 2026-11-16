@@ -2,6 +2,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include <ctype.h>
 #include <errno.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,18 +16,23 @@
 #include <time.h>
 #include <unistd.h>
 
-static int fd=-1;
-static char tempdir[]="/tmp/pocketos-wpa-XXXXXX", local[108];
-static void cleanup(void){if(fd>=0)close(fd);if(local[0])unlink(local);rmdir(tempdir);}
-static int start(const char *path){
+static int fd=-1, monitor=-1;
+static char tempdir[]="/tmp/pocketos-wpa-XXXXXX", local[108], event_local[108];
+static void cleanup(void){if(fd>=0)close(fd);if(monitor>=0){(void)send(monitor,"DETACH",6,MSG_DONTWAIT);close(monitor);}if(local[0])unlink(local);if(event_local[0])unlink(event_local);rmdir(tempdir);}
+static int connect_socket(const char *path,const char *name,char address[108]){
     struct sockaddr_un a={.sun_family=AF_UNIX},b={.sun_family=AF_UNIX};
-    if(strlen(path)>=sizeof(b.sun_path)||!mkdtemp(tempdir))return 0;
+    int n=snprintf(address,108,"%s/%s",tempdir,name);
+    if(n<0||(size_t)n>=sizeof(a.sun_path)||strlen(path)>=sizeof(b.sun_path))return -1;
+    strcpy(a.sun_path,address);strcpy(b.sun_path,path);
+    int sock=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);
+    if(sock<0)return -1;
+    if(bind(sock,(struct sockaddr*)&a,sizeof(a))!=0||connect(sock,(struct sockaddr*)&b,sizeof(b))!=0){close(sock);return -1;}
+    return sock;
+}
+static int start(const char *path){
+    if(!mkdtemp(tempdir))return 0;
     if(atexit(cleanup)!=0){rmdir(tempdir);return 0;}
-    int n=snprintf(local,sizeof(local),"%s/ctrl",tempdir);
-    if(n<0||(size_t)n>=sizeof(local)||strlen(local)>=sizeof(a.sun_path))return 0;
-    strcpy(a.sun_path,local);strcpy(b.sun_path,path);
-    fd=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);
-    return fd>=0&&bind(fd,(struct sockaddr*)&a,sizeof(a))==0&&connect(fd,(struct sockaddr*)&b,sizeof(b))==0;
+    fd=connect_socket(path,"ctrl",local);return fd>=0;
 }
 static int request(const char *cmd,char *response,size_t size){
     size_t n=strlen(cmd);
@@ -39,6 +47,42 @@ static int request(const char *cmd,char *response,size_t size){
 static int ok(const char *cmd){
     char r[256];
     return request(cmd,r,sizeof(r))&&(!strcmp(r,"OK\n")||!strcmp(r,"OK"));
+}
+/* Listen on a separate attached socket before starting the scan. Never
+ * report stale cached results as a successful new scan. */
+static int scan_complete(const char *path){
+    monitor=connect_socket(path,"events",event_local);
+    if(monitor<0||send(monitor,"ATTACH",6,0)!=6)return 0;
+    struct pollfd p={.fd=monitor,.events=POLLIN};char r[1024];
+    if(poll(&p,1,3000)!=1||!(p.revents&POLLIN))return 0;
+    ssize_t n=recv(monitor,r,sizeof(r)-1,0);
+    if(n<=0)return 0;
+    r[n]=0;if(strcmp(r,"OK\n")&&strcmp(r,"OK"))return 0;
+    if(!ok("SCAN"))return 0;
+    struct timespec t;if(clock_gettime(CLOCK_MONOTONIC,&t)!=0)return 0;
+    long long until=(long long)t.tv_sec*1000+t.tv_nsec/1000000+12000;
+    for(;;){
+        if(clock_gettime(CLOCK_MONOTONIC,&t)!=0)return 0;
+        long long remaining=until-((long long)t.tv_sec*1000+t.tv_nsec/1000000);
+        if(remaining<=0)return 0;
+        int rc=poll(&p,1,(int)remaining);
+        if(rc<0&&errno==EINTR)continue;
+        if(rc!=1||!(p.revents&POLLIN))return 0;
+        n=recv(monitor,r,sizeof(r)-1,0);if(n<=0)return 0;r[n]=0;
+        const char *kind=strchr(r,'>');kind=kind?kind+1:r;
+        if(!strncmp(kind,"CTRL-EVENT-SCAN-RESULTS",sizeof("CTRL-EVENT-SCAN-RESULTS")-1))return 1;
+        if(!strncmp(kind,"CTRL-EVENT-SCAN-FAILED",sizeof("CTRL-EVENT-SCAN-FAILED")-1)||!strncmp(kind,"CTRL-EVENT-TERMINATING",sizeof("CTRL-EVENT-TERMINATING")-1))return 0;
+    }
+}
+static void ipv4_status(void){
+    struct ifaddrs *all=NULL;int found=0;
+    if(getifaddrs(&all)!=0){puts("pocketos_ipv4=unknown");return;}
+    for(struct ifaddrs *a=all;a;a=a->ifa_next){
+        if(!a->ifa_addr||strcmp(a->ifa_name,"wlan0")||a->ifa_addr->sa_family!=AF_INET)continue;
+        char buf[INET_ADDRSTRLEN];struct sockaddr_in *in=(struct sockaddr_in*)a->ifa_addr;
+        if(in->sin_addr.s_addr&&inet_ntop(AF_INET,&in->sin_addr,buf,sizeof(buf))){printf("pocketos_ipv4=%s\n",buf);found=1;break;}
+    }
+    freeifaddrs(all);if(!found)puts("pocketos_ipv4=none");
 }
 static void wipe(char *p,size_t n){volatile char *q=p;while(n--)*q++=0;}
 static int line(char *b,size_t n){
@@ -121,19 +165,17 @@ int main(int argc,char **argv){
     if(!custom&&access("/usr/sbin/pocketos-wifi-service",X_OK)==0){
         socket="/run/pocketos-wifi/wlan0";
         if(mut&&strcmp(action,"disconnect")&&!ensure_service()){
-            fputs("Wi-Fi driver or supplicant initialization failed.\n",stderr);return 1;
+            puts("RADIO_ERROR=wifi-start-failed");return 1;
         }
     }
-    if(!start(socket)){fputs("Supplicant control socket unavailable.\n",stderr);return 1;}
+    if(!start(socket)){puts("RADIO_ERROR=supplicant-unavailable");return 1;}
     if(!cmd)return join_network();
     if(!strcmp(action,"scan-list")){
-        if(!ok("SCAN"))return 1;
-        struct timespec delay={.tv_sec=4,.tv_nsec=0};
-        while(nanosleep(&delay,&delay)<0&&errno==EINTR){}
+        if(!scan_complete(socket)){puts("RADIO_ERROR=scan-incomplete");return 1;}
         cmd="SCAN_RESULTS";mut=0;
     }
     if(mut)return ok(cmd)?0:1;
     char r[16384];
     if(!request(cmd,r,sizeof(r))||!strncmp(r,"FAIL",4))return 1;
-    fputs(r,stdout);return 0;
+    fputs(r,stdout);if(!custom&&!strcmp(action,"status"))ipv4_status();return 0;
 }

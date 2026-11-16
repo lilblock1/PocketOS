@@ -27,7 +27,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Install host tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-user p7zip-full squashfs-tools kmod python3-pil fonts-dejavu-core ffmpeg gnupg xz-utils pkg-config
+        run: sudo apt-get update && sudo apt-get install -y qemu-user p7zip-full squashfs-tools kmod python3-pil fonts-dejavu-core ffmpeg gnupg xz-utils pkg-config zlib1g-dev
       - name: Select exact foundation
         id: pick
         env:
@@ -68,7 +68,7 @@ jobs:
           done
           test -n "$compiler"
           make -C apps CC="$compiler" CFLAGS="-Os -Wall -Wextra -Werror" LDFLAGS="-s" BUILD_DIR="$PWD/target-apps" all
-          for name in pocketos-info pocketos-r1-runtime pocketos-shell pocketos-wifi pocketos-music; do
+          for name in pocketos-info pocketos-r1-runtime pocketos-shell pocketos-wifi pocketos-music pocketos-stat pocketos-book-prepare; do
             timeout 30 qemu-mipsel -L "$PWD/rootfs" "target-apps/$name" --version
           done
           for test in --self-test --test-power --test-radio --test-update-ui; do
@@ -94,7 +94,7 @@ jobs:
           sudo python3 tools/r1_hardware_audit.py reference-work/root previous-foundation/compatibility.json reports/r1-compatibility.json
           sudo python3 tools/r1_stage.py reference-work/root reports/r1-compatibility.json previous-foundation/compatibility.json staging hardware/hiby-r1/probe.sh reports/r1-integration.json
           sudo python3 tools/r1_init_plan.py staging reports/r1-integration.json reports/r1-init-plan.json
-          sudo mksquashfs staging/rootfs staging/size-only.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          sudo mksquashfs staging/rootfs staging/size-only.squashfs -noappend -comp lzo -processors 2 -no-progress >/dev/null
           sudo python3 tools/r1_boot_gate.py staging/rootfs reference-work/reference.squashfs staging/size-only.squashfs staging/reference-kernel.bin reports/r1-integration.json reports/r1-init-plan.json reports/r1-boot-readiness.json
           sudo python3 tools/r1_assemble.py report staging/size-only.squashfs reference-work/reference.squashfs reports/assembly.json reports/r1-boot-readiness.json reports/phase4c.json
           sudo chown -R "$(id -u):$(id -g)" reports
@@ -104,7 +104,10 @@ jobs:
         run: |
           cp previous-sdk/sdk-manifest.json reports/
           cp hardware/hiby-r1/recovery.md hardware/hiby-r1/boot-probe.sh hardware/hiby-r1/probe.sh reports/
-          (cd target-apps && sha256sum pocketos-* S95pocketos reader-font-LICENSE.txt > SHA256SUMS)
+          mkdir -p target-apps/epub-source/apps target-apps/epub-source/third_party
+          cp apps/pocketos-book-prepare.c apps/Makefile target-apps/epub-source/apps/
+          cp -r third_party/sonix-epub target-apps/epub-source/third_party/
+          (cd target-apps && sha256sum pocketos-* S95pocketos reader-font-LICENSE.txt book-prepare-LICENSE.txt > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -119,6 +122,8 @@ jobs:
             target-apps/pocketos-*
             target-apps/S95pocketos
             target-apps/reader-font-LICENSE.txt
+            target-apps/book-prepare-LICENSE.txt
+            target-apps/epub-source/
             target-apps/SHA256SUMS
             target-apps/README*
           if-no-files-found: error

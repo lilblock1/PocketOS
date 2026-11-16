@@ -1,6 +1,8 @@
 import shutil, pathlib, struct, subprocess, sys, tempfile, unittest, wave
 bin=str(pathlib.Path(sys.argv.pop(1)).resolve())
 class Music(unittest.TestCase):
+    def test_physical_gain_limit(self):
+        subprocess.run([bin,"--test-playback-gain"],check=True)
     def test_pcm(self):
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/"test.wav"
@@ -15,6 +17,11 @@ class Music(unittest.TestCase):
             self.assertEqual(subprocess.check_output([bin,"--decode",str(f),"50"]),quarter)
             f.write_bytes(f.read_bytes()[:-1])
             self.assertNotEqual(subprocess.run([bin,"--probe",str(f)],capture_output=True).returncode,0)
+    @unittest.skipIf(pathlib.Path('/sys/class/switch/headset/state').exists(), 'never run fixture against real hardware')
+    def test_headphone_gate(self):
+        result=subprocess.run([bin,'--allow-play','/nonexistent.wav'],capture_output=True)
+        self.assertEqual(result.returncode,12)
+        self.assertIn(b'Connect headphones',result.stderr)
     def test_seek(self):
         with tempfile.TemporaryDirectory() as d:
             f=pathlib.Path(d)/"seek.wav"

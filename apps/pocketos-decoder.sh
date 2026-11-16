@@ -42,17 +42,16 @@ case "$1" in activate|ensure) ;; *) die "Unknown action";; esac
 awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts || die "/run RAM filesystem not mounted"
 awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts || die "microSD not mounted"
 [ ! -L /run ] && [ ! -L /mnt/sd_0 ] && [ ! -L /mnt/sd_0/PocketOS-codecs ] || die "Unsafe directory"
-[ "$(stat -c '%u:%a' /run)" = "0:755" ] || die "Unsafe RAM parent"
+[ "$(/usr/bin/pocketos-stat -c '%u:%a' /run)" = "0:755" ] || die "Unsafe RAM parent"
 digest=/etc/pocketos/decoder.sha256
 [ -f "$digest" ] && [ ! -L "$digest" ] || die "Trusted digest missing"
-case "$(stat -c '%u:%a' "$digest")" in 0:444|0:400|0:644|0:600) ;; *) die "Unsafe trusted digest";; esac
+case "$(/usr/bin/pocketos-stat -c '%u:%a' "$digest")" in 0:444|0:400|0:644|0:600) ;; *) die "Unsafe trusted digest";; esac
 [ ! -L "$cache" ] || die "Unsafe cache"
 mkdir -p "$cache"
-[ "$(stat -c '%u:%a' "$cache")" = "0:700" ] || die "Unsafe cache owner"
-# An already verified, root-owned RAM snapshot can be reused without another
-# copy or allocation. Validate against the trusted digest, not the SD hash.
+[ "$(/usr/bin/pocketos-stat -c '%u:%a' "$cache")" = "0:700" ] || die "Unsafe cache owner"
+# Reuse an exact protected snapshot without allocating another binary.
 if [ "$1" = ensure ] && [ -f "$cache/ffmpeg" ] && [ ! -L "$cache/ffmpeg" ] &&
-   [ "$(stat -c '%u:%a' "$cache/ffmpeg")" = "0:500" ] &&
+   [ "$(/usr/bin/pocketos-stat -c '%u:%a' "$cache/ffmpeg")" = "0:500" ] &&
    [ "$(wc -c < "$digest")" -eq 65 ]; then
     read -r expected < "$digest" || die "Invalid digest"
     case "$expected" in *[!0-9a-f]*) die "Invalid digest";; esac
@@ -77,11 +76,11 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 1' HUP INT TERM
 snapshot /mnt/sd_0/PocketOS-codecs/pocketos-ffmpeg "$digest" "$work/ffmpeg"
 chmod 500 "$work/ffmpeg"
-# A matching checksum alone does not prove this build can execute on the R1.
-# Check the protected copy before replacing a working cache.
-command -v timeout >/dev/null 2>&1 || die "Runtime check requires timeout"
-if ! (ulimit -f 64; LC_ALL=C timeout -k 2 10 "$work/ffmpeg" -version > "$work/version.txt" 2>&1); then
-    die "Decoder runtime check failed (ABI, loader, or execution error)"
+# The previously tested ABI is not a guarantee for every future candidate.
+# The physical rootfs does not ship timeout. This exact digest-checked
+# executable can be checked with a CPU and output limit instead.
+if ! (ulimit -t 5; ulimit -f 64; LC_ALL=C "$work/ffmpeg" -version > "$work/version.txt" 2>&1); then
+    die "Decoder runtime check failed"
 fi
 grep -q '^ffmpeg version ' "$work/version.txt" || die "Unexpected decoder version output"
 mv -f "$work/ffmpeg" "$cache/ffmpeg"

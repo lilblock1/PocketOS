@@ -1,0 +1,131 @@
+{
+  "buildroot_commit": "137a566bf5353831d97c068a4c22e6df5b4d07a0",
+  "inputs": [
+    {
+      "name": "android-tools_4.2.2+git20130218.orig.tar.xz",
+      "bytes": 215868,
+      "sha256": "9bfba987e1351b12aa983787b9ae4424ab752e9e646d8e93771538dc1e5d932f",
+      "source": "https://launchpad.net/ubuntu/+archive/primary/+files/android-tools_4.2.2+git20130218.orig.tar.xz"
+    },
+    {
+      "name": "android-tools_4.2.2+git20130218-3ubuntu41.debian.tar.gz",
+      "bytes": 154346,
+      "sha256": "73c3078de3e44d8a3cadf7a360863c63155d9d558c2f0933cf38ad901a3f5998",
+      "source": "https://launchpad.net/ubuntu/+archive/primary/+files/android-tools_4.2.2+git20130218-3ubuntu41.debian.tar.gz"
+    },
+    {
+      "name": "libxcrypt-4.4.38.tar.xz",
+      "bytes": 625756,
+      "sha256": "80304b9c306ea799327f01d9a7549bdb28317789182631f1b54f4511b4206dd6",
+      "source": "https://github.com/besser82/libxcrypt/releases/download/v4.4.38/libxcrypt-4.4.38.tar.xz"
+    },
+    {
+      "name": "0001-Fix-makefiles-for-out-of-tree-build.patch",
+      "bytes": 4449,
+      "sha256": "0f506bc92b6a714a314425defe7af18cab8427a0fd72c667bf23b63aa2e9966f",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0001-Fix-makefiles-for-out-of-tree-build.patch"
+    },
+    {
+      "name": "0002-Fix-adbd-for-non-Ubuntu-systems.patch",
+      "bytes": 9419,
+      "sha256": "4599a513522a5e92970b841f55687071f9ac8113cc6b5e57ef9d79fa43df3664",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0002-Fix-adbd-for-non-Ubuntu-systems.patch"
+    },
+    {
+      "name": "0003-Adjust-base64-function-handling.patch",
+      "bytes": 3420,
+      "sha256": "3c36f3b785531e9d4992b4176b4359394a2faf2ce572ade97c0554cf41443d5a",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0003-Adjust-base64-function-handling.patch"
+    },
+    {
+      "name": "0004-Fix-build-issue-with-musl.patch",
+      "bytes": 1361,
+      "sha256": "4956c72b7044801420ea3a287f9675cbae3c82a09738ab204a1c73b2cc479093",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0004-Fix-build-issue-with-musl.patch"
+    },
+    {
+      "name": "0005-makefiles-use-pkgconf-to-get-libs-deps.patch",
+      "bytes": 1597,
+      "sha256": "edf88581273cb83930d075576ebd421fbddc4ad91ab97bcd6c0282aeb79fcf08",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0005-makefiles-use-pkgconf-to-get-libs-deps.patch"
+    },
+    {
+      "name": "0006-Fix-build-on-big-endian-systems.patch",
+      "bytes": 2386,
+      "sha256": "463a71cbf785cdfdc130340cc087270856db2a1ba4aefdc7204283ca7c5311cb",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0006-Fix-build-on-big-endian-systems.patch"
+    },
+    {
+      "name": "0007-Include-cdefs.h-wherever-it-is-needed.patch",
+      "bytes": 1378,
+      "sha256": "0d243c192913bcea1f6399f6d328904779c0e013a39faa4321a1c202a23ccf3f",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0007-Include-cdefs.h-wherever-it-is-needed.patch"
+    },
+    {
+      "name": "0008-usb_linux.c-fix-minor-major-build-failure-due-to-gli.patch",
+      "bytes": 1684,
+      "sha256": "d3eae784ac50b50ac20eb75e7f57b5676295fa231f154fb75ace9389381ae1b7",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0008-usb_linux.c-fix-minor-major-build-failure-due-to-gli.patch"
+    },
+    {
+      "name": "0009-Fix-makefiles-for-out-of-tree-ext4_utils-build.patch",
+      "bytes": 1304,
+      "sha256": "9269868901dd1189bd1ad29493a4f62094eccad34333e30a16dda573a5db49c4",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0009-Fix-makefiles-for-out-of-tree-ext4_utils-build.patch"
+    },
+    {
+      "name": "0010-adb-added-patch-for-openssl-1.1.0-compatibility.patch",
+      "bytes": 1463,
+      "sha256": "d41aa83c95036b6978dd46e5436a437156487a76e57e06ece3c5fd9acadd51f9",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0010-adb-added-patch-for-openssl-1.1.0-compatibility.patch"
+    },
+    {
+      "name": "0011-core-fastboot-fastboot.c-reorder-functions-to-avoid-.patch",
+      "bytes": 1638,
+      "sha256": "441bc2dc05817b029a5684c38c47cae50b2a731b0191c50bed52ebb6184bfcba",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0011-core-fastboot-fastboot.c-reorder-functions-to-avoid-.patch"
+    },
+    {
+      "name": "0012-core-libsparse-sparse_read.c-add-missing-output_file.patch",
+      "bytes": 1160,
+      "sha256": "9909a1fb58acae5a595fb568a2e691953233c1401ff3dde15036e05cb7b132e5",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0012-core-libsparse-sparse_read.c-add-missing-output_file.patch"
+    },
+    {
+      "name": "0013-extras-ext4_utils-make_ext4fs_main.c-disable-Android.patch",
+      "bytes": 1765,
+      "sha256": "b33b4e0b173449c51abf772bb9c48c4abb04d1747b8eeae55c15ca92da641076",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0013-extras-ext4_utils-make_ext4fs_main.c-disable-Android.patch"
+    },
+    {
+      "name": "0014-core-adbd-adb.c-open-code-capset.patch",
+      "bytes": 1732,
+      "sha256": "5e1cc2b48c54b708fbaa31dc27267bbd8bba0fe5bebad5cfde625a269b7c7bbe",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0014-core-adbd-adb.c-open-code-capset.patch"
+    },
+    {
+      "name": "0015-core-adbd-adb.c-include-correct-header-for-prctl.patch",
+      "bytes": 995,
+      "sha256": "11083cc5cf83b125d9cbeb2fb737f092921f1f0859374fb559ee3bc05b7d4769",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0015-core-adbd-adb.c-include-correct-header-for-prctl.patch"
+    },
+    {
+      "name": "0016-extras-ext4_utils-make_ext4fs.c-define-__SANE_USERSP.patch",
+      "bytes": 1994,
+      "sha256": "ccc1bc166917ee91604a077d90ab68577682f1d7cefb4958acc461b321420206",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0016-extras-ext4_utils-make_ext4fs.c-define-__SANE_USERSP.patch"
+    },
+    {
+      "name": "0017-extras-ext4_utils-contents.c-allocate_inode-doesn-t-.patch",
+      "bytes": 2089,
+      "sha256": "52f08f4bf6995997daeec9ff2f33e77b9e27f3b85fe71b51cf84359857035551",
+      "source": "https://raw.githubusercontent.com/buildroot/buildroot/137a566bf5353831d97c068a4c22e6df5b4d07a0/package/android-tools/0017-extras-ext4_utils-contents.c-allocate_inode-doesn-t-.patch"
+    },
+    {
+      "name": "aosp-5.1.1-usb_linux_client.c",
+      "source": "https://android.googlesource.com/platform/system/core/+/android-5.1.1_r38/adb/usb_linux_client.c?format=TEXT",
+      "base64": true,
+      "sha256": "db47a1b1881bc5d6e953c61083db717a26205f5da71b4a07370d0e394ed16934"
+    }
+  ]
+}

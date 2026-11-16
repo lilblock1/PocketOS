@@ -1,0 +1,7 @@
+# Phase 5 headphone volume calibration
+
+Physical build `ea47b5df5285acf5`: owner confirmed playback, volume keys, software sleep/wake, playback during sleep and headphone removal. Owner auditioned decode gain 10 and 15, and preferred 15. The old hardware cap mapped UI 100 to decode gain 3.
+
+UI 100 now corresponds to the tested 15% squared PCM gain (0.0225 full-scale). Optional UI 101–130 maps to at most 19.5% equivalent squared PCM gain (0.038025 full-scale); the extended range has not been physically tested. This is digital attenuation, not calibrated SPL or guaranteed hearing safety. DAC controls remain unchanged. The warning explicitly requests touchscreen consent; it does not raise the current volume, and repeated physical volume-up cannot confirm it. New playback children start within the normal range before receiving the session's control state. The extended range is revoked on stop, headphone detection loss and output changes, and is never persisted. Preferences save at most 100; loading caps at 50 to avoid a loud startup, including migration of old preferences. While asleep, volume buttons cannot newly enable the extended range. The existing software sleep and headphone guard are retained.
+
+Host shell regression, Smart Sleep self-test, six music tests (including gain mapping and protocol limits), and both MIPS target builds passed. Used the already generated reader font. No device test or firmware packaging for this change.

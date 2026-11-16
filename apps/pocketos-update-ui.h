@@ -14,7 +14,8 @@ static enum update_job update_active,update_confirm;
 static int update_allow,update_percent,update_fd=-1,update_len,update_drop;
 static pid_t update_pid=-1;
 static char update_line[192],update_note[80]="Select an update source";
-static unsigned update_current,update_previous;
+static unsigned update_current,update_previous,update_bytes,update_total;
+static int update_error;
 static struct timespec update_deadline;
 static void update_message(const char *msg){snprintf(update_note,sizeof(update_note),"%.79s",msg);}
 static void update_parse(const char *line){
@@ -22,13 +23,28 @@ static void update_parse(const char *line){
     if(sscanf(line,"POCKETOS SELECTION %u %u %c",&a,&b,&extra)==2&&a<=999999999&&b<=999999999){
         update_current=a;update_previous=b;return;
     }
+    unsigned done,total;
+    if(sscanf(line,"POCKETOS BYTES %u %u %c",&done,&total,&extra)==2&&total>0&&total<=536870912&&done<=total){
+        if((!update_total||update_total==total)&&done>=update_bytes){update_bytes=done;update_total=total;}
+        return;
+    }
+    if(!strncmp(line,"POCKETOS PHASE ",15)){
+        const char *p=line+15;
+        if(!strcmp(p,"MANIFEST"))update_message("Checking signed manifest");
+        else if(!strcmp(p,"DOWNLOAD"))update_message("Downloading to microSD");
+        else if(!strcmp(p,"COPY"))update_message("Copying to microSD");
+        else if(!strcmp(p,"VERIFY"))update_message("Verifying package checksums");
+        else if(!strcmp(p,"SAVE"))update_message("Saving verified selection");
+        else if(!strcmp(p,"DONE"))update_message("Staging finished; not installed");
+        return;
+    }
     int percent;
     if(sscanf(line,"POCKETOS PROGRESS %d %c",&percent,&extra)==1&&percent>=0&&percent<=100){
         if(percent>=update_percent)update_percent=percent;
-        update_message(percent==100?"Verified; selection saved":percent>=90?"Saving verified selection":percent>=15?"Checking / transferring files":"Reading signed manifest");return;
+        return;
     }
     if(!strncmp(line,"POCKETOS ERROR ",15)){
-        update_message(line+15);return;
+        update_error=1;update_message(line+15);return;
     }
 }
 static int update_drain(void){
@@ -74,7 +90,7 @@ static int update_spawn(enum update_job job){
     close(out[1]);if(pid<0){close(out[0]);update_message("Cannot start updater");return 0;}
     (void)setpgid(pid,pid);
     update_pid=pid;update_fd=out[0];update_active=job;
-    update_len=update_drop=update_percent=0;
+    update_len=update_drop=update_percent=update_error=0;update_bytes=update_total=0;
     if(clock_gettime(CLOCK_MONOTONIC,&update_deadline)!=0)update_deadline.tv_sec=0;
     else update_deadline.tv_sec+=1800;
     update_message(job==U_STATUS?"Reading selection":"Starting signed update");
@@ -104,10 +120,10 @@ static int update_poll(void){
     close(update_fd);update_fd=-1;update_pid=-1;
     enum update_job job=update_active;update_active=U_NONE;
     if(p<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0){
-        if(!strcmp(update_note,"Starting signed update")||!strcmp(update_note,"Reading selection")||!strcmp(update_note,"Reading signed manifest")||!strcmp(update_note,"Checking / transferring files")||!strcmp(update_note,"Saving verified selection"))
+        if(!update_error)
             update_message("Update failed; selection not confirmed");
     }else if(job==U_STATUS)update_message(update_current?"Staged version selected":"No staged update");
-    else{update_percent=100;update_message(job==U_ROLLBACK?"Previous package selected":"Verified package selected");}
+    else{update_percent=100;update_message(job==U_ROLLBACK?"Previous package selected":"Verified package staged; not installed");}
     return 1;
 }
 #endif

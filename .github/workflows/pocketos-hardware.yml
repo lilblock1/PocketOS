@@ -85,7 +85,7 @@ jobs:
             exit 1
           fi
           # Scratch image is never placed in the artifact directory.
-          sudo mksquashfs staging/rootfs staging/rootfs-size-only.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          sudo mksquashfs staging/rootfs staging/rootfs-size-only.squashfs -noappend -comp lzo -processors 2 -no-progress >/dev/null
           sudo python3 tools/r1_boot_gate.py staging/rootfs reference-work/reference.squashfs staging/rootfs-size-only.squashfs staging/reference-kernel.bin hardware-report/r1-integration.json hardware-report/r1-init-plan.json hardware-report/r1-boot-readiness.json
           sudo chown "$(id -u):$(id -g)" hardware-report/r1-boot-readiness.json
           sh -n hardware/hiby-r1/boot-probe.sh

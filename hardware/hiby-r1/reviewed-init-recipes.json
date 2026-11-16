@@ -1,0 +1,126 @@
+{
+  "schema": 1,
+  "flashable": false,
+  "apply_enabled": false,
+  "reference_commit": "2920fe1c5ca3b4145b4d06251492ab87381e9817",
+  "recipes": {
+    "rmem_manager.sh": {
+      "preconditions": [
+        "observed boot arguments contain mem=64M@0x0 and no rmem= reservation"
+      ],
+      "actions": [
+        {
+          "kind": "module",
+          "module": "rmem_manager.ko",
+          "parameters": [
+            "rmem_start=0",
+            "rmem_size=0"
+          ]
+        }
+      ],
+      "script_sha256": "1311deca3f92b657498fca15f1412d54f658ff938bd6296114e4754b16eb9f10"
+    },
+    "i2c_gpio_add.sh": {
+      "actions": [
+        {
+          "kind": "module",
+          "module": "i2c_gpio_add.ko",
+          "parameters": []
+        },
+        {
+          "kind": "sysfs",
+          "path": "/sys/module/i2c_gpio_add/parameters/i2c_bus",
+          "value": "bus_num=3 rate=200000 scl=PB30 sda=PB31"
+        }
+      ],
+      "script_sha256": "6da6bc6624203db219cce43f3ce67a9b934a746ec7e7bd77d95b326ae229a268"
+    },
+    "keyboard_gpio_add.sh": {
+      "actions": [
+        {
+          "kind": "module",
+          "module": "keyboard_gpio_add.ko",
+          "parameters": []
+        },
+        {
+          "kind": "sysfs",
+          "path": "/sys/module/keyboard_gpio_add/parameters/keyboard",
+          "value": "alloc=16"
+        },
+        {
+          "kind": "sysfs",
+          "path": "/sys/module/keyboard_gpio_add/parameters/keyboard",
+          "value": "gpio=PC31 key_code=116 tag=KEY_POWER active_level=0 wakeup=y"
+        },
+        {
+          "kind": "sysfs",
+          "path": "/sys/module/keyboard_gpio_add/parameters/keyboard",
+          "value": "gpio=PC28 key_code=163 tag=KEY_NEXTSONG active_level=1 wakeup=y"
+        },
+        {
+          "kind": "sysfs",
+          "path": "/sys/module/keyboard_gpio_add/parameters/keyboard",
+          "value": "register"
+        }
+      ],
+      "script_sha256": "de7be79c2f63eaf9fe66b203367381f57f7826b8e1730b901cb0048b6bbc2bf3"
+    },
+    "lcd_lg35583.sh": {
+      "actions": [
+        {
+          "kind": "module",
+          "module": "lcd_lg35583.ko",
+          "parameters": [
+            "gpio_lcd_power_en=-1",
+            "gpio_lcd_rst=PA31",
+            "gpio_spi_cs=PA30",
+            "gpio_spi_sck=PA00",
+            "gpio_spi_mosi=PA01",
+            "spi_bus_num=5",
+            "vcc_regulator_name=bldo1",
+            "vccio_regulator_name=bldo2"
+          ]
+        },
+        {
+          "kind": "delay",
+          "seconds": "0.01"
+        }
+      ],
+      "script_sha256": "1e1cb4716e1c167d54399df85803cdc358d19c9de1371a327b59bab3a606124f"
+    },
+    "axp2101.sh": {
+      "actions": [
+        {
+          "kind": "module",
+          "module": "axp2101.ko",
+          "parameters": [
+            "i2c_bus_num=0",
+            "charge_voltage_limit=4400",
+            "charge_term_current=100",
+            "dcdc3_always_pwmmode=1",
+            "dcdc1=\"regulator_name=dcdc1 boot_on=enable work_voltage=3300000 suspend_volage=3300000\"",
+            "dcdc2=\"regulator_name=dcdc2 boot_on=enable work_voltage=1100000 suspend_volage=1100000\"",
+            "dcdc3=\"regulator_name=dcdc3 boot_on=enable work_voltage=1800000 suspend_volage=1800000\"",
+            "dcdc4=\"regulator_name=dcdc4 boot_on=enable work_voltage=1200000 suspend_volage=1200000\"",
+            "rtcldo=\"regulator_name=RTCLDO boot_on=enable work_voltage=1800000 suspend_volage=1800000\"",
+            "aldo1=\"regulator_name=aldo1 boot_on=disable work_voltage=3300000 suspend_volage=3300000\"",
+            "aldo2=\"regulator_name=aldo2 boot_on=disable work_voltage=3300000 suspend_volage=3300000\"",
+            "aldo3=\"regulator_name=aldo3 boot_on=enable work_voltage=1100000 suspend_volage=1100000\"",
+            "aldo4=\"regulator_name=aldo4 boot_on=disable work_voltage=3300000 suspend_volage=3300000\"",
+            "bldo1=\"regulator_name=bldo1 boot_on=disable work_voltage=2800000 suspend_volage=2800000\"",
+            "bldo2=\"regulator_name=bldo2 boot_on=disable work_voltage=2800000 suspend_volage=2800000\"",
+            "dldo1=\"regulator_name=dldo1 boot_on=disable work_voltage=3300000 suspend_volage=3300000\"",
+            "dldo2=\"regulator_name=dldo2 boot_on=disable work_voltage=1250000 suspend_volage=1250000\"",
+            "pmu_int_gpio=PB23"
+          ]
+        }
+      ],
+      "script_sha256": "fababa2c31ff89aae4cd27bd55f15d7fb95ace0e81a8b391387d2d4f5c6a1428"
+    }
+  },
+  "notes": [
+    "Offline action descriptions only. Never execute vendor scripts.",
+    "Regulator and charger values reproduce observed vendor settings; no new tuning.",
+    "Recipe identity is pinned to exact reference script bytes. Physical cold startup remains untested."
+  ]
+}

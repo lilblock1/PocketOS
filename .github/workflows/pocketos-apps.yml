@@ -2,7 +2,7 @@ name: PocketOS - Applications (no Linux rebuild)
 on:
   push:
     branches: [main]
-    paths: ['apps/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', '.github/workflows/pocketos-apps.yml']
+    paths: ['apps/**', 'third_party/sonix-epub/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', '.github/workflows/pocketos-apps.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -24,7 +24,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install host-only compressed audio test decoder
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg python3-pil fonts-dejavu-core
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg python3-pil fonts-dejavu-core zlib1g-dev
       - name: Compile and test application code on host
         run: make -C apps BUILD_DIR="$PWD/host-app-output" check
       - name: Render native shell previews (host)
@@ -110,6 +110,11 @@ jobs:
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-wifi --version)" = 'PocketOS Wi-Fi v1'
           readelf -h target-app-output/pocketos-music | grep -q MIPS
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-music --version)" = 'PocketOS music v1'
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-stat --version)" = 'PocketOS file metadata v1'
+          test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-book-prepare --version)" = 'PocketOS native EPUB preparation v1 (GPL-3.0)'
+          mkdir -p target-app-output/epub-source/apps target-app-output/epub-source/third_party
+          cp apps/pocketos-book-prepare.c apps/Makefile target-app-output/epub-source/apps/
+          cp -r third_party/sonix-epub target-app-output/epub-source/third_party/
           cp previous-sdk/sdk-manifest.json target-app-output/
       - name: Upload application-only development artifact
         if: steps.pick.outputs.run_id != ''

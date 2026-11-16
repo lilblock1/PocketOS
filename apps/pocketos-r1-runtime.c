@@ -13,6 +13,7 @@
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "pocketos-hardware.h"
 
 #define MAX_PATH 2048
 #define MAX_STATE 4096
@@ -76,14 +77,18 @@ static long number(const char *text, long min, long max)
 struct state {
     long percent, brightness, max_brightness;
     int battery_ambiguous, charging, external_power;
-    int audio, framebuffer, input, sd_candidate, wifi, bluetooth, suspend;
+    int audio, framebuffer, input, sd_candidate, sd_mounted, wifi, bluetooth, suspend;
+    const char *battery_source;
 };
 
 static void scan_power(struct state *s)
 {
     char path[MAX_PATH], attr[MAX_PATH], value[128];
     glob_t g = {0};
-    int batteries = 0, online_known = 0, online = 0;
+    int online_known = 0, online = 0;
+    struct hw_battery battery=hw_battery_read(root);
+    s->percent=battery.percent;s->charging=battery.charging;
+    s->battery_ambiguous=battery.ambiguous;s->battery_source=battery.source;
     if (!path_for(path, sizeof(path), "/sys/class/power_supply/*")) return;
     if (glob(path, 0, NULL, &g) != 0) { globfree(&g); return; }
     for (size_t i = 0; i < g.gl_pathc; i++) {
@@ -91,26 +96,13 @@ static void scan_power(struct state *s)
         if (strlen(p) + 20 >= sizeof(attr)) continue;
         snprintf(attr, sizeof(attr), "%s/type", p);
         if (!read_value(attr, value, sizeof(value))) continue;
-        if (!strcmp(value, "Battery")) {
-            batteries++;
-            snprintf(attr, sizeof(attr), "%s/capacity", p);
-            if (read_value(attr, value, sizeof(value))) s->percent = number(value, 0, 100);
-            snprintf(attr, sizeof(attr), "%s/status", p);
-            if (read_value(attr, value, sizeof(value))) {
-                if (!strcmp(value, "Discharging")) s->charging = 0;
-                else if (!strcmp(value, "Charging") || !strcmp(value, "Full")) s->charging = 1;
-            }
-        } else {
+        if (strcmp(value, "Battery")) {
             snprintf(attr, sizeof(attr), "%s/online", p);
             if (read_value(attr, value, sizeof(value))) {
                 long n = number(value, 0, 1);
                 if (n >= 0) { online_known = 1; if (n == 1) online = 1; }
             }
         }
-    }
-    if (batteries != 1) {
-        s->percent = s->charging = -1;
-        s->battery_ambiguous = batteries > 1;
     }
     s->external_power = online_known ? online : -1;
     globfree(&g);
@@ -169,6 +161,7 @@ static struct state snapshot(void)
     s.framebuffer = exists("/dev/fb0");
     s.input = any_match("/dev/input/event*");
     s.sd_candidate = has_removable_sd();
+    s.sd_mounted = hw_sd_mounted(root);
     s.wifi = exists("/sys/class/net/wlan0");
     s.bluetooth = any_match("/sys/class/bluetooth/hci*");
     if (read_attr("/sys/power/state", value, sizeof(value))) {
@@ -183,9 +176,12 @@ static void format_state(const struct state *s, char *out, size_t size)
     snprintf(out, size, "audio_pcm_present=%d\nframebuffer_present=%d\ninput_present=%d\n"
              "battery_percent=%ld\nbattery_ambiguous=%d\ncharging=%d\nexternal_power=%d\n"
              "brightness=%ld\nmax_brightness=%ld\nremovable_sd_candidate=%d\n"
+             "battery_source=%s\nsd_mounted=%d\nsd_present=%d\n"
              "wifi_interface_present=%d\nbluetooth_interface_present=%d\nsuspend_mem_advertised=%d\n",
              s->audio,s->framebuffer,s->input,s->percent,s->battery_ambiguous,s->charging,
-             s->external_power,s->brightness,s->max_brightness,s->sd_candidate,s->wifi,s->bluetooth,s->suspend);
+             s->external_power,s->brightness,s->max_brightness,s->sd_candidate,
+             s->battery_source?s->battery_source:"unknown",s->sd_mounted,s->sd_mounted||s->sd_candidate,
+             s->wifi,s->bluetooth,s->suspend);
 }
 
 /* Recommendation only. No changes to playback, screen, radios, or suspend.

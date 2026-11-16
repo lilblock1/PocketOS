@@ -14,6 +14,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "pocketos-audio-formats.h"
+#include "pocketos-volume.h"
+
+enum { AUDIO_NO_DECODER=10, AUDIO_BAD_FILE=11, AUDIO_NO_JACK=12, AUDIO_ROUTE=13, AUDIO_PCM=14 };
 
 struct wav { FILE *f; uint32_t bytes,rate; unsigned channels,bits,frame; off_t offset; int decoder_fd; pid_t decoder; };
 static uint32_t le(const unsigned char *p,unsigned n){
@@ -54,15 +57,17 @@ static int parse(struct wav *w,const char *path){
     }
     return fmt&&data&&w->bytes>0&&w->bytes%w->frame==0&&fseeko(w->f,w->offset,SEEK_SET)==0;
 }
-static void gain(unsigned char *p,size_t n,unsigned bits,int volume){
-    if(volume==100)return;
+static void gain(unsigned char *p,size_t n,unsigned bits,int volume,int hardware){
+    if(volume==100&&!hardware)return;
     if(volume==0){memset(p,0,n);return;}
     unsigned stride=bits/8,sign=1u<<(bits-1),mod=1u<<bits;
     for(size_t i=0;i<n;i+=stride){
         uint32_t raw=le(p+i,stride);
         int sample=raw&sign?(int)raw-(int)mod:(int)raw;
-        /* squared percentage: no amplify; default 25% is about -24 dB */
-        int32_t scaled=(int32_t)((int64_t)sample*volume*volume/10000);
+        /* Hardware UI 100 maps to the physically tested 15% decode gain.
+         * Extended UI 130 maps to 19.5%; no DAC register writes. */
+        int64_t product=(int64_t)sample*volume*volume;
+        int32_t scaled=(int32_t)(hardware?product*225/100000000:product/10000);
         for(unsigned j=0;j<stride;j++)p[i+j]=(unsigned char)((uint32_t)scaled>>(8*j));
     }
 }
@@ -129,10 +134,10 @@ static int finish_decoder(struct wav *w,int abort_decode){
     do{got=waitpid(w->decoder,&status,0);}while(got<0&&errno==EINTR);
     return !abort_decode&&(got!=w->decoder||!WIFEXITED(status)||WEXITSTATUS(status)!=0);
 }
-static int stream(struct wav *w,int out,int volume,int controlled){
+static int stream(struct wav *w,int out,int volume,int controlled,int hardware){
     unsigned char b[8192],incoming[4096],commands[64];
     size_t left=w->bytes,used=0,at=0;
-    int paused=0,eof=0,decoded_any=0;
+    int paused=0,eof=0,decoded_any=0,extended=0;
     uint64_t sent=0;uint32_t last=start_seconds;
     report_progress(last);
     while(!interrupted&&(left||at<used||(w->decoder>0&&!eof))){
@@ -145,7 +150,7 @@ static int stream(struct wav *w,int out,int volume,int controlled){
                 ssize_t z=read(STDIN_FILENO,commands,sizeof(commands));
                 if(z<=0)return 2;
                 for(ssize_t j=0;j<z;j++){
-                    if(commands[j]<=100)volume=commands[j];
+                    if(commands[j]<=VOL_MAX||commands[j]==VOL_ENABLE||commands[j]==VOL_DISABLE)vol_command(commands[j],&volume,&extended);
                     else if(commands[j]==200)paused=1;
                     else if(commands[j]==201)paused=0;
                     else if(commands[j]==202)return 2;
@@ -168,7 +173,7 @@ static int stream(struct wav *w,int out,int volume,int controlled){
                             if(poll(&c,1,0)>0){
                                 unsigned char cmd;ssize_t z=read(STDIN_FILENO,&cmd,1);
                                 if(z<=0||cmd==202)return 2;
-                                if(cmd<=100)volume=cmd;
+                                if(cmd<=VOL_MAX||cmd==VOL_ENABLE||cmd==VOL_DISABLE)vol_command(cmd,&volume,&extended);
                                 else if(cmd==200)paused=1;
                                 else if(cmd==201)paused=0;
                             }
@@ -195,7 +200,7 @@ static int stream(struct wav *w,int out,int volume,int controlled){
                 if(!readbytes(w->f,b,used))return 1;
                 left-=used;
             }
-            gain(b,used,w->bits,volume);
+            gain(b,used,w->bits,volume,hardware);
             if(paused)continue;
         }
         struct pollfd p={.fd=out,.events=POLLOUT};
@@ -213,29 +218,70 @@ static int stream(struct wav *w,int out,int volume,int controlled){
     }
     return interrupted?2:(w->decoder>0&&!decoded_any?1:0);
 }
+static int r1_mixer(const char *name,const char *value){
+    pid_t child=fork();if(child<0)return 0;
+    if(!child){execl("/usr/bin/amixer","amixer","-q","-c","0","cset",name,value,(char*)NULL);_exit(127);}
+    int status=0;pid_t got;
+    do{got=waitpid(child,&status,0);}while(got<0&&errno==EINTR);
+    return got==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0;
+}
+static int r1_headphones(void){
+    FILE *f=fopen("/sys/class/switch/headset/state","r");
+    if(!f)return 0;
+    char state[8]={0};int ok=fgets(state,sizeof(state),f)!=NULL;
+    fclose(f);
+    return ok&&(!strcmp(state,"1\n")||!strcmp(state,"1"));
+}
+static int r1_audio_prepare(void){
+    char id[64]={0};FILE *f=fopen("/sys/class/sound/card0/id","r");
+    if(!f)return 0;
+    int valid=fgets(id,sizeof(id),f)!=NULL;fclose(f);id[strcspn(id,"\r\n")]=0;
+    if(!valid||strcmp(id,"hibysoundcard")||access("/usr/bin/amixer",X_OK))return 0;
+    /* Match the audible-tested route. Do not write uncalibrated DAC volume
+     * or mute controls. Require a freshly connected headset. */
+    return r1_headphones()&&r1_mixer("numid=8","2")&&r1_headphones();
+}
 static int playback(struct wav *w,int volume,int controlled){
-    if(access("/usr/bin/aplay",X_OK)!=0){fputs("ALSA aplay unavailable\n",stderr);return 1;}
+    if(!r1_headphones()){fputs("Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
+    if(access("/usr/bin/aplay",X_OK)!=0){fputs("ALSA aplay unavailable\n",stderr);return AUDIO_PCM;}
+    if(!r1_audio_prepare()){fputs("R1 headphone route initialization failed\n",stderr);return AUDIO_ROUTE;}
     int p[2];if(pipe(p)!=0)return 1;
     pid_t pid=fork();
     if(pid<0){close(p[0]);close(p[1]);return 1;}
     if(!pid){
         close(p[1]);if(dup2(p[0],STDIN_FILENO)<0)_exit(126);close(p[0]);
         char r[16],c[16];snprintf(r,sizeof(r),"%u",w->rate);snprintf(c,sizeof(c),"%u",w->channels);
-        execl("/usr/bin/aplay","aplay","-q","-D","default","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
+        execl("/usr/bin/aplay","aplay","-q","-D",w->rate==48000&&w->channels==2&&w->bits==16?"hw:0,0":"plughw:CARD=hibysoundcard,DEV=0","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
         _exit(127);
     }
     close(p[0]);
     int flags=fcntl(p[1],F_GETFL);
     int rc=1;
-    if(flags>=0&&fcntl(p[1],F_SETFL,flags|O_NONBLOCK)==0)rc=stream(w,p[1],volume,controlled);
+    if(flags>=0&&fcntl(p[1],F_SETFL,flags|O_NONBLOCK)==0)rc=stream(w,p[1],volume,controlled,1);
     close(p[1]);
     if(rc)(void)kill(pid,SIGTERM);
     int status=0;pid_t got;
     do {got=waitpid(pid,&status,0);}while(got<0&&errno==EINTR);
     if(rc==2){stopped=1;return 0;}
-    return rc||got!=pid||!WIFEXITED(status)||WEXITSTATUS(status)!=0;
+    if(rc||got!=pid||!WIFEXITED(status)||WEXITSTATUS(status)!=0){fputs("ALSA PCM playback failed\n",stderr);return AUDIO_PCM;}
+    return 0;
 }
 int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--test-playback-gain")){
+        unsigned char a[]={0,128,255,127}, b[]={0,128,255,127}, c[]={0,128,255,127};
+        gain(a,sizeof(a),16,100,1);gain(b,sizeof(b),16,15,0);gain(c,sizeof(c),16,0,1);
+        if(memcmp(a,b,sizeof(a))||memcmp(c,"\0\0\0\0",sizeof(c)))return 1;
+        int v=100,e=0;vol_command(130,&v,&e);if(v!=100||e)return 2;
+        vol_command(VOL_ENABLE,&v,&e);if(v!=100||!e)return 3;
+        vol_command(130,&v,&e);if(v!=130)return 4;
+        unsigned char high[]={0,128,255,127},hi24[]={0,0,128,255,255,127};
+        gain(high,sizeof(high),16,v,1);gain(hi24,sizeof(hi24),24,v,1);
+        if((int16_t)le(high+2,2)!=(int64_t)32767*38025/1000000||
+           (int16_t)le(high,2)!=(int64_t)-32768*38025/1000000||
+           le(hi24+3,3)!=(int64_t)8388607*38025/1000000)return 5;
+        vol_command(VOL_DISABLE,&v,&e);if(v!=100||e)return 6;
+        vol_command(130,&v,&e);return v!=100;
+    }
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS music v1");return 0;}
     if(argc<3||argc>9)return 2;
     const char *mode=argv[1];int volume=25,controlled=0;
@@ -260,14 +306,18 @@ int main(int argc,char **argv){
     }
     if(strcmp(mode,"--probe")&&strcmp(mode,"--decode")&&strcmp(mode,"--allow-play"))return 2;
     if(controlled&&strcmp(mode,"--allow-play"))return 2;
+    if(!strcmp(mode,"--allow-play")){
+        if(!r1_headphones()){fputs("Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
+    }
     struct wav w={.decoder_fd=-1};
     const char *format=pocketos_demuxer(argv[2]);
     int native_wav=(!format||!strcmp(format,"wav"))&&parse(&w,argv[2]);
     if(!native_wav&&w.f){fclose(w.f);w.f=NULL;}
     if(!native_wav&&format&&strcmp(format,"wav")){
         if(!strcmp(mode,"--probe")){puts("Compressed input; optional decoder produces stereo 48000 Hz S16LE");return decoder_path()==NULL;}
-        if(!open_decoder(&w,argv[2],format))return 1;
-    } else if(!native_wav){fputs("Unsupported audio file\n",stderr);return 1;}
+        if(!decoder_path()){fputs("Optional FFmpeg decoder unavailable\n",stderr);return AUDIO_NO_DECODER;}
+        if(!open_decoder(&w,argv[2],format))return AUDIO_BAD_FILE;
+    } else if(!native_wav){fputs("Unsupported audio file\n",stderr);return AUDIO_BAD_FILE;}
     if(native_wav){
         total_seconds=(uint32_t)((uint64_t)w.bytes/(w.rate*w.frame));
         uint64_t skip=(uint64_t)start_seconds*w.rate*w.frame;
@@ -279,9 +329,9 @@ int main(int argc,char **argv){
     (void)sigaction(SIGTERM,&sa,NULL);(void)sigaction(SIGINT,&sa,NULL);
     (void)signal(SIGPIPE,SIG_IGN);
     if(!strcmp(mode,"--probe"))printf("rate=%u\nchannels=%u\nbits=%u\nframes=%u\n",w.rate,w.channels,w.bits,w.bytes/w.frame);
-    else if(!strcmp(mode,"--decode"))rc=stream(&w,STDOUT_FILENO,argc==3?100:volume,0);
+    else if(!strcmp(mode,"--decode"))rc=stream(&w,STDOUT_FILENO,argc==3?100:volume,0,0);
     else rc=playback(&w,volume,controlled);
     if(w.f)fclose(w.f);
     int decode_error=finish_decoder(&w,rc||stopped||interrupted);
-    return rc||decode_error;
+    return rc?rc:decode_error?AUDIO_BAD_FILE:0;
 }

@@ -1,5 +1,9 @@
 # HiBy R1 hardware integration: phase 2
 
+See [Phase 5A physical results](phase5.md) for the completed read-only baseline,
+RAM-only PocketOS diagnostic test, verified stock-package source, and remaining
+hardware gates. These results do not establish a bootable PocketOS system.
+
 PocketOS must preserve the exact known working kernel and hardware load order until replacement drivers are proven. Never use the foundation rootfs as a firmware file. The driver audit runs on a verified reference image, does not execute vendor scripts or include vendor binaries in artifacts, and groups the dependencies for later integration.
 
 ## Physical-device baseline (optional now)
