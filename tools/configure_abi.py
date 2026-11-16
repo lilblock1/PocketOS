@@ -23,7 +23,7 @@ elif "Hard float" in abi:
     config += "\n# BR2_MIPS_SOFT_FLOAT is not set\n"
     # FPXX can interoperate with many o32 hard-float binaries, but matching
     # the exact ABI and full library dependencies is a separate later gate.
-    if "32-bit CPU, 32-bit FPU" in abi:
+    if "32-bit CPU, 32-bit FPU" in abi or "double precision" in abi:
         config += "BR2_MIPS_FP32_MODE_32=y\n"
     elif "Any FPU" in abi:
         config += "BR2_MIPS_FP32_MODE_XX=y\n"
