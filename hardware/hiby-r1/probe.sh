@@ -2,7 +2,7 @@
 # Run only on a working R1 using adb shell sh < hardware/hiby-r1/probe.sh.
 # Read-only: no mounts, module loads, sysfs writes, services or firmware changes.
 set -eu
-printf 'PocketOS hardware baseline v1\n'
+printf 'PocketOS hardware baseline v2\n'
 printf 'kernel='; uname -r
 printf 'machine='; uname -m
 printf '\n[memory KiB]\n'
@@ -31,4 +31,21 @@ printf '\n[ALSA cards]\n'
 if [ -r /proc/asound/cards ]; then cat /proc/asound/cards; fi
 printf '\n[filesystem types and selected mount points; no file contents]\n'
 awk '$2=="/" || $2=="/usr/data" || $2=="/mnt/sd_0" || $2=="/tmp" {print $2,$3,$4}' /proc/mounts
+printf '\n[power and CPU capability; current settings only]\n'
+for p in /sys/power/state /sys/power/mem_sleep /sys/devices/system/cpu/cpufreq/policy*/scaling_available_governors /sys/devices/system/cpu/cpufreq/policy*/scaling_governor /sys/devices/system/cpu/cpufreq/policy*/scaling_cur_freq /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq /sys/devices/system/cpu/cpu0/cpuidle/state*/name /sys/devices/system/cpu/cpu0/cpuidle/state*/usage /sys/devices/system/cpu/cpu0/cpuidle/state*/time /sys/class/power_supply/*/type /sys/class/power_supply/*/current_now /sys/class/power_supply/*/temp /sys/class/power_supply/*/online; do
+    if [ -r "$p" ]; then printf '%s=' "$p"; cat "$p" || printf 'unavailable\n'; fi
+done
+printf '\n[block device capacity and removable flag; no filesystem contents]\n'
+for b in /sys/block/mmcblk[0-9] /sys/block/mtdblock[0-9]*; do
+    if [ -d "$b" ]; then
+        for key in size removable ro; do
+            p="$b/$key"
+            if [ -r "$p" ]; then printf '%s=' "$p"; cat "$p" || printf 'unavailable\n'; fi
+        done
+    fi
+done
+printf '\n[radio interfaces; no addresses or credentials]\n'
+for p in /sys/class/net/*/operstate /sys/class/rfkill/rfkill*/type /sys/class/rfkill/rfkill*/soft /sys/class/rfkill/rfkill*/hard; do
+    if [ -r "$p" ]; then printf '%s=' "$p"; cat "$p" || printf 'unavailable\n'; fi
+done
 printf '\nEnd of read-only baseline. No settings changed.\n'
