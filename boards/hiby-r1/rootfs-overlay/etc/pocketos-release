@@ -1,0 +1,5 @@
+NAME=PocketOS
+VERSION=0.1.0-alpha.1
+TARGET=hiby-r1
+STATE=development-userspace-only
+FLASHABLE=no
