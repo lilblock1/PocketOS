@@ -225,7 +225,12 @@ static int watch(void)
         if (rc > 0) {
             if (!(p.revents & POLLIN) || (p.revents & (POLLERR|POLLHUP|POLLNVAL))) break;
             char discard[4096];
-            (void)read(fd, discard, sizeof(discard));
+            ssize_t bytes = read(fd, discard, sizeof(discard));
+            if (bytes < 0) {
+                if (errno == EAGAIN || errno == EINTR) continue;
+                break;
+            }
+            if (bytes == 0) break;
             /* Debounce hotplug bursts. */
             (void)poll(NULL, 0, 250);
         }
