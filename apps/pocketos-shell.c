@@ -793,7 +793,8 @@ static void render(void) {
             }
             unsigned pct=book_bytes>0&&book_next>=0?(unsigned)((uint64_t)book_next*100/(uint64_t)book_bytes):0;
             if(pct>100)pct=100;
-            char progress[16],pages[32],bat[16];
+            /* Two 64-bit decimal values need up to 43 bytes including separators and NUL. */
+            char progress[16],pages[48],bat[16];
             snprintf(progress,sizeof(progress),"%u%%",pct);
             if(book_page_span>0&&book_bytes>0){
                 unsigned long long total=((unsigned long long)book_bytes+(unsigned long long)book_page_span-1)/(unsigned long long)book_page_span;
