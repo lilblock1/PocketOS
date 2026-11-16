@@ -65,6 +65,10 @@ static int music_pending=-1, music_manual_stop=0;
 #define BOOK_HISTORY 256
 static char books[BOOK_CAP][256],book_text[BOOK_ROWS][36],book_status[38];
 static int book_count=0,book_index=0,book_top=0,book_size=1,book_wide=0,book_eof=0,book_depth=0;
+static int book_theme=0,book_font=0,book_font_ok=0,book_menu=0,book_allow_save=0,book_dirty=0,book_save_error=0;
+static unsigned char book_atlas[95][16][12];
+static char book_title[65];
+static long long book_mtime=0;
 static off_t book_offsets[BOOK_HISTORY],book_pos=0,book_next=0,book_bytes=0;
 static const char *book_dir="/mnt/sd_0/Books";
 static FILE *book_file=NULL;
@@ -156,6 +160,55 @@ static void text_at(int x,int y,const char *s,int scale,uint16_t col) {
         else if(ch=='.') rect(x+2*scale,y+6*scale,scale,scale,col);
         else if(ch==':') {rect(x+2*scale,y+2*scale,scale,scale,col);rect(x+2*scale,y+5*scale,scale,scale,col);}
         else if(ch=='%') {for(int i=0;i<5;i++)rect(x+i*scale,y+(5-i)*scale,scale,scale,col);rect(x,y,scale,scale,col);rect(x+4*scale,y+6*scale,scale,scale,col);}
+    }
+}
+/* Original, small mixed-case bitmap glyphs for the reader. */
+static const unsigned char lower[][7]={
+ {0,0,14,1,15,17,15},{16,16,22,25,17,17,30},{0,0,14,17,16,17,14},
+ {1,1,13,19,17,17,15},{0,0,14,17,31,16,14},{6,9,8,28,8,8,8},
+ {0,0,15,17,15,1,14},{16,16,22,25,17,17,17},{4,0,12,4,4,4,14},
+ {2,0,6,2,2,18,12},{16,16,18,20,24,20,18},{12,4,4,4,4,4,14},
+ {0,0,26,21,21,21,21},{0,0,22,25,17,17,17},{0,0,14,17,17,17,14},
+ {0,0,30,17,30,16,16},{0,0,15,17,15,1,1},{0,0,22,25,16,16,16},
+ {0,0,15,16,14,1,30},{8,8,28,8,8,9,6},{0,0,17,17,17,19,13},
+ {0,0,17,17,17,10,4},{0,0,17,17,21,21,10},{0,0,17,10,4,10,17},
+ {0,0,17,17,15,1,14},{0,0,31,2,4,8,31}
+};
+static const unsigned char punct[][7]={
+ {0,0,0,0,0,0,4},{0,0,0,0,0,4,8},{4,4,4,4,4,0,4},
+ {14,17,1,2,4,0,4},{0,4,0,0,4,0,0},{0,4,0,0,4,4,8},
+ {0,0,0,14,0,0,0},{4,4,8,0,0,0,0},{10,10,20,0,0,0,0},
+ {2,4,8,8,8,4,2},{8,4,2,2,2,4,8},{1,2,2,4,8,8,16},
+ {0,4,4,31,4,4,0},{0,0,0,31,0,0,0},{17,2,4,8,16,17,0},
+ {14,17,18,12,21,18,13}
+};
+static const unsigned char *book_glyph(unsigned char ch){
+    const char *symbols=".,!?:;-\'\"()/+=%&";
+    if(ch>='a'&&ch<='z')return lower[ch-'a'];
+    if(ch>='A'&&ch<='Z')return glyph[ch-'A'];
+    if(ch>='0'&&ch<='9')return glyph[26+ch-'0'];
+    const char *p=strchr(symbols,(int)ch);
+    if(ch&&p)return punct[p-symbols];
+    return NULL;
+}
+static uint16_t blend565(uint16_t paper,uint16_t ink,unsigned a){
+    unsigned r=(((paper>>11)&31)*(255-a)+((ink>>11)&31)*a)/255;
+    unsigned g=(((paper>>5)&63)*(255-a)+((ink>>5)&63)*a)/255;
+    unsigned b=((paper&31)*(255-a)+(ink&31)*a)/255;
+    return (uint16_t)((r<<11)|(g<<5)|b);
+}
+static void book_print(int x,int y,const char *text,int width,int height,uint16_t ink,uint16_t paper,int atlas){
+    for(;*text&&x+width<=W-10;text++,x+=width){
+        unsigned char c=(unsigned char)*text;
+        if(c<32||c>126)c='?';
+        const unsigned char *g=book_glyph(c);
+        if(c==' ')continue;
+        for(int j=0;j<height;j++)for(int i=0;i<width-1;i++){
+            unsigned alpha;
+            if(atlas&&book_font_ok)alpha=book_atlas[c-32][j*16/height][i*12/(width-1)];
+            else alpha=g&&(g[j*7/height]&(1u<<(4-i*5/(width-1))))?255:0;
+            if(alpha)rect(x+i,y+j,1,1,blend565(paper,ink,alpha));
+        }
     }
 }
 static void icon(int x,int y,enum page item) {
@@ -489,8 +542,57 @@ static void book_scan(void){
     int budget=4096;scan_books("",0,&budget);
     qsort(books,(size_t)book_count,sizeof(books[0]),compare_tracks);
 }
-static int book_columns(void){return book_size==2?18:book_wide?30:35;}
-static int book_rows(void){return book_size==2?13:BOOK_ROWS;}
+static int book_cell(void){return book_size==2?12:9;}
+static int book_height(void){return book_size==2?16:13;}
+static int book_pitch(void){return book_height()+(book_wide?5:3);}
+static int book_columns(void){return 208/book_cell();}
+static int book_rows(void){return 207/book_pitch();}
+static void book_load_font(void){
+    book_font_ok=0;
+    if(!book_font)return;
+    char path[512];int n=snprintf(path,sizeof(path),"%s/.fonts/%s.pbf",book_dir,book_font==1?"serif":"dyslexic");
+    if(n<0||(size_t)n>=sizeof(path))return;
+    FILE *f=regular_file(path);
+    if(f){char magic[4];
+        if(fread(magic,1,4,f)==4&&!memcmp(magic,"PBF1",4)&&
+           fread(book_atlas,1,sizeof(book_atlas),f)==sizeof(book_atlas)&&fgetc(f)==EOF)book_font_ok=1;
+        fclose(f);
+    }
+}
+static int bookmark_path(char out[600]){
+    if(!book_count)return 0;
+    int n=snprintf(out,600,"%s/%s.pocket.pos",book_dir,books[book_index]);
+    return n>0&&n<600;
+}
+static void book_resume(void){
+    char path[600];if(!bookmark_path(path))return;
+    FILE *f=regular_file(path);if(!f)return;
+    struct stat st;long long bytes,mtime,pos,prev;
+    int size,wide,paper,font;char extra;
+    if(fstat(fileno(f),&st)==0&&st.st_size<=160&&
+       fscanf(f,"POCKETBOOK1 %lld %lld %lld %lld %d %d %d %d %c",&bytes,&mtime,&pos,&prev,&size,&wide,&paper,&font,&extra)==8&&
+       bytes==(long long)book_bytes&&mtime==book_mtime&&pos>=0&&pos<bytes&&prev>=-1&&prev<pos&&
+       size>=1&&size<=2&&wide>=0&&wide<=1&&paper>=0&&paper<=2&&font>=0&&font<=2){
+        book_pos=(off_t)pos;book_size=size;book_wide=wide;book_theme=paper;book_font=font;
+        if(prev>=0)book_offsets[book_depth++]=(off_t)prev;
+    }
+    fclose(f);
+}
+static void book_save(void){
+    if(!book_file||!book_dirty||!book_allow_save)return;
+    char path[600],tmp[648];if(!bookmark_path(path))return;
+    struct stat st;
+    if(lstat(path,&st)==0&&!S_ISREG(st.st_mode)){book_save_error=1;return;}
+    int n=snprintf(tmp,sizeof(tmp),"%s.tmp.XXXXXX",path);
+    if(n<0||(size_t)n>=sizeof(tmp)){book_save_error=1;return;}
+    int fd=mkstemp(tmp);if(fd<0){book_save_error=1;return;}
+    FILE *f=fdopen(fd,"w");if(!f){close(fd);unlink(tmp);book_save_error=1;return;}
+    long long prev=book_depth?(long long)book_offsets[book_depth-1]:-1;
+    int ok=fprintf(f,"POCKETBOOK1 %lld %lld %lld %lld %d %d %d %d\n",(long long)book_bytes,book_mtime,(long long)book_pos,prev,book_size,book_wide,book_theme,book_font)>0;
+    if(fflush(f)!=0||fsync(fd)!=0)ok=0;
+    if(fclose(f)!=0)ok=0;
+    if(ok&&rename(tmp,path)==0){book_dirty=0;book_save_error=0;}else{unlink(tmp);book_save_error=1;}
+}
 static int book_char(FILE *f){
     int c=fgetc(f);
     if(c==EOF||c=='\n')return c;
@@ -509,21 +611,29 @@ static void book_page(void){
     if(!book_file||fseeko(book_file,book_pos,SEEK_SET)!=0){book_eof=1;return;}
     int cols=book_columns(),rows=book_rows();
     for(int r=0;r<rows;r++){
-        int n=0,c;
-        while(n<cols&&(c=book_char(book_file))!=EOF&&c!='\n')book_text[r][n++]=(char)c;
-        if(feof(book_file)){book_eof=1;break;}
+        int n=0,c=0,last_space=-1;
+        off_t space_end=-1;
+        while(n<cols&&(c=book_char(book_file))!=EOF&&c!='\n'){
+            if(c==' '){last_space=n;space_end=ftello(book_file);}
+            book_text[r][n++]=(char)c;
+        }
+        if(c==EOF){book_eof=1;break;}
         if(n==cols){
             off_t end=ftello(book_file);int next=book_char(book_file);
             if(next==EOF){book_eof=1;break;}
-            if(next!='\n'){
-                if(fseeko(book_file,end,SEEK_SET)!=0){book_eof=1;break;}
+            if(next!='\n'&&next!=' '){
+                if(last_space>0&&space_end>=0){
+                    book_text[r][last_space]=0;
+                    if(fseeko(book_file,space_end,SEEK_SET)!=0){book_eof=1;break;}
+                }else if(fseeko(book_file,end,SEEK_SET)!=0){book_eof=1;break;}
             }
         }
+        while(n>0&&book_text[r][n-1]==' ')book_text[r][--n]=0;
     }
     book_next=ftello(book_file);
     if(book_next<0||book_next>=book_bytes||book_next<=book_pos)book_eof=1;
 }
-static void book_close(void){if(book_file)fclose(book_file);book_file=NULL;book_depth=0;}
+static void book_close(void){if(book_file){book_save();fclose(book_file);}book_file=NULL;book_depth=0;book_menu=0;}
 static int book_open(void){
     book_close();
     if(!book_count)return 0;
@@ -537,21 +647,24 @@ static int book_open(void){
     if(fstat(fileno(book_file),&st)!=0||st.st_size<=0||st.st_size>67108864){
         book_close();strcpy(book_status,"EMPTY OR TOO LARGE");return 0;
     }
-    book_bytes=st.st_size;book_pos=0;book_depth=0;book_status[0]=0;
-    book_page();page=READER;return 1;
+    book_bytes=st.st_size;book_mtime=(long long)st.st_mtime;book_pos=0;book_depth=0;book_status[0]=0;
+    book_dirty=0;book_save_error=0;book_menu=0;
+    const char *name=strrchr(books[book_index],'/');snprintf(book_title,sizeof(book_title),"%.64s",name?name+1:books[book_index]);
+    char *ext=strrchr(book_title,'.');if(ext)*ext=0;
+    book_resume();book_load_font();book_page();page=READER;return 1;
 }
 static void book_turn(int forward){
     if(!book_file)return;
     if(forward&&!book_eof){
         if(book_depth==BOOK_HISTORY){memmove(book_offsets,book_offsets+1,(BOOK_HISTORY-1)*sizeof(book_offsets[0]));book_depth--;}
-        book_offsets[book_depth++]=book_pos;book_pos=book_next;book_page();
-    }else if(!forward&&book_depth){book_pos=book_offsets[--book_depth];book_page();}
+        book_offsets[book_depth++]=book_pos;book_pos=book_next;book_page();book_dirty++;if(book_dirty>=12)book_save();
+    }else if(!forward&&book_depth){book_pos=book_offsets[--book_depth];book_page();book_dirty++;if(book_dirty>=12)book_save();}
 }
 static void book_select(int direction){
     if(!book_count)return;
     book_index=(book_index+book_count+direction)%book_count;
     if(book_index<book_top)book_top=book_index;
-    if(book_index>=book_top+5)book_top=book_index-4;
+    if(book_index>=book_top+4)book_top=book_index-3;
     book_status[0]=0;
 }
 static void quick_tile(int i,const char *label,const char *value,int active) {
@@ -579,28 +692,63 @@ static void render(void) {
         text_at(12,270,"RADIO / AUDIO WRITES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
     } else if(page==BOOKS){
-        char count[32];snprintf(count,sizeof(count),"%d BOOKS / MICROSD",book_count);text_at(12,64,count,1,muted);
-        for(int i=0;i<5&&book_top+i<book_count;i++){
-            int idx=book_top+i,y=82+i*28;
-            const char *base=strrchr(books[idx],'/');char name[33];
-            snprintf(name,sizeof(name),"%.32s",base?base+1:books[idx]);
-            rounded(12,y,216,25,idx==book_index?edge:card);text_at(20,y+8,name,1,fg);
+        rect(0,27,W,293,bg);
+        book_print(14,39,"Your library",12,19,fg,bg,0);
+        char count[32];snprintf(count,sizeof(count),"%d books on microSD",book_count);
+        book_print(14,65,count,7,9,muted,bg,0);
+        for(int i=0;i<4&&book_top+i<book_count;i++){
+            int idx=book_top+i,y=83+i*43;
+            const char *base=strrchr(books[idx],'/');base=base?base+1:books[idx];
+            char name[25];snprintf(name,sizeof(name),"%.24s",base);
+            const char *extension=strrchr(base,'.');
+            uint16_t tile=idx==book_index?edge:card;
+            rounded(12,y,216,39,tile);
+            uint16_t covercolor=idx%2?RGB(137,93,69):RGB(44,104,99);
+            rounded(18,y+5,24,29,covercolor);rect(22,y+7,1,24,RGB(236,217,170));
+            rect(26,y+13,11,2,RGB(236,217,170));rect(26,y+18,8,1,RGB(236,217,170));
+            book_print(51,y+7,name,7,11,fg,tile,0);
+            char type[16];snprintf(type,sizeof(type),"%.12s",extension?extension+1:"book");
+            book_print(51,y+22,type,6,8,muted,tile,0);
+            if(idx==book_index)rect(12,y+8,2,23,mint);
         }
-        if(!book_count)text_at(12,99,"ADD BOOKS TO SD / BOOKS",1,muted);
-        text_at(12,228,book_status[0]?book_status:"TXT DIRECT / OTHERS PREPARE",1,muted);
-        const char *btn[]={"UP","OPEN","DOWN"};
-        for(int i=0;i<3;i++){int x=12+i*74;rounded(x,249,70,34,card);text_at(x+8,263,btn[i],1,mint);}
-        text_at(12,301,"BACK",2,mint);
+        if(!book_count)book_print(14,112,"Add books to SD / Books",8,12,muted,bg,0);
+        if(book_status[0])text_at(12,258,book_status,1,muted);
+        rounded(12,278,54,31,card);rounded(72,278,96,31,mint);rounded(174,278,54,31,card);
+        book_print(19,288,"Back",7,10,fg,card,0);book_print(91,287,"Read",10,13,bg,mint,0);
+        book_print(182,288,"Next",7,10,fg,card,0);
     } else if(page==READER){
-        int rows=book_rows(),pitch=book_size==2?16:12;
-        for(int r=0;r<rows;r++)text_at(12,66+r*pitch,book_text[r],book_size,fg);
-        char progress[32];
-        unsigned pct=book_bytes>0?(unsigned)((uint64_t)book_next*100/(uint64_t)book_bytes):0;
-        snprintf(progress,sizeof(progress),"%u%%  %s",pct,book_eof?"END":"READING");
-        text_at(12,284,progress,1,muted);
-        rect(12,294,216,1,edge);
-        text_at(12,302,"BACK",1,mint);text_at(65,302,"PREV",1,mint);
-        text_at(112,302,"SIZE",1,mint);text_at(161,302,"SPACE",1,mint);text_at(207,302,"NEXT",1,mint);
+        uint16_t paper=book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
+        uint16_t ink=book_theme==2?RGB(220,220,210):RGB(38,35,32);
+        uint16_t soft=book_theme==2?RGB(126,139,145):RGB(130,120,105);
+        rect(0,0,W,H,paper);
+        book_print(14,10,book_title[0]?book_title:"Reading",7,10,soft,paper,0);
+        rect(14,27,212,1,soft);
+        if(book_menu){
+            book_print(16,43,"Reading settings",11,16,ink,paper,0);
+            char label[40];
+            snprintf(label,sizeof(label),"Text size: %s",book_size==2?"Large":"Regular");
+            book_print(16,83,label,9,13,ink,paper,0);
+            book_print(16,125,book_wide?"Spacing: Airy":"Spacing: Normal",9,13,ink,paper,0);
+            book_print(16,167,book_theme==0?"Theme: Paper":book_theme==1?"Theme: White":"Theme: Night",9,13,ink,paper,0);
+            book_print(16,209,book_font==0?"Font: Classic":book_font==1?"Font: Serif":"Font: Dyslexic",9,13,ink,paper,0);
+            if(book_font&&!book_font_ok)book_print(16,230,"Font file not installed",7,10,soft,paper,0);
+            book_print(16,270,book_allow_save?"Resume saving enabled":"Resume saving off",7,10,soft,paper,0);
+            book_print(92,302,"Done",9,12,ink,paper,0);
+        }else{
+            int rows=book_rows();
+            for(int r=0;r<rows;r++)book_print(16,41+r*book_pitch(),book_text[r],book_cell(),book_height(),ink,paper,book_font!=0);
+            unsigned pct=book_bytes>0?(unsigned)((uint64_t)book_next*100/(uint64_t)book_bytes):0;
+            if(pct>100)pct=100;
+            char progress[32];snprintf(progress,sizeof(progress),"%u%%",pct);
+            rect(16,265,208,2,soft);rect(16,265,(int)(208*pct/100),2,ink);
+            book_print(16,275,book_eof?"Finished":progress,7,10,soft,paper,0);
+            if(book_save_error)book_print(126,275,"Save failed",7,10,soft,paper,0);
+            rect(14,291,212,1,soft);
+            book_print(16,301,"Library",7,10,ink,paper,0);
+            book_print(85,301,"Prev",7,10,ink,paper,0);
+            book_print(127,301,"Aa",9,12,ink,paper,0);
+            book_print(191,301,"Next",7,10,ink,paper,0);
+        }
     } else if(page==NOWPLAYING){
         if(cover_ok){
             for(int j=0;j<64;j++)for(int i=0;i<64;i++){
@@ -738,7 +886,7 @@ static void open_control(void) {
 }
 static void back(void) {
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
-    if(page==READER){book_close();page=BOOKS;return;}
+    if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
     page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
 }
@@ -773,21 +921,34 @@ static void set_volume_target(int v){
     if(music_pid>=0)(void)music_send((unsigned char)(volume>50?50:volume));
 }
 static void tap(int x,int y) {
-    if(y<26){if(page==CONTROL)back();else open_control();return;}
+    if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
     if(page==READER){
-        if(y>=295){
-            if(x<60)back();
-            else if(x<108)book_turn(0);
-            else if(x<155){book_size=3-book_size;book_depth=0;book_page();}
-            else if(x<202){book_wide=!book_wide;book_depth=0;book_page();}
+        if(book_menu){
+            if(y>=291){book_menu=0;book_page();return;}
+            if(y>=73&&y<112)book_size=3-book_size;
+            else if(y>=115&&y<154)book_wide=!book_wide;
+            else if(y>=157&&y<196)book_theme=(book_theme+1)%3;
+            else if(y>=199&&y<239){book_font=(book_font+1)%3;book_load_font();}
+            else return;
+            book_dirty++;book_depth=0;book_page();return;
+        }
+        if(y>=291){
+            if(x<76)back();
+            else if(x<120)book_turn(0);
+            else if(x<175)book_menu=1;
             else book_turn(1);
-        }else if(y>62&&x<100)book_turn(0);
-        else if(y>62&&x>=140)book_turn(1);
+        }else if(y>=37&&y<260){
+            if(x<90)book_turn(0);else if(x>=150)book_turn(1);else book_menu=1;
+        }
         return;
     }
-    if(page==BOOKS&&y<287){
-        if(y>=82&&y<222){int idx=book_top+(y-82)/28;if(idx<book_count){book_index=idx;book_status[0]=0;}}
-        else if(y>=249&&y<283){if(x<82)book_select(-1);else if(x<156)(void)book_open();else book_select(1);}
+    if(page==BOOKS){
+        if(y>=83&&y<255){
+            int idx=book_top+(y-83)/43;
+            if(idx<book_count){if(book_index==idx)(void)book_open();else{book_index=idx;book_status[0]=0;}}
+        }else if(y>=278){
+            if(x<70)back();else if(x<170)(void)book_open();else book_select(1);
+        }
         return;
     }
     if(page==MUSIC&&y>=295){
@@ -822,7 +983,8 @@ static void tap(int x,int y) {
 static int key(unsigned code) {
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
-    if(page==READER&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_PAGEUP||code==KEY_PAGEDOWN)){
+    if(page==READER&&(code==KEY_ENTER||code==KEY_OK)){book_menu=!book_menu;return 1;}
+    if(page==READER&&!book_menu&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_PAGEUP||code==KEY_PAGEDOWN)){
         book_turn(code==KEY_RIGHT||code==KEY_PAGEDOWN);return 1;
     }
     if(page==BOOKS&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){
@@ -949,7 +1111,7 @@ static int native(const char *input) {
         if((report||reaped)&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
         int timeout=update_clock(&clock_changed);
         if(music_pid>=0&&timeout>1000)timeout=1000;
-        if(clock_changed){render();present(&b);}
+        if(clock_changed&&page!=READER){render();present(&b);}
         struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
         if(!rc&&music_pid>=0)continue;
@@ -957,7 +1119,7 @@ static int native(const char *input) {
             int n=sample_battery(),w=wifi_present,bt=bt_present,br=brightness_pct,audio=audio_present,ip=internal_pct,sp=sd_pct;
             unsigned long long i=internal_free,j=sd_free;
             sample_quick();
-            if(n!=battery||w!=wifi_present||bt!=bt_present||br!=brightness_pct||audio!=audio_present||ip!=internal_pct||sp!=sd_pct||i!=internal_free||j!=sd_free){battery=n;render();present(&b);}
+            if(n!=battery||w!=wifi_present||bt!=bt_present||br!=brightness_pct||audio!=audio_present||ip!=internal_pct||sp!=sd_pct||i!=internal_free||j!=sd_free){battery=n;if(page!=READER){render();present(&b);}}
             continue;
         }
         if(!(p.revents&POLLIN)||(p.revents&(POLLERR|POLLHUP|POLLNVAL)))break;
@@ -1041,7 +1203,10 @@ int main(int argc,char **argv) {
         if(strcmp(book_text[0],"CHAPTER ONE")||book_eof)return 1;
         book_turn(1);if(book_pos<=0)return 1;
         book_turn(0);if(book_pos!=0||strcmp(book_text[0],"CHAPTER ONE"))return 1;
-        book_close();
+        book_allow_save=1;book_turn(1);off_t expected=book_pos;if(expected<=0)return 1;
+        book_close();if(!book_open()||book_pos!=expected)return 1;
+        book_turn(0);if(book_pos!=0)return 1;
+        book_allow_save=0;book_close();
         return 0;
     }
     if(argc==3&&!strcmp(argv[1],"--test-backlight")&&argv[2][0]=='/') {
@@ -1063,7 +1228,7 @@ int main(int argc,char **argv) {
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}
-        if(page==READER){strcpy(book_text[0],"CHAPTER ONE");strcpy(book_text[2],"The sun was rising over the hill.");strcpy(book_text[3],"A quiet morning awaited them.");book_bytes=100;book_next=15;}
+        if(page==READER){strcpy(book_title,"The quiet woods");const char *demo[]={"Chapter One","","The sun rose over the","quiet hills, casting a","warm light across the","meadows. A gentle breeze","moved through the trees,","and the world slowly","awakened.","","It was a morning to","remember."};for(unsigned i=0;i<sizeof(demo)/sizeof(demo[0]);i++)snprintf(book_text[i],36,"%s",demo[i]);book_bytes=100;book_next=15;}
         if(page==MUSIC||page==NOWPLAYING){music_count=3;strcpy(music_files[0],"Track 01.flac");strcpy(music_files[1],"Track 02.mp3");strcpy(music_files[2],"Track 03.wav");strcpy(track_title,"Track 01");strcpy(track_artist,"Demo Artist");strcpy(track_album,"Demo Album");music_pos=45;music_length=210;}
         render();
         return ppm(argv[3]);
@@ -1072,6 +1237,7 @@ int main(int argc,char **argv) {
     while(argc>=4){
         if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
+        else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
         else break;
         argc--;argv++;
     }
