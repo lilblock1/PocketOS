@@ -2,7 +2,7 @@ name: PocketOS - R1 hardware compatibility audit
 on:
   push:
     branches: [main]
-    paths: ['hardware/hiby-r1/**', 'apps/**', 'tools/r1_hardware_audit.py', 'tools/r1_stage.py', 'tools/test_r1_stage.py', 'tools/r1_init_plan.py', 'tools/test_r1_init_plan.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
+    paths: ['hardware/hiby-r1/**', 'apps/**', 'tools/r1_hardware_audit.py', 'tools/r1_stage.py', 'tools/test_r1_stage.py', 'tools/r1_init_plan.py', 'tools/test_r1_init_plan.py', 'tools/r1_boot_gate.py', 'tools/test_r1_boot_gate.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -84,6 +84,12 @@ jobs:
             echo "Unsafe draft allowed application" >&2
             exit 1
           fi
+          # Scratch image is never placed in the artifact directory.
+          sudo mksquashfs staging/rootfs staging/rootfs-size-only.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          sudo python3 tools/r1_boot_gate.py staging/rootfs reference-work/reference.squashfs staging/rootfs-size-only.squashfs staging/reference-kernel.bin hardware-report/r1-integration.json hardware-report/r1-init-plan.json hardware-report/r1-boot-readiness.json
+          sudo chown "$(id -u):$(id -g)" hardware-report/r1-boot-readiness.json
+          sh -n hardware/hiby-r1/boot-probe.sh
+          cp hardware/hiby-r1/boot-probe.sh hardware/hiby-r1/recovery.md hardware-report/
           sudo rm -rf staging
       - name: Upload report and physical-device read-only probe
         uses: actions/upload-artifact@v4
