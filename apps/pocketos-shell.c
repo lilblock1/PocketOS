@@ -14,6 +14,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <time.h>
 
 #define W 240
 #define H 320
@@ -24,6 +25,7 @@ static const uint16_t bg=RGB(13,19,24), card=RGB(25,35,43), edge=RGB(47,62,70),
 enum page { HOME, MUSIC, BOOKS, GAMES, FILES, SETTINGS, DIAGNOSTICS, DISPLAY, SOUND, RADIO, POWER, STORAGE, UPDATES };
 static enum page page=HOME;
 static int selected=0, battery=-1;
+static char clock_label[16]="--:--";
 static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
 static const enum page setting_items[]={DISPLAY,SOUND,RADIO,POWER,STORAGE,UPDATES};
@@ -76,8 +78,33 @@ static void icon(int x,int y,enum page item) {
     default: rect(x,y+14,5,12,col);rect(x+10,y+8,5,18,col);rect(x+20,y,5,26,col);break;
     }
 }
+/* The preview clock is deterministic; native mode uses the system's local time. */
+static void format_clock(const struct tm *t,char out[16]) {
+    if(!t||t->tm_hour<0||t->tm_hour>23||t->tm_min<0||t->tm_min>59) {
+        snprintf(out,16,"--:--");
+        return;
+    }
+    int h=t->tm_hour%12;
+    snprintf(out,16,"%d:%02d %s",h?h:12,t->tm_min,t->tm_hour<12?"AM":"PM");
+}
+static int update_clock(int *changed) {
+    time_t now=time(NULL);
+    struct tm t;
+    char next[16];
+    int valid=now!=(time_t)-1&&localtime_r(&now,&t)!=NULL&&t.tm_year>=120;
+    format_clock(valid?&t:NULL,next);
+    *changed=strcmp(next,clock_label)!=0;
+    if(*changed)memcpy(clock_label,next,strlen(next)+1);
+    /* Reuse the existing <=30 second wait and align it with the next minute. */
+    if(valid&&t.tm_sec>=0&&t.tm_sec<60) {
+        int ms=(60-t.tm_sec)*1000;
+        return ms<30000?ms:30000;
+    }
+    return 30000;
+}
 static void statusbar(void) {
     text_at(12,10,"POCKETOS",1,muted);
+    text_at((W-(int)strlen(clock_label)*6)/2,10,clock_label,1,fg);
     char b[16]; if(battery>=0) snprintf(b,sizeof(b),"%d%%",battery); else snprintf(b,sizeof(b),"--%%");
     text_at(191,10,b,1,mint);
     rect(220,9,12,8,edge);rect(232,11,2,4,edge);
@@ -223,9 +250,13 @@ static int native(const char *input) {
     int touch=mt||(ioctl(fd,EVIOCGABS(ABS_X),&ax)==0&&ioctl(fd,EVIOCGABS(ABS_Y),&ay)==0);
     touch=touch&&ax.maximum>ax.minimum&&ay.maximum>ay.minimum;
     int rx=0,ry=0,have_x=0,have_y=0,down=0,pending=0,slot=0,dropped=0;
+    int clock_changed=0;
+    (void)update_clock(&clock_changed);
     battery=sample_battery();render();present(&b);
     for(;;){
-        struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,30000);
+        int timeout=update_clock(&clock_changed);
+        if(clock_changed){render();present(&b);}
+        struct pollfd p={.fd=fd,.events=POLLIN};int rc=poll(&p,1,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
         if(!rc){int n=sample_battery();if(n!=battery){battery=n;render();present(&b);}continue;}
         if(!(p.revents&POLLIN)||(p.revents&(POLLERR|POLLHUP|POLLNVAL)))break;
@@ -258,6 +289,12 @@ static int native(const char *input) {
     close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
 }
 static int selftest(void) {
+    char label[16];
+    struct tm test={.tm_hour=0,.tm_min=5};
+    format_clock(&test,label);if(strcmp(label,"12:05 AM"))return 1;
+    test.tm_hour=12;format_clock(&test,label);if(strcmp(label,"12:05 PM"))return 1;
+    test.tm_hour=23;test.tm_min=59;format_clock(&test,label);if(strcmp(label,"11:59 PM"))return 1;
+    format_clock(NULL,label);if(strcmp(label,"--:--"))return 1;
     page=HOME;selected=0;tap(20,80);if(page!=MUSIC)return 1;back();
     tap(20,215);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
     if(page!=SETTINGS)return 1;
@@ -272,6 +309,8 @@ int main(int argc,char **argv) {
     if(argc==4&&!strcmp(argv[1],"--preview")){
         int found=0;for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++)if(!strcmp(argv[2],titles[i])){page=(enum page)i;found=1;}
         if(!found)return 2;
+        struct tm sample={.tm_hour=10,.tm_min=42};
+        format_clock(&sample,clock_label);
         render();
         return ppm(argv[3]);
     }
