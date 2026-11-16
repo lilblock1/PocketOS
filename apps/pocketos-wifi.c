@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
@@ -94,10 +95,18 @@ done:
     if(result)fputs("Wi-Fi request failed or invalid input; inspect supplicant status.\n",stderr);
     return result;
 }
+static int ensure_service(void){
+    pid_t pid=fork();
+    if(pid<0)return 0;
+    if(pid==0){execl("/usr/sbin/pocketos-wifi-service","pocketos-wifi-service","start",(char*)NULL);_exit(127);}
+    int status;pid_t got;
+    do{got=waitpid(pid,&status,0);}while(got<0&&errno==EINTR);
+    return got==pid&&WIFEXITED(status)&&WEXITSTATUS(status)==0;
+}
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS Wi-Fi v1");return 0;}
-    const char *socket="/var/run/wpa_supplicant/wlan0";int opt=0,i=1;
-    if(i+1<argc&&!strcmp(argv[i],"--socket")){socket=argv[i+1];i+=2;}
+    const char *socket="/var/run/wpa_supplicant/wlan0";int opt=0,i=1,custom=0;
+    if(i+1<argc&&!strcmp(argv[i],"--socket")){socket=argv[i+1];i+=2;custom=1;}
     if(i<argc&&!strcmp(argv[i],"--allow-radio")){opt=1;i++;}
     if(i+1!=argc){fputs("Usage: pocketos-wifi [--socket PATH] [--allow-radio] status|scan|results|connect|disconnect\n",stderr);return 2;}
     const char *action=argv[i],*cmd=NULL;int mut=0;
@@ -109,6 +118,12 @@ int main(int argc,char **argv){
     else if(!strcmp(action,"connect"))mut=1;
     else return 2;
     if(mut&&!opt){fputs("Radio actions require explicit --allow-radio.\n",stderr);return 2;}
+    if(!custom&&access("/usr/sbin/pocketos-wifi-service",X_OK)==0){
+        socket="/run/pocketos-wifi/wlan0";
+        if(mut&&strcmp(action,"disconnect")&&!ensure_service()){
+            fputs("Wi-Fi driver or supplicant initialization failed.\n",stderr);return 1;
+        }
+    }
     if(!start(socket)){fputs("Supplicant control socket unavailable.\n",stderr);return 1;}
     if(!cmd)return join_network();
     if(!strcmp(action,"scan-list")){
