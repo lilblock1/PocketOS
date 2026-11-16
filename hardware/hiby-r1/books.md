@@ -1,0 +1,9 @@
+# PocketOS Books: minimal native reader
+
+The R1 shell reads TXT/text/Markdown directly from SD, streams one page at a time (no whole book allocation), with navigation, two font sizes, narrower line mode and text progress. It indexes up to 128 files and at most 4096 entries across six directory levels. Current glyphs are basic built-in bitmap ASCII; UTF-8 non-ASCII is replaced and original fidelity, Unicode font support, OpenDyslexic, bookmarking, fixed-layout/images, richer formatting and word wrap still require work. No daemon, web view, Python or Calibre runs on the player.
+
+Desktop preparation: put books in SD Books, then run python apps/prepare-books.py PATH_TO_BOOKS. The custom Python standard-library converter follows EPUB spine order and extracts plain text from unencrypted EPUB, HTML/XHTML, FB2, FBZ, DOCX, ODT, HTMLZ and TXTZ. PDF text conversion optionally uses pdftotext; other supported input types optionally use desktop ebook-convert without DRM plugins. Originals remain untouched; resulting .pocket.txt sidecars are streamed from SD. PDF layout, comics, image-only books and scanned PDFs are not supported by this text reader. Font-obfuscated EPUBs are conservatively rejected. On-device complex format conversion remains pending.
+
+DRM: ACSM, LCPL and KFX explicitly require an authorized provider rather than conversion. Other file extensions do not prove that the content is unprotected. No DRM decryption implementation, Adobe/Kindle license access or Readium LCP authorization is installed; a legitimate provider SDK and its device/account support would need to be verified separately. Do not use the converter for protected material. The supported provider path is not implemented.
+
+Host fixtures check pagination, next/previous and preview generation; converter fixtures check EPUB order and protected-file rejection. No device execution or battery measurement yet.

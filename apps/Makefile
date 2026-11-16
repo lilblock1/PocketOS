@@ -42,3 +42,4 @@ check: all
 	sh -n pocketos-bluetooth.sh
 	sh test-update.sh "$(abspath $(BUILD_DIR)/pocketos-update)" pack-update.py
 	python3 test-music.py "$(abspath $(BUILD_DIR)/pocketos-music)"
+	python3 test-books.py prepare-books.py

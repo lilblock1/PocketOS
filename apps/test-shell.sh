@@ -22,3 +22,11 @@ test "$(cat "$tmp/backlight/brightness")" = 50
 
 "$bin" --preview 'NOW PLAYING' "$tmp/now.ppm"
 test "$(wc -c < "$tmp/now.ppm")" -eq 230415
+
+mkdir "$tmp/books"
+printf 'CHAPTER ONE\n' > "$tmp/books/example.txt"
+i=0; while [ "$i" -lt 80 ]; do printf 'Line of text %s\n' "$i" >> "$tmp/books/example.txt"; i=$((i+1)); done
+"$bin" --test-books "$tmp/books"
+"$bin" --preview BOOKS "$tmp/BOOKS.ppm"
+"$bin" --preview READER "$tmp/READER.ppm"
+test "$(wc -c < "$tmp/READER.ppm")" -eq 230415
