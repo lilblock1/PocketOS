@@ -4,3 +4,13 @@
 /reference.upt
 /foundation-artifact/
 __pycache__/
+
+/sdk-artifact/
+/previous-sdk/
+/previous-foundation/
+/sdk/
+/rootfs/
+/app-output/
+/host-app-output/
+/target-app-output/
+/generated-defconfig
