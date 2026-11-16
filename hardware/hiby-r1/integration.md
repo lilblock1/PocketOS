@@ -1,0 +1,5 @@
+# Phase 2B: R1 development tree
+
+The hardware workflow now assembles a temporary, non-bootable development tree using the verified Phase 1 archive and the immutable R1 reference. It checks the exact kernel and module hashes and inventories the known display, input, audio, power, storage, and radio modules. Vendor board init scripts are copied outside the rootfs as inert evidence and never executed. Only the reports and the PocketOS-authored read-only probe are uploaded. The rootfs, original kernel and modules are deliberately not republished or made into an OTA.
+
+/r1-integration.json records missing modules, unresolved dependencies and startup scripts, and module vermagic. The probe is staged as /usr/sbin/pocketos-r1-probe but is not enabled at boot. This is offline assembly, not runtime driver validation. Radio firmware/userspace, module load arguments/order, kernel boot/recovery path and device tests remain gates. Do not flash any artifact. Never invoke vendor userdata mount helpers until their erase and recovery behavior is understood.

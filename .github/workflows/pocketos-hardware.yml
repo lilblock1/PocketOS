@@ -2,7 +2,7 @@ name: PocketOS - R1 hardware compatibility audit
 on:
   push:
     branches: [main]
-    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
+    paths: ['hardware/hiby-r1/**', 'tools/r1_hardware_audit.py', 'tools/r1_stage.py', 'tools/test_r1_stage.py', 'tools/select_sdk.py', '.github/workflows/pocketos-hardware.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -65,6 +65,16 @@ jobs:
           sudo chown "$(id -u):$(id -g)" hardware-report/r1-compatibility.json
           sh -n hardware/hiby-r1/probe.sh
           cp hardware/hiby-r1/probe.sh hardware/hiby-r1/README.md hardware-report/
+      - name: Unit-test offline hardware staging
+        run: python3 -m unittest discover -s tools -p test_r1_stage.py
+      - name: Assemble and verify non-flashable R1 development tree (runner only)
+        run: |
+          mkdir -p staging/rootfs
+          sudo tar --numeric-owner -xzf previous-foundation/PocketOS-rootfs-NOT-FIRMWARE.tar.gz -C staging/rootfs
+          sudo python3 tools/r1_stage.py reference-work/root hardware-report/r1-compatibility.json previous-foundation/compatibility.json staging hardware/hiby-r1/probe.sh hardware-report/r1-integration.json
+          sudo chown "$(id -u):$(id -g)" hardware-report/r1-integration.json
+          sudo sh -n staging/rootfs/usr/sbin/pocketos-r1-probe
+          sudo rm -rf staging
       - name: Upload report and physical-device read-only probe
         uses: actions/upload-artifact@v4
         with:
