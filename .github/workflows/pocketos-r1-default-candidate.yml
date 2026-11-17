@@ -179,7 +179,10 @@ jobs:
           # Reference R1 kernel has a 0x02d00000 rootfs MTD region in the
           # previous firmware checks. Save at least 1 MiB for erase blocks
           # and bad-block margin. This is NOT a physical capacity verification.
-          engineering_cap=min(ref+1048576,0x02d00000-1048576)
+          # Allow a 1.25 MiB increase for the internal GUI, while requiring
+          # at least 1 MiB unallocated below the 45 MiB reference MTD bound.
+          # Neither bound substitutes for an actual device /proc/mtd probe.
+          engineering_cap=min(ref+1310720,0x02d00000-1048576)
           report={
             'reference_squashfs_bytes':ref,
             'candidate_squashfs_bytes':candidate,
