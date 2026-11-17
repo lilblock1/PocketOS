@@ -6,6 +6,8 @@ on:
       - 'apps/**'
       - 'tools/r1_assemble.py'
       - 'tools/test_r1_assemble.py'
+      - 'tools/r1_ota_format.py'
+      - 'tools/test_r1_ota_format.py'
       - '.github/workflows/pocketos-assembly.yml'
   workflow_run:
     workflows: ['PocketOS - Alpha foundation (NOT FIRMWARE)']
@@ -34,7 +36,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Install host tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-user p7zip-full squashfs-tools kmod python3-pil fonts-dejavu-core ffmpeg gnupg xz-utils pkg-config
+        run: sudo apt-get update && sudo apt-get install -y qemu-user p7zip-full squashfs-tools genisoimage kmod python3-pil fonts-dejavu-core ffmpeg gnupg xz-utils pkg-config
       - name: Select exact foundation
         id: pick
         env:
@@ -103,6 +105,10 @@ jobs:
           sudo python3 tools/r1_init_plan.py staging reports/r1-integration.json reports/r1-init-plan.json
           sudo mksquashfs staging/rootfs staging/size-only.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
           sudo python3 tools/r1_boot_gate.py staging/rootfs reference-work/reference.squashfs staging/size-only.squashfs staging/reference-kernel.bin reports/r1-integration.json reports/r1-init-plan.json reports/r1-boot-readiness.json
+          # Exercise the genuine R1 UPT layout and recheck every kernel/rootfs chunk.
+          # This is deliberately a disposable format test: the rootfs is not boot certified.
+          sudo python3 tools/r1_ota_format.py reference-work/iso staging/size-only.squashfs staging/format-test-NOT-FLASHABLE.upt reports/r1-upt-format-check.json
+          test -s reports/r1-upt-format-check.json
           sudo python3 tools/r1_assemble.py report staging/size-only.squashfs reference-work/reference.squashfs reports/assembly.json reports/r1-boot-readiness.json reports/phase4c.json
           sudo chown -R "$(id -u):$(id -g)" reports
           sudo rm -rf staging reference-work reference.upt
