@@ -26,7 +26,7 @@ APPLICATIONS = {
 }
 CRITICAL_DIRS = ("etc/init.d", "module_driver")
 CRITICAL_FILES = ("etc/inittab", "sbin/init", "usr/bin/sonix_player", "usr/bin/sonix_player.sh")
-MAX_TOTAL = 3 * 1024 * 1024
+MAX_TOTAL = 12 * 1024 * 1024  # Uncompressed CI staging guard, NOT a flash partition limit
 
 
 def digest(path):
