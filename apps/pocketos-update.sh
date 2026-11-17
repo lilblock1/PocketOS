@@ -10,11 +10,12 @@ die(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS ERROR %s\n' "$*"; else printf '
 mode=""
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
 root=/mnt/sd_0
+fixture=0
 key=/etc/pocketos/update-public.pem
 stat_cmd=/usr/bin/pocketos-stat
 if [ "$#" -ge 1 ] && [ "$1" = "--fixture" ]; then
     [ "$#" -ge 4 ] || die "fixture needs root and public key"
-    root=$2; key=$3; stat_cmd=stat; shift 3
+    fixture=1; root=$2; key=$3; stat_cmd=stat; shift 3
 else
     awk '$2=="/mnt/sd_0" {found=1} END {exit !found}' /proc/mounts || die "microSD not mounted"
 fi
@@ -36,8 +37,24 @@ if [ "$mode" = status ]; then
     else if [ "$ui" -eq 1 ]; then selection 0 0; else echo "No staged update"; fi; fi
     exit 0
 fi
+if [ "$fixture" -eq 0 ]; then
+    approval=/etc/pocketos/update-enable
+    [ "$(id -u)" -eq 0 ] || die "Trusted update service requires root"
+    [ ! -L /etc/pocketos ] && [ "$("$stat_cmd" -c '%u:%a' /etc/pocketos)" = 0:755 ] ||
+        die "Unsafe update configuration"
+    [ -f "$approval" ] && [ ! -L "$approval" ] &&
+        [ "$(wc -c < "$approval")" -eq 22 ] &&
+        grep -Fxq POCKETOS-R1-UPDATES-1 "$approval" || die "Signed update staging locked"
+    case "$("$stat_cmd" -c '%u:%a' "$approval")" in 0:400|0:600) ;; *) die "Untrusted update approval";; esac
+    case "$("$stat_cmd" -c '%u:%a' "$key" 2>/dev/null)" in 0:400|0:444) ;; *) die "Untrusted release key";; esac
+    awk '$1=="/dev/mmcblk0p1" && $2=="/mnt/sd_0" && $3=="vfat" {
+        n=split($4,a,","); for(i=1;i<=n;i++) opts[a[i]]=1;
+        if(opts["rw"]&&opts["nosuid"]&&opts["nodev"]&&opts["noexec"]) ok=1
+    } END {exit !ok}' /proc/mounts || die "Writable protected microSD required"
+fi
 [ -f "$key" ] && [ ! -L "$key" ] || die "Trusted update public key unavailable"
 command -v openssl >/dev/null || die "OpenSSL unavailable"
+openssl pkey -pubin -in "$key" -noout >/dev/null 2>&1 || die "Invalid release public key"
 command -v sha256sum >/dev/null || die "SHA256 unavailable"
 umask 077
 mkdir -p "$store"

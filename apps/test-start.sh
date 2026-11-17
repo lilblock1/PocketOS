@@ -99,3 +99,19 @@ printf 'POCKETOS-R1-RADIO-1\n' > "$tmp/etc/pocketos/radio-enable"
 grep -F -- '--allow-radio' "$tmp/features-ok.log"
 printf 'invalid\n' > "$tmp/etc/pocketos/radio-enable"
 if "$start" --fixture "$tmp" "$tmp/features-ok"; then exit 1; fi
+
+# Update approval and parseable public key are independent from other features.
+rm "$tmp/etc/pocketos/radio-enable" "$tmp/etc/pocketos/audio-enable" "$tmp/etc/pocketos/smart-sleep-enable"
+printf 'POCKETOS-R1-UPDATES-1\n' > "$tmp/etc/pocketos/update-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'invalid key\n' > "$tmp/etc/pocketos/update-public.pem"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tmp/update-private.pem" 2>/dev/null
+openssl pkey -in "$tmp/update-private.pem" -pubout -out "$tmp/etc/pocketos/update-public.pem"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --allow-updates --fb /dev/input/event7' "$tmp/features-ok.log"
+rm "$tmp/etc/pocketos/update-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"

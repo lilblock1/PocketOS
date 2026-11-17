@@ -110,6 +110,35 @@ if [ -e "$smart_marker" ] || [ -L "$smart_marker" ]; then
     fi
     feature_args="$feature_args --allow-smart-sleep"
 fi
+# Signed update staging is separately approved. Missing/invalid trust must not
+# prevent the rest of PocketOS from booting. No flash installer is enabled.
+update_marker="$root/etc/pocketos/update-enable"
+update_key="$root/etc/pocketos/update-public.pem"
+if [ -e "$update_marker" ] || [ -L "$update_marker" ]; then
+    update_ok=0
+    if [ -f "$update_marker" ] && [ ! -L "$update_marker" ] &&
+       [ "$(wc -c < "$update_marker")" -eq 22 ] &&
+       grep -Fxq POCKETOS-R1-UPDATES-1 "$update_marker" &&
+       [ -f "$update_key" ] && [ ! -L "$update_key" ]; then
+        if [ "$fixture" -eq 1 ]; then
+            update_ok=1
+        else
+            case "$("$stat_cmd" -c '%u:%a' "$update_marker"):$("$stat_cmd" -c '%u:%a' "$update_key")" in
+                0:400:0:400|0:400:0:444|0:600:0:400|0:600:0:444) update_ok=1 ;;
+            esac
+        fi
+        if [ "$update_ok" -eq 1 ] &&
+           command -v openssl >/dev/null && command -v sha256sum >/dev/null &&
+           command -v curl >/dev/null &&
+           openssl pkey -pubin -in "$update_key" -noout >/dev/null 2>&1; then
+            feature_args="$feature_args --allow-updates"
+        else
+            echo 'Signed update staging locked: invalid trust or missing runtime'
+        fi
+    else
+        echo 'Signed update staging locked: invalid approval or missing key'
+    fi
+fi
 [ ! -L "$state" ] || die "Unsafe state directory"
 mkdir -p "$state"
 [ "$("$stat_cmd" -c '%a' "$state")" = 700 ] || die "Unsafe state permissions"
