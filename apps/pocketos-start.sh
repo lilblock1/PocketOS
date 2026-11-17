@@ -78,9 +78,18 @@ attempt=1
 while [ "$attempt" -le 3 ]; do
     status "starting-$attempt"
     if [ "$attempt" -eq 1 ]; then
-        "$shell" --boot-splash --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        if [ "$fixture" -eq 0 ]; then
+            # Transfer is still OFF until explicitly started on the touchscreen.
+            "$shell" --allow-transfer --boot-splash --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        else
+            "$shell" --boot-splash --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        fi
     else
-        "$shell" --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        if [ "$fixture" -eq 0 ]; then
+            "$shell" --allow-transfer --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        else
+            "$shell" --fb "/dev/input/$event" </dev/null >/dev/null 2>&1 &
+        fi
     fi
     child=$!
     status "shell-launched-$attempt"
