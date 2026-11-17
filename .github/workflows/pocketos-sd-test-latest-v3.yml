@@ -1,0 +1,156 @@
+name: PocketOS sequence 3 - signed test-latest SD download compatibility
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pocketos-sd-test-latest-v3.yml'
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: pocketos-signed-test-latest
+  cancel-in-progress: false
+jobs:
+  promote:
+    if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: pocketos-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_TAG: v0.3.0.100-test
+      SOURCE_UPT_HASH: 655d884fb2ff6657a7482941f9e0a5ac3071eeb9e45aaf8c798ac4d62e27cfc7
+      SOURCE_SD_HASH: c3a5dd72788c299d1af5d8e12e19e7530c4e2babade59bfec3a4aaf42cb26875
+      VERSION: '3'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify pinned PocketOS R1 source release
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$SOURCE_TAG" > source.json
+          jq -e --arg tag "$SOURCE_TAG" --arg hash "sha256:$SOURCE_UPT_HASH" \
+            --arg sd "sha256:$SOURCE_SD_HASH" '
+            .tag_name==$tag and .prerelease==true and .draft==false and
+            ([.assets[]|select(.name=="r1.upt" and .state=="uploaded" and
+                                 .digest==$hash and .size==47929344)]|length)==1 and
+            ([.assets[]|select(.name=="PocketOS-R1-SD-Boot-Test.zip" and
+                                 .state=="uploaded" and .digest==$sd)]|length)==1
+          ' source.json
+          if gh release view test-3 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Sequence 3 already occupied, refusing to change it"
+            exit 1
+          fi
+          mkdir -p input previous
+          gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --dir input --pattern r1.upt --pattern PocketOS-R1-SD-Boot-Test.zip
+          echo "$SOURCE_UPT_HASH  input/r1.upt" | sha256sum -c -
+          echo "$SOURCE_SD_HASH  input/PocketOS-R1-SD-Boot-Test.zip" | sha256sum -c -
+          mv input/r1.upt input/pocketos-r1.upt
+          unzip -tq input/PocketOS-R1-SD-Boot-Test.zip
+          gh release download test-latest --repo "$GITHUB_REPOSITORY" --dir previous \
+            --pattern manifest --pattern manifest.sig --pattern pocketos-r1.upt \
+            --pattern data-r1-report.json
+          test "$(head -n 1 previous/manifest)" = 'POCKETOS-R1-FW-1 test r1-mipsel 2'
+          (cd previous; tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+      - name: Create and verify matching signed SD-only manifest
+        env:
+          RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
+          PREFLIGHT_LOG: ${{ secrets.POCKETOS_PREFLIGHT_LOG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$RELEASE_KEY" && test -n "$PREFLIGHT_LOG" || {
+            echo "Release-signing secret or R1 recovery preflight is unavailable"
+            exit 1
+          }
+          printf '%s\n' "$PREFLIGHT_LOG" | tr -d '\r' | grep -Fxq 'POCKETOS-R1-RECOVERY-PREFLIGHT-OK'
+          key="$RUNNER_TEMP/pocketos-release-private.pem"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$RELEASE_KEY" > "$key"
+          chmod 600 "$key"
+          openssl pkey -in "$key" -check -noout >/dev/null
+          openssl pkey -in "$key" -pubout -out public.pem
+          openssl dgst -sha256 -verify public.pem -signature previous/manifest.sig previous/manifest
+          python3 apps/pack-update.py --sequence "$VERSION" \
+            --key "$key" --output signed input/pocketos-r1.upt
+          openssl dgst -sha256 -verify public.pem -signature signed/manifest.sig signed/manifest
+          test "$(head -n 1 signed/manifest)" = 'POCKETOS-SD-1 test r1-mipsel 3'
+          (cd signed; tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          # Test actual PocketOS updater behavior in an isolated SD fixture.
+          mkdir fixture
+          sh apps/pocketos-update.sh --fixture "$PWD/fixture" "$PWD/public.pem" sd "$PWD/signed"
+          test -f fixture/PocketOS-updates/versions/3/pocketos-r1.upt
+          grep -Fxq '3 0 3' fixture/PocketOS-updates/selection
+      - name: Archive previous signed channel before changing rolling release
+        run: |
+          set -euo pipefail
+          if ! gh release view test-2 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            (
+              cd previous
+              gh release create test-2 \
+                manifest manifest.sig pocketos-r1.upt data-r1-report.json \
+                --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+                --prerelease --latest=false \
+                --title 'PocketOS R1 - archived test sequence 2' \
+                --notes 'Previous signed test-latest release archived before SD manifest upgrade. Hardware unverified.'
+            )
+          fi
+      - name: Publish sequence 3 and update rolling PocketOS test-latest
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'EOF'
+          PocketOS R1 - experimental signed SD staging release, sequence 3.
+
+          This contains the unmodified PocketOS v0.3.0.100-test R1 UPT
+          wrapped in the POCKETOS-SD-1 signature format used by the PocketOS
+          updater. PocketOS GitHub Wi-Fi test-latest downloads and cryptographically
+          verifies the image, then saves it to microSD. THE EXISTING POCKETOS
+          UPDATER DOES NOT FLASH OR ACTIVATE THIS IMAGE.
+
+          WARNING: The R1 image has not booted on tested physical hardware.
+          Flashing can cause loss of normal boot and recovery behavior is
+          unverified. No bootloader or recovery image is included. It is not
+          established that the stock recovery updater avoids recovery writes.
+
+          The new PocketOS UI is on microSD, in the separate
+          v0.3.0.100-test release's PocketOS-R1-SD-Boot-Test.zip.
+          Without those files and marker, original Sonix UI starts.
+          Do not treat signed staging as proof of a safe install.
+
+          Previous signed test-latest assets are preserved as test-2.
+          EOF
+          (
+            cd signed
+            gh release create test-3 manifest manifest.sig pocketos-r1.upt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --prerelease --latest=false \
+              --title 'PocketOS R1 - sequence 3 (experimental SD staging)' \
+              --notes-file ../release-notes.md
+          )
+          # Replace binaries first and manifest last. Any intermediate mixed
+          # state fails signature/sha256 verification instead of accepting it.
+          gh release upload test-latest signed/pocketos-r1.upt --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload test-latest signed/manifest.sig --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload test-latest signed/manifest --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit test-latest --repo "$GITHUB_REPOSITORY" \
+            --prerelease --title 'PocketOS R1 - sequence 3 (experimental SD staging)' \
+            --notes-file release-notes.md
+      - name: Verify final online release and signature
+        run: |
+          set -euo pipefail
+          mkdir -p live
+          gh release download test-latest --repo "$GITHUB_REPOSITORY" \
+            --dir live --pattern manifest --pattern manifest.sig --pattern pocketos-r1.upt
+          cmp signed/manifest live/manifest
+          cmp signed/manifest.sig live/manifest.sig
+          cmp signed/pocketos-r1.upt live/pocketos-r1.upt
+          openssl dgst -sha256 -verify public.pem \
+            -signature live/manifest.sig live/manifest
+          (cd live; tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/test-latest" |
+            jq -e '.prerelease==true and .draft==false and
+              ([.assets[]|select(.name=="manifest" and .state=="uploaded")]|length)==1 and
+              ([.assets[]|select(.name=="manifest.sig" and .state=="uploaded")]|length)==1 and
+              ([.assets[]|select(.name=="pocketos-r1.upt" and .state=="uploaded")]|length)==1'
