@@ -640,7 +640,7 @@ static int music_send(unsigned char c){
     return write(music_fd,&c,1)==1;
 }
 static int music_volume_state(void){
-    if(music_pid<0)return 1;
+    if(music_pid<0||music_fd<0)return 1; /* Already stopping; use new gain on next start. */
     unsigned char cmd[2]={volume_extended?VOL_ENABLE:VOL_DISABLE,(unsigned char)volume};
     if(music_fd>=0&&write(music_fd,cmd,sizeof(cmd))==(ssize_t)sizeof(cmd))return 1;
     /* If consent/revocation or gain cannot be delivered, stop audio. */
@@ -651,7 +651,7 @@ static int music_volume_state(void){
 static int volume_confirm(int jack){
     if(!volume_warning)return 0;
     volume_warning=0;
-    if(!music_keep_audio(output,jack))return 0;
+    if((music_pid>=0&&music_fd<0)||!music_keep_audio(output,jack))return 0;
     volume_extended=1;return music_volume_state();
 }
 static void volume_revoke(void){
@@ -687,8 +687,8 @@ static int music_read_report(void){
     if(music_report<0)return 0;
     uint32_t msg[2];int changed=0;ssize_t n;
     while((n=read(music_report,msg,sizeof(msg)))==(ssize_t)sizeof(msg)){
-        if(msg[0]<=604800){music_pos=msg[0];changed=1;}
-        if(msg[1]&&msg[1]<=604800)music_length=msg[1];
+        if(msg[0]<=604800&&msg[0]!=music_pos){music_pos=msg[0];changed=1;}
+        if(msg[1]&&msg[1]<=604800&&msg[1]!=music_length){music_length=msg[1];changed=1;}
     }
     return changed;
 }
@@ -2260,7 +2260,7 @@ static int native(const char *input) {
     }
     render();present(&b);
     long long last_input=mono_ms(),next_sample=last_input+60000;
-    long long next_media=last_input,next_library=last_input+45000,next_audio=last_input;
+    long long next_media=last_input,next_library=last_input+45000,next_audio=last_input,next_clock=last_input;
     int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
@@ -2279,9 +2279,9 @@ static int native(const char *input) {
         int book_changed=smart_asleep?0:book_prepare_reap(),fm_changed=fm_poll_transfer();
         int radio_changed=smart_asleep?0:radio_poll(),update_changed=smart_asleep?0:update_poll(),sample_changed=0;
         int media_changed=sd_refresh_poll();
-        if(!smart_asleep&&update_pid<0&&fm_worker<0&&sd_worker<0&&now>=0&&now>=next_media){
+        if((!smart_asleep||music_pid>=0)&&!update_handoff&&update_pid<0&&fm_worker<0&&sd_worker<0&&now>=0&&now>=next_media){
             media_changed|=media_probe();
-            sd_refresh_start();
+            if(!smart_asleep)sd_refresh_start();
             next_media=now+((page==MUSIC||page==BOOKS||page==FILES||page==READER||music_pid>=0)?5000:30000);
         }
         /* Only refresh a visible idle library, never invalidate the live queue
@@ -2289,7 +2289,7 @@ static int native(const char *input) {
         if(!smart_asleep&&!power_stage&&!busy&&!down&&!pending&&media_online==1&&now>=0&&now>=next_library){
             if(page==MUSIC&&music_pid<0)media_changed|=music_refresh();
             if(page==BOOKS&&book_prepare_pid<0)media_changed|=book_refresh();
-            next_library=now+45000;
+            next_library=now+(saver?180000:90000);
         }
         if(!smart_asleep&&now>=0&&now>=next_sample){
             int n=sample_battery(),oldwifi=wifi_present,oldbt=bt_present,oldaudio=audio_present;
@@ -2302,8 +2302,14 @@ static int native(const char *input) {
                 (page==POWER&&(ram!=ram_available||rss!=shell_rss));
             battery=n;next_sample=now+(saver?120000:60000);
         }
-        int timeout=smart_asleep?0:update_clock(&clock_changed);
-        if(power_stage)timeout=saver?60000:30000;
+        int timeout=saver?60000:30000;
+        clock_changed=0;
+        /* Audio reports/input can wake poll frequently. Only format the clock
+         * on its own deadline or explicit user interaction. */
+        if(!smart_asleep&&!power_stage&&now>=0&&now>=next_clock){
+            next_clock=now+update_clock(&clock_changed);
+        }
+        if(!smart_asleep&&!power_stage)timeout=limit_wait(timeout,now,next_clock);
         if(!power_stage&&((book_changed&&(page==BOOKS||page==READER))||(radio_changed&&(page==WIFIUI||page==BTUI))||
               (update_changed&&page==UPDATES)||(fm_changed&&page==FILES)||((report||reaped||route_changed)&&(page==MUSIC||page==NOWPLAYING||page==SOUND))||
               media_changed||(page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
@@ -2314,7 +2320,7 @@ static int native(const char *input) {
         if((music_pid>=0||volume_extended)&&timeout>500)timeout=500;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
-        if(!smart_asleep&&update_pid<0&&fm_worker<0&&sd_worker<0)timeout=limit_wait(timeout,now,next_media);
+        if(!smart_asleep&&!update_handoff&&update_pid<0&&fm_worker<0&&sd_worker<0)timeout=limit_wait(timeout,now,next_media);
         if(!smart_asleep&&!power_stage&&!busy&&!down&&!pending&&media_online==1&&(page==MUSIC||page==BOOKS))
             timeout=limit_wait(timeout,now,next_library);
         if(power_allow&&!power_failed&&allow_backlight&&!busy&&now>=0&&last_input>=0&&backlight_dir[0]){
@@ -2346,7 +2352,7 @@ static int native(const char *input) {
                 if(smart_asleep){
                     if(!power_wake()){fputs("Smart Sleep backlight restore failed\n",stderr);continue;}
                     smart_asleep=0;
-                    last_input=mono_ms();next_sample=next_media=next_library=last_input;
+                    last_input=mono_ms();next_sample=next_media=next_library=next_clock=last_input;
                     down=pending=have_x=have_y=0;start_y=-1;wake_gesture=0;
                     struct input_event discarded[16];
                     for(int j=0;j<16;j++)if(read(fd,discarded,sizeof(discarded))<=0)break;
@@ -2395,7 +2401,7 @@ static int native(const char *input) {
             if((v.type==EV_KEY&&v.value==1)||v.type==EV_ABS){
                 long long activity=mono_ms();if(activity>=0)last_input=activity;
                 if(power_stage){
-                    if(power_wake()){changed=1;wake_gesture=1;down=pending=have_x=have_y=0;start_y=-1;}
+                    if(power_wake()){changed=1;next_clock=activity;wake_gesture=1;down=pending=have_x=have_y=0;start_y=-1;}
                     else power_failed=1;
                 }
             }
@@ -2449,7 +2455,7 @@ static int native(const char *input) {
                 pending=0;have_x=have_y=0;start_y=-1;
             }
         }
-        if(changed){(void)update_clock(&clock_changed);render();present(&b);}
+        if(changed){int interval=update_clock(&clock_changed);long long t=mono_ms();if(t>=0)next_clock=t+interval;render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
     if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
