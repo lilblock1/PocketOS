@@ -63,6 +63,7 @@ static int wifi_present=0, bt_present=0, brightness_pct=-1;
 static int timezone_choice=0, allow_backlight=0, brightness_error=0, audio_present=0;
 static int unblank_display=0;
 static int internal_pct=-1, sd_pct=-1;
+static int output_busy=0;
 static unsigned long long internal_free=0, sd_free=0;
 static char date_label[32]="DATE UNKNOWN";
 static char backlight_dir[1024]="";
@@ -476,7 +477,8 @@ static void usage_text(int y,const char *name,int pct,unsigned long long free_mi
     char b[48];
     text_at(21,y,name,2,fg);
     if(pct<0){text_at(21,y+23,"NOT MOUNTED / UNKNOWN",1,muted);return;}
-    snprintf(b,sizeof(b),"%d%% USED  %llu MB FREE",pct,free_mib);
+    if(free_mib>=1024)snprintf(b,sizeof(b),"%d%% USED  %llu.%llu GiB FREE",pct,free_mib/1024,(free_mib%1024)*10/1024);
+    else snprintf(b,sizeof(b),"%d%% USED  %llu MiB FREE",pct,free_mib);
     text_at(21,y+23,b,1,muted);
     rect(21,y+37,198,8,edge);rect(21,y+37,198*pct/100,8,mint);
 }
@@ -564,7 +566,9 @@ static void filter_playlist(void){
     fclose(f);memcpy(music_files,list,(size_t)count*sizeof(list[0]));music_count=count;
 }
 static void music_scan(void){
+    if(music_pid>=0)return; /* Never change the playing queue under the decoder. */
     music_count=music_index=music_top=0;
+    music_pending=-1;music_start_at=0;music_error=0;
     int budget=8192;scan_folder("",0,&budget);
     qsort(music_files,(size_t)music_count,sizeof(music_files[0]),compare_tracks);
     if(music_list)filter_playlist();
@@ -597,9 +601,16 @@ static void volume_revoke(void){
 static void music_start(void);
 static int music_keep_audio(int route,int jack){return route==2?bt_audio_ready():smart_keep_audio(route,jack);}
 static void music_select(int idx){
+    if(idx<0||idx>=music_count)return;
     music_index=idx;music_details();
     if(music_index<music_top)music_top=music_index;
     if(music_index>=music_top+4)music_top=music_index-3;
+}
+static void music_scroll(int step){
+    if(!music_count)return;
+    int max=music_count>4?music_count-4:0;
+    int next=music_top+step;
+    music_top=next<0?0:next>max?max:next;
 }
 static int music_read_report(void){
     if(music_report<0)return 0;
@@ -628,9 +639,16 @@ static int music_reap(void){
     if(music_report>=0){(void)music_read_report();close(music_report);}
     music_report=-1;music_fd=-1;music_pid=-1;music_pause=0;
     if(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack()))){music_pending=-1;music_start_at=music_pos;}
-    if(music_pending>=0){int idx=music_pending;music_pending=-1;music_select(idx);music_start();}
-    else if(!music_error&&!music_manual_stop&&!(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack())))){int next=music_next_index();if(next>=0){music_select(next);music_start();}}
-    music_manual_stop=0;return 1;
+    if(music_manual_stop){
+        music_pos=music_start_at;
+        music_pending=-1;
+    }else if(music_pending>=0){
+        int idx=music_pending;music_pending=-1;
+        if(idx>=0&&idx<music_count){music_select(idx);music_pos=music_start_at;music_start();}
+    }else if(!music_error&&!(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack())))){
+        int next=music_next_index();if(next>=0){music_start_at=0;music_select(next);music_start();}
+    }
+    music_manual_stop=0;output_busy=0;return 1;
 }
 static void music_start(void){
     if(music_pid>=0)return;
@@ -640,7 +658,7 @@ static void music_start(void){
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path)){music_error=1;return;}
     snprintf(v,sizeof(v),"%d",vol_clamp(volume,0));
-    snprintf(seek,sizeof(seek),"%u",music_start_at);music_start_at=0;
+    snprintf(seek,sizeof(seek),"%u",music_start_at);
     int f[2],r[2];if(pipe(f)!=0){music_error=1;return;}
     if(pipe(r)!=0){close(f[0]);close(f[1]);music_error=1;return;}
     int rf=fcntl(r[0],F_GETFL);
@@ -658,7 +676,7 @@ static void music_start(void){
     close(f[0]);close(r[1]);
     if(pid<0){close(f[1]);close(r[0]);music_error=1;return;}
     music_report=r[0];
-    music_pid=pid;music_fd=f[1];music_pause=0;music_error=0;music_manual_stop=0;
+    music_pid=pid;music_fd=f[1];music_pause=0;music_error=0;music_manual_stop=0;music_start_at=0;
     if(volume_extended)(void)music_volume_state();
 }
 /* If pause cannot be queued, stop the child instead of permitting unintended
@@ -689,6 +707,19 @@ static int smart_audio_test(void){
     music_pause=0;smart_audio_apply(-1);if(!music_pause||read(f[0],&cmd,1)!=1||cmd!=200)return 15;
     close(f[0]);close(f[1]);music_pid=-1;music_fd=-1;music_pause=0;return 0;
 }
+/* Changing tracks never carries a pending seek from the prior track. */
+static void music_choose_track(int idx,int play){
+    if(idx<0||idx>=music_count)return;
+    music_start_at=0;
+    if(music_pid>=0){
+        if(idx==music_index&&music_pending<0)return;
+        music_manual_stop=0;music_pending=idx;
+        if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}
+        return;
+    }
+    music_pending=-1;music_select(idx);music_error=0;
+    if(play)music_start();
+}
 static void music_action(int action){
     if(action==1){
         if(music_pid<0)music_start();
@@ -697,12 +728,11 @@ static void music_action(int action){
     } else if(action==2){
         volume_revoke();music_pending=-1;music_start_at=0;music_manual_stop=1;
         if(music_pid>=0&&music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}
+        else if(music_pid<0){music_pos=0;music_error=0;music_manual_stop=0;}
     } else if(music_count){
-        music_start_at=0;
         int base=music_pending>=0?music_pending:music_index;
         int idx=(base+(action==0?music_count-1:1))%music_count;
-        if(music_pid>=0){music_pending=idx;if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}}
-        else music_select(idx);
+        music_choose_track(idx,0);
     }
 }
 static const char *music_error_text(int error){
@@ -721,8 +751,8 @@ static void music_seek(int percent){
     uint32_t sec=(uint32_t)((uint64_t)music_length*(unsigned)percent/100);
     if(sec>=music_length)sec=music_length-1;
     music_start_at=sec;music_pos=sec;
-    if(music_pid>=0){music_pending=music_index;if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}}
-    else music_start();
+    if(music_pid>=0){music_manual_stop=0;music_pending=music_index;if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}}
+    /* Seeking an idle track sets its next start position without autoplay. */
 }
 static int book_kind(const char *name){
     const char *e=strrchr(name,'.');if(!e)return 0;
@@ -1001,7 +1031,8 @@ static void book_turn(int forward){
 }
 static void book_select(int direction){
     if(!book_count)return;
-    book_index=(book_index+book_count+direction)%book_count;
+    int next=book_index+direction;
+    book_index=next<0?0:next>=book_count?book_count-1:next;
     if(book_index<book_top)book_top=book_index;
     if(book_index>=book_top+4)book_top=book_index-3;
     book_status[0]=0;
@@ -1359,7 +1390,8 @@ static void render(void) {
             text_at(21,y+9,name,1,fg);
         }
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
-        text_at(12,213,music_pid>=0?(music_pause?"PAUSED":"PLAYBACK REQUESTED"):music_error?music_error_text(music_error):allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
+        text_at(12,213,music_pid>=0?(music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
+        if(music_count>4){char range[32];snprintf(range,sizeof(range),"%d-%d / %d",music_top+1,music_top+4<music_count?music_top+4:music_count,music_count);text_at(12,228,range,1,muted);}
         const char *labels[]={"PREV",music_pid>=0?(music_pause?"GO":"PAUSE"):"PLAY","STOP","NEXT"};
         for(int i=0;i<4;i++){int x=12+i*55;rounded(x,240,51,33,card);text_at(x+5,252,labels[i],1,fg);}
         text_at(12,278,music_shuffle?"SHUFFLE ON":"SHUFFLE OFF",1,music_shuffle?mint:muted);
@@ -1472,7 +1504,7 @@ static void render(void) {
         if(volume_extended)rect(24+192*VOL_NORMAL/VOL_MAX,157,2,18,fg);
         text_at(21,188,volume_extended?"EXTENDED RANGE - CAUTION":"100% RECOMMENDED LIMIT",1,muted);
         rounded(12,213,216,49,card);
-        text_at(21,223,"OUTPUT PREFERENCE",1,muted);
+        text_at(21,223,output_busy?"STOP MUSIC TO CHANGE":"OUTPUT PREFERENCE",1,muted);
         text_at(21,239,outputs[output],2,fg);
         if(output==2){rounded(145,235,76,23,edge);text_at(150,243,"DISCONNECT",1,mint);}
         rounded(12,265,216,23,card);text_at(21,272,volume_extended?"DISABLE HIGH VOLUME":"ENABLE HIGH VOLUME",1,mint);
@@ -1584,6 +1616,13 @@ static void activate(int i) {
     else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){fm_close();update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
     selected=0;
 }
+static int change_output(void){
+    /* The active decoder owns its route. Do not change the preference while
+       it is playing/paused, which previously made UI and hardware disagree. */
+    if(music_pid>=0){output_busy=1;return 0;}
+    output_busy=0;volume_revoke();output=(output+1)%3;
+    save_error=!save_preferences();return 1;
+}
 static void set_volume_target(int v){
     if(v>VOL_NORMAL&&!volume_extended&&!smart_asleep&&!power_stage&&
        (page==SOUND||page==HOME||page==MUSIC||page==NOWPLAYING||page==CONTROL)){
@@ -1673,14 +1712,19 @@ static void tap(int x,int y) {
     if(page==MUSIC&&y>=274&&y<290){if(x<120)music_shuffle=!music_shuffle;else music_repeat=(music_repeat+1)%3;return;}
     if(y>=287&&page!=HOME){back();return;}
     if(page==MUSIC){
-        if(x>=12&&x<228&&y>=82&&y<202&&music_pid<0){
-            int idx=music_top+(y-82)/30;if(idx<music_count)music_select(idx);
+        if(x>=12&&x<228&&y>=82&&y<202&&(y-82)%30<26){
+            int idx=music_top+(y-82)/30;
+            if(idx<music_count){
+                if(music_pid>=0)music_choose_track(idx,0);
+                else if(idx==music_index)music_start();
+                else music_choose_track(idx,0);
+            }
         } else if(x>=12&&x<228&&y>=240&&y<273)music_action((x-12)/55);
         return;
     }
     if(page==SOUND&&x>=24&&x<=216&&y>=148&&y<=183){set_volume_target((x-24)*(volume_extended?VOL_MAX:VOL_NORMAL)/192);return;}
     if(page==SOUND&&output==2&&x>=145&&x<221&&y>=235&&y<258){radio_disconnect_audio();return;}
-    if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){volume_revoke();output=(output+1)%3;save_error=!save_preferences();return;}
+    if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){(void)change_output();return;}
     if(page==SOUND&&x>=12&&x<228&&y>=265&&y<288){if(volume_extended)volume_revoke();else volume_warning=1;return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
     if(x<12||x>=228||y<80)return;
@@ -1740,8 +1784,13 @@ static int key(unsigned code) {
     if(page==BOOKS&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){
         if(code==KEY_UP||code==KEY_DOWN)book_select(code==KEY_UP?-1:1);else (void)book_open();return 1;
     }
-    if(page==SOUND&&(code==KEY_ENTER||code==KEY_OK)){volume_revoke();output=(output+1)%3;save_error=!save_preferences();return 1;}
+    if(page==SOUND&&(code==KEY_ENTER||code==KEY_OK)){(void)change_output();return 1;}
     if((page==MUSIC||page==NOWPLAYING)&&(code==KEY_ENTER||code==KEY_OK||code==KEY_PLAYPAUSE)){music_action(1);return 1;}
+    if(page==MUSIC&&(code==KEY_UP||code==KEY_DOWN)){
+        if(music_pid>=0)music_scroll(code==KEY_UP?-1:1);
+        else if(music_count){int idx=music_index+(code==KEY_UP?-1:1);if(idx>=0&&idx<music_count)music_choose_track(idx,0);}
+        return 1;
+    }
     if((page==MUSIC||page==NOWPLAYING)&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_UP||code==KEY_DOWN||code==KEY_STOPCD)){
         music_action(code==KEY_STOPCD?2:code==KEY_LEFT||code==KEY_UP?0:3);return 1;
     }
@@ -1778,7 +1827,9 @@ static void sample_quick(void) {
     }
     globfree(&g);
     internal_pct=-1;sd_pct=-1;internal_free=0;sd_free=0;
-    (void)mounted_usage("/usr/data",&internal_pct,&internal_free);
+    /* PocketOS mounts existing NAND userdata here, not the old vendor path. */
+    if(!mounted_usage("/run/pocketos-data",&internal_pct,&internal_free))
+        (void)mounted_usage("/usr/data",&internal_pct,&internal_free);
     if(hw_sd_mounted(""))(void)mounted_usage("/mnt/sd_0",&sd_pct,&sd_free);
 }
 static int ppm(const char *path) {
@@ -2070,6 +2121,12 @@ static int native(const char *input) {
                             int delta=start_y-y;int steps=(abs(delta)+15)/31;
                             if(steps<1)steps=1;
                             fm_select(delta>0?steps:-steps);
+                        }else if(page==MUSIC&&start_y>=82&&start_y<202&&abs(start_y-y)>=25){
+                            int delta=start_y-y,steps=(abs(delta)+15)/30;if(steps<1)steps=1;
+                            music_scroll(delta>0?steps:-steps);
+                        }else if(page==BOOKS&&start_y>=83&&start_y<255&&abs(start_y-y)>=30){
+                            int delta=start_y-y,steps=(abs(delta)+21)/43;if(steps<1)steps=1;
+                            book_select(delta>0?steps:-steps);
                         }else tap(x,y);
                         changed=1;
                     }
@@ -2121,6 +2178,16 @@ static int selftest(void) {
     music_count=3;music_index=2;music_repeat=1;if(music_next_index()!=0)return 1;
     music_repeat=2;if(music_next_index()!=2)return 1;
     music_repeat=0;music_shuffle=1;if(music_next_index()==2)return 1;
+    music_count=8;music_index=0;music_top=0;music_scroll(100);if(music_top!=4)return 1;
+    music_scroll(-100);if(music_top!=0)return 1;
+    music_start_at=123;music_choose_track(2,0);if(music_index!=2||music_start_at)return 1;
+    music_length=200;music_seek(50);if(music_pos!=100||music_start_at!=100||music_pid>=0)return 1;
+    music_action(2);if(music_pos||music_start_at)return 1;
+    /* Active-route guard: fake PID is never signalled by change_output. */
+    music_pid=getpid();int route=output;if(change_output()||output!=route||!output_busy)return 1;
+    music_pid=-1;output_busy=0;
+    book_count=8;book_index=0;book_select(-99);if(book_index!=0)return 1;
+    book_select(99);if(book_index!=7||book_top!=4)return 1;
     page=MUSIC;tap(100,305);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
     render();return 0;
 }
