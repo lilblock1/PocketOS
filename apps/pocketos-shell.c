@@ -903,7 +903,7 @@ static void render(void) {
     text_at(12,37,page==CONTROL?"QUICK CONTROLS":titles[page],page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
     if(page==CONTROL) {
         char v[16];
-        text_at(12,64,"SWIPE UP OR TAP CLOSE",1,muted);
+        reader_print(12,63,"Swipe-friendly essentials",12,muted,bg,0,0,228);
         quick_tile(0,"WI-FI",wifi_present?"DETECTED":"UNAVAILABLE",wifi_present);
         quick_tile(1,"BLUETOOTH",bt_present?"DETECTED":"UNAVAILABLE",bt_present);
         if(brightness_pct>=0)snprintf(v,sizeof(v),"%d%%",brightness_pct);
@@ -912,7 +912,7 @@ static void render(void) {
         snprintf(v,sizeof(v),"%d%% TARGET",volume);quick_tile(3,"VOLUME",v,0);
         quick_tile(4,"BATTERY SAVER",saver?"PREFERRED":"STANDARD",saver);
         quick_tile(5,"SETTINGS","OPEN",1);
-        text_at(12,270,radio_allow?"WIRELESS CONTROLS ON":"WIRELESS CHANGES LOCKED",1,muted);
+        text_at(12,270,radio_allow?"WIRELESS READY":"WIRELESS CHANGES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
     } else if(page==FILES){
         if(fm_confirm){
@@ -1082,16 +1082,30 @@ static void render(void) {
         text_at(12,251,save_error?"SAVE FAILED":config_path?"SETTINGS SAVED ON CHANGE":"SESSION ONLY",1,muted);
         text_at(12,301,"BACK",2,mint);
     } else if(page==HOME) {
-        text_at(12,64,"YOUR POCKET. YOUR WORLD.",1,muted);
+        /* Phase 7: new layout using the same RGB565 canvas; no extra buffers. */
+        reader_print(12,61,"Your music, made simple",12,muted,bg,0,0,228);
+        rounded(12,81,216,58,card);
+        rounded(20,90,40,40,edge);
+        if(cover_ok){
+            for(int j=0;j<40;j++)for(int i=0;i<40;i++){
+                size_t k=(size_t)((j*64/40)*64+i*64/40)*3;
+                rect(20+i,90+j,1,1,RGB(cover[k],cover[k+1],cover[k+2]));
+            }
+        }else icon(24,96,MUSIC);
+        reader_print(69,88,"Now Playing",12,mint,card,0,1,221);
+        reader_print(69,105,track_title[0]?track_title:"Ready to listen",13,fg,card,0,1,213);
+        reader_print(69,122,track_artist[0]?track_artist:"SD Music",10,muted,card,0,0,209);
         for(int i=0;i<6;i++) {
-            int x=12+(i%2)*110,y=80+(i/2)*66;
-            rounded(x,y,106,60,i==selected?edge:card);
-            if(i==selected)rect(x,y+5,2,50,mint);
-            icon(x+10,y+8,home_items[i]);text_at(x+10,y+41,titles[home_items[i]],1,fg);
+            int x=12+(i%2)*110,y=148+(i/2)*47;
+            uint16_t tile=i==selected?edge:card;
+            rounded(x,y,106,42,tile);
+            if(i==selected)rect(x,y+6,2,30,mint);
+            icon(x+7,y+7,home_items[i]);
+            reader_print(x+42,y+14,titles[home_items[i]],12,fg,tile,0,1,x+104);
         }
-        text_at(12,301,"ALPHA  /  DEVICE SHELL",1,muted);
+        reader_print(12,298,"Modern  /  Lightweight",11,muted,bg,0,0,226);
     } else if(page==SETTINGS) {
-        text_at(12,64,"DEVICE PREFERENCES",1,muted);
+        reader_print(12,62,"Device preferences",13,muted,bg,0,0,228);
         for(int i=0;i<7;i++) row(i,titles[setting_items[i]]);
         text_at(12,301,"BACK",2,mint);
     } else if(page==DISPLAY){
@@ -1366,9 +1380,11 @@ static void tap(int x,int y) {
     if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){output=(output+1)%3;save_error=!save_preferences();return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
     if(x<12||x>=228||y<80)return;
-    if(page==HOME&&y<278) {
-        int a=x-12,b=y-80;
-        if(a%110<106&&b%66<60)activate((b/66)*2+a/110);
+    if(page==HOME&&y>=81&&y<139) {
+        page=NOWPLAYING;
+    } else if(page==HOME&&y>=148&&y<284) {
+        int a=x-12,b=y-148;
+        if(a%110<106&&b%47<42)activate((b/47)*2+a/110);
     } else if(page==CONTROL&&y>=82&&y<265) {
         int a=x-12,b=y-82;
         if(a%110<106&&b%61<55)activate((b/61)*2+a/110);
