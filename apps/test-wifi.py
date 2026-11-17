@@ -43,6 +43,13 @@ class TestWifi(unittest.TestCase):
                     self.assertIn(b'SET_NETWORK 4 ssid 54657374204e6574776f726b',messages)
                     self.assertIn(b'SET_NETWORK 4 psk "safe\\"pass\\\\word"',messages)
                     self.assertIn(b'SELECT_NETWORK 4',messages)
+                    messages.clear()
+                    self.assertNotEqual(subprocess.run(base+["reconnect"],capture_output=True).returncode,0)
+                    self.assertEqual(subprocess.run(base+["--allow-radio","disconnect"],capture_output=True).returncode,0)
+                    self.assertEqual(messages,[b"DISCONNECT",b"DISABLE_NETWORK all",b"SAVE_CONFIG"])
+                    messages.clear()
+                    self.assertEqual(subprocess.run(base+["--allow-radio","reconnect"],capture_output=True).returncode,0)
+                    self.assertEqual(messages,[b"ENABLE_NETWORK all",b"RECONNECT",b"SAVE_CONFIG"])
                 finally:
                     stop.set();thread.join()
 if __name__=="__main__": unittest.main()

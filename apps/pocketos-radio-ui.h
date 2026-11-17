@@ -13,7 +13,7 @@
 #include <unistd.h>
 #define RADIO_CAP 32
 #define RADIO_OUT 16384
-enum radio_job {R_NONE,R_WIFI_SCAN,R_WIFI_STATUS,R_WIFI_JOIN,R_WIFI_DISCONNECT,R_BT_SCAN,R_BT_STATUS,R_BT_PAIR,R_BT_CONNECT,R_BT_DISCONNECT};
+enum radio_job {R_NONE,R_WIFI_SCAN,R_WIFI_STATUS,R_WIFI_JOIN,R_WIFI_DISCONNECT,R_WIFI_RECONNECT,R_BT_SCAN,R_BT_STATUS,R_BT_PAIR,R_BT_CONNECT,R_BT_DISCONNECT};
 struct radio_item {char name[65],address[18];int security,signal;};
 static struct radio_item radio_items[RADIO_CAP];
 static int radio_count,radio_top,radio_index,radio_allow,radio_mode;
@@ -104,7 +104,7 @@ static int radio_spawn(enum radio_job job,const char *arg){
     if(radio_pid>=0){radio_message("Request already running");return 0;}
     if(radio_mutating(job)&&!radio_allow){radio_message("Radio changes locked");return 0;}
     const char *program=job>=R_BT_SCAN?"/usr/bin/pocketos-bluetooth":"/usr/bin/pocketos-wifi";
-    const char *action=job==R_WIFI_SCAN?"scan-list":job==R_WIFI_STATUS?"status":job==R_WIFI_JOIN?"connect":job==R_WIFI_DISCONNECT?"disconnect":job==R_BT_SCAN?"discover":job==R_BT_STATUS?"status":job==R_BT_PAIR?"pair":job==R_BT_CONNECT?"connect":"disconnect";
+    const char *action=job==R_WIFI_SCAN?"scan-list":job==R_WIFI_STATUS?"status":job==R_WIFI_JOIN?"connect":job==R_WIFI_DISCONNECT?"disconnect":job==R_WIFI_RECONNECT?"reconnect":job==R_BT_SCAN?"discover":job==R_BT_STATUS?"status":job==R_BT_PAIR?"pair":job==R_BT_CONNECT?"connect":"disconnect";
     if(access(program,X_OK)!=0){radio_message("Radio helper not installed");return 0;}
     if(job>=R_BT_PAIR&&(!arg||!radio_mac(arg)))return 0;
     int out[2],in[2];
@@ -211,8 +211,8 @@ static int radio_poll(void){
         else radio_message("Connected");
     }else if(job==R_BT_STATUS){
         radio_message(strstr(radio_buffer,"Powered: yes")?"Bluetooth powered on":"Bluetooth not powered / unknown");
-    }else if(job==R_WIFI_JOIN){struct timespec now;if(!clock_gettime(CLOCK_MONOTONIC,&now))radio_wifi_wait=now.tv_sec+25;radio_message("Connecting...");}
-    else if(job==R_WIFI_DISCONNECT){radio_wifi_wait=0;radio_message("Not connected");}
+    }else if(job==R_WIFI_JOIN||job==R_WIFI_RECONNECT){struct timespec now;if(!clock_gettime(CLOCK_MONOTONIC,&now))radio_wifi_wait=now.tv_sec+25;radio_message("Connecting...");}
+    else if(job==R_WIFI_DISCONNECT){radio_wifi_wait=0;radio_message(strstr(radio_buffer,"RADIO_NOTICE=not-saved")?"Disconnected; not saved":"Not connected");}
     else if(strstr(radio_buffer,"POCKETOS_BT_CONNECTED"))radio_message("Connected");
     else if(strstr(radio_buffer,"POCKETOS_BT_DISCONNECTED"))radio_message("Disconnected");
     else if(strstr(radio_buffer,"Failed")||strstr(radio_buffer,"not available"))radio_message("Bluetooth request failed");

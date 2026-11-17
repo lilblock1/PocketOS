@@ -13,6 +13,7 @@ REPLACEMENTS = {
     "pocketos-shell":"usr/bin/pocketos-shell",
     "pocketos-update":"usr/bin/pocketos-update",
     "pocketos-start":"usr/bin/pocketos-start",
+    "pocketos-wifi":"usr/bin/pocketos-wifi",
     "pocketos-recovery-arm":"usr/sbin/pocketos-recovery-arm",
 }
 
@@ -70,7 +71,7 @@ def prepare(preview,apps,root):
         dest=root/loc
         if dest.is_symlink() or dest.parent.is_symlink() or not dest.parent.is_dir():
             raise ValueError("Unsafe destination")
-        if name in ("pocketos-shell","pocketos-recovery-arm"):
+        if name in ("pocketos-shell","pocketos-recovery-arm","pocketos-wifi"):
             report=subprocess.check_output(["readelf","-h",str(source)],text=True)
             if not all(x in report for x in ("ELF32","little endian","MIPS")):
                 raise ValueError("Wrong target ABI")

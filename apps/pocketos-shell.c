@@ -1197,9 +1197,22 @@ static void radio_tap(int x,int y){
         return;
     }
     if(radio_pid>=0&&radio_active!=R_BT_SCAN)return;
+    if(!radio_mode){
+        if(x>=12&&x<228&&y>=83&&y<219&&(y-83)%34<31){
+            int i=radio_top+(y-83)/34;
+            if(i<radio_count){radio_index=i;radio_choose();}
+        }else if(y>=224&&y<250&&x>=12&&x<228){
+            if(x<116)(void)radio_spawn(R_WIFI_SCAN,NULL);
+            else if(x>=124)(void)radio_spawn(R_WIFI_RECONNECT,NULL);
+        }else if(y>=254&&y<282&&x>=12&&x<228){
+            if(x<116)(void)radio_spawn(R_WIFI_STATUS,NULL);
+            else if(x>=124)(void)radio_spawn(R_WIFI_DISCONNECT,NULL);
+        }
+        return;
+    }
     if(y>=83&&y<219){
         int i=radio_top+(y-83)/34;
-        if(i<radio_count){radio_index=i;radio_message(radio_mode?"Select Pair or Connect":"Select Join");}
+        if(i<radio_count){radio_index=i;radio_message("Select Pair or Connect");}
     }else if(y>=224&&y<250){
         if(x<82)radio_select(-1);
         else if(x<156)radio_choose();
@@ -1560,8 +1573,14 @@ static void render(void) {
                 else snprintf(info,sizeof(info),"%s  %d dBm",radio_items[i].security==0?"Open":radio_items[i].security==1?"WPA-PSK":"Unsupported",radio_items[i].signal);
                 reader_print(20,y+18,info,10,muted,tile,0,0,222);
             }
-            const char *labels[]={"UP",radio_mode?"PAIR":"JOIN","DOWN","SCAN","STATUS",radio_mode?"CONNECT":"DISCONN"};
-            for(int i=0;i<6;i++){int x=12+i%3*74,y=224+i/3*30;rounded(x,y,70,26,card);text_at(x+5,y+9,labels[i],1,mint);}
+            if(radio_mode){
+                const char *labels[]={"UP","PAIR","DOWN","SCAN","STATUS","CONNECT"};
+                for(int i=0;i<6;i++){int x=12+i%3*74,y=224+i/3*30;rounded(x,y,70,26,card);text_at(x+5,y+9,labels[i],1,mint);}
+            }else{
+                list_scrollbar(83,133,radio_top,radio_count,4);
+                const char *labels[]={"Scan","Reconnect","Status","Disconnect"};
+                for(int i=0;i<4;i++){int x=12+(i%2)*112,y=224+(i/2)*30;rounded(x,y,104,26,card);reader_print(x+7,y+6,labels[i],13,mint,card,0,0,x+101);}
+            }
             text_at(12,301,"BACK",2,mint);
             char selected_audio[18];
             if(radio_mode&&(radio_count||bt_audio_selected(selected_audio)))text_at(134,301,"DISCONNECT",1,mint);
@@ -2148,6 +2167,11 @@ static int native(const char *input) {
                         }else if(page==MUSIC&&start_y>=82&&start_y<202&&abs(start_y-y)>=25){
                             int delta=start_y-y,steps=(abs(delta)+15)/30;if(steps<1)steps=1;
                             music_scroll(delta>0?steps:-steps);
+                        }else if(page==WIFIUI&&!radio_keyboard&&radio_pid<0&&start_y>=83&&start_y<219&&abs(start_y-y)>=25){
+                            int delta=start_y-y,steps=(abs(delta)+17)/34;
+                            radio_top=scroll_top(radio_top,radio_count,4,delta>0?steps:-steps);
+                            if(radio_index<radio_top)radio_index=radio_top;
+                            if(radio_count&&radio_index>=radio_top+4)radio_index=radio_top+3;
                         }else if(page==BOOKS&&start_y>=83&&start_y<255&&abs(start_y-y)>=30){
                             int delta=start_y-y,steps=(abs(delta)+21)/43;if(steps<1)steps=1;
                             book_scroll(delta>0?steps:-steps);

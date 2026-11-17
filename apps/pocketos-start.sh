@@ -108,7 +108,8 @@ if [ -e "$smart_marker" ] || [ -L "$smart_marker" ]; then
     if [ "$fixture" -eq 0 ]; then
         case "$("$stat_cmd" -c '%u:%a' "$smart_marker")" in 0:400|0:600) ;; *) die "Untrusted Smart Sleep marker";; esac
     fi
-    feature_args="$feature_args --allow-smart-sleep"
+    feature_args="$feature_args --allow-smart-sleep --allow-idle-dim"
+    case " $feature_args " in *' --allow-backlight '*) ;; *) feature_args="$feature_args --allow-backlight";; esac
 fi
 # File management uses the independent, trusted SD-write approval. Its
 # descriptor-relative operations still limit writes to user files and folders.
@@ -201,6 +202,25 @@ if [ "$fixture" -eq 0 ] &&
     config_args='--config /run/pocketos-data/PocketOS/preferences'
 fi
 printf '%s\n' "$event" > "$state/input"
+# Start only if protected persistent configuration contains an enabled saved
+# network. Explicit disconnect disables profiles; no radio start for empty or
+# disabled configurations. Do not expose credentials or delay UI startup.
+saved_wifi="$root/run/pocketos-data/PocketOS/wpa.conf"
+if [ "$fixture" -eq 0 ] && [ -n "$config_args" ] &&
+   [ -f "$saved_wifi" ] && [ ! -L "$saved_wifi" ] &&
+   [ "$("$stat_cmd" -c '%u:%a' "$saved_wifi")" = 0:600 ] &&
+   [ "$(wc -c < "$saved_wifi")" -le 65536 ] &&
+   awk '
+     /^[[:space:]]*network[[:space:]]*=[[:space:]]*\{/ {inside=1; disabled=0; next}
+     inside && /^[[:space:]]*disabled[[:space:]]*=/ {split($0,a,"=");gsub(/[[:space:]]/,"",a[2]);disabled=(a[2]!="0")}
+     inside && /^[[:space:]]*\}/ {if(!disabled)enabled=1;inside=0}
+     END {exit !enabled}
+   ' "$saved_wifi" &&
+   [ -x /usr/sbin/pocketos-radio-service ]; then
+    case " $feature_args " in
+        *' --allow-radio '*) /usr/sbin/pocketos-radio-service wifi-start </dev/null >"$state/wifi-start.log" 2>&1 & ;;
+    esac
+fi
 # Provisioned digest is independent of the writable SD card. Decoder failure
 # does not prevent native WAV playback or the shell from launching.
 if [ "$fixture" -eq 0 ] && [ -f "$root/etc/pocketos/decoder.sha256" ] && [ ! -L "$root/etc/pocketos/decoder.sha256" ] && [ -x /usr/bin/pocketos-decoder ]; then
