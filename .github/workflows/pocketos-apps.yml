@@ -2,7 +2,7 @@ name: PocketOS - Applications (no Linux rebuild)
 on:
   push:
     branches: [main, phase5-r1-updater]
-    paths: ['apps/**', 'third_party/sonix-epub/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', 'tools/pack-r1-firmware-update.py', 'tools/build-r1-upt.py', '.github/workflows/pocketos-apps.yml']
+    paths: ['apps/**', 'third_party/sonix-epub/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', 'tools/pack-r1-firmware-update.py', 'tools/build-r1-upt.py', 'tools/provision-r1-update-trust.py', '.github/workflows/pocketos-apps.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -29,7 +29,7 @@ jobs:
         run: |
           make -C apps BUILD_DIR="$PWD/host-app-output" check
           host-app-output/pocketos-shell --test-update-ui
-          python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py
+          python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews

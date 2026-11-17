@@ -29,6 +29,19 @@ def main():
     spec = importlib.util.spec_from_file_location("build_r1_upt", REPO / "tools/build-r1-upt.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    # Check immutable installed identity and trust in the actual compressed image.
+    def read_image_file(name):
+        return subprocess.check_output(["unsquashfs", "-cat", str(a.rootfs), name])
+    release = read_image_file("etc/pocketos-release").decode("utf-8").splitlines()
+    if [line for line in release if line.startswith("UPDATE_SEQUENCE=")] != [f"UPDATE_SEQUENCE={a.sequence}"]:
+        p.error("Rootfs installed sequence must equal signed release sequence")
+    if read_image_file("etc/pocketos/update-enable") != b"POCKETOS-R1-UPDATES-1\n":
+        p.error("Rootfs is not independently approved for signed updates")
+    embedded = subprocess.check_output(["openssl", "pkey", "-pubin", "-pubout", "-outform", "DER"],
+                                       input=read_image_file("etc/pocketos/update-public.pem"))
+    signer = subprocess.check_output(["openssl", "pkey", "-in", str(a.key.resolve()), "-pubout", "-outform", "DER"])
+    if embedded != signer:
+        p.error("Signing key does not match embedded update trust")
     candidate = json.loads(a.candidate.read_text())
     a.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".pocketos-release-", dir=a.output.parent) as temp:
