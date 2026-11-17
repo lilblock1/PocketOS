@@ -15,6 +15,8 @@
 #include <unistd.h>
 #include "pocketos-audio-formats.h"
 #include "pocketos-volume.h"
+#include "pocketos-bt-audio.h"
+static int bluetooth_output;
 
 enum { AUDIO_NO_DECODER=10, AUDIO_BAD_FILE=11, AUDIO_NO_JACK=12, AUDIO_ROUTE=13, AUDIO_PCM=14 };
 
@@ -242,16 +244,17 @@ static int r1_audio_prepare(void){
     return r1_headphones()&&r1_mixer("numid=8","2")&&r1_headphones();
 }
 static int playback(struct wav *w,int volume,int controlled){
-    if(!r1_headphones()){fputs("Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
+    if(bluetooth_output?!bt_audio_ready():!r1_headphones()){fputs(bluetooth_output?"Connect Bluetooth audio before playback\n":"Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
     if(access("/usr/bin/aplay",X_OK)!=0){fputs("ALSA aplay unavailable\n",stderr);return AUDIO_PCM;}
-    if(!r1_audio_prepare()){fputs("R1 headphone route initialization failed\n",stderr);return AUDIO_ROUTE;}
+    if(!bluetooth_output&&!r1_audio_prepare()){fputs("R1 headphone route initialization failed\n",stderr);return AUDIO_ROUTE;}
     int p[2];if(pipe(p)!=0)return 1;
     pid_t pid=fork();
     if(pid<0){close(p[0]);close(p[1]);return 1;}
     if(!pid){
         close(p[1]);if(dup2(p[0],STDIN_FILENO)<0)_exit(126);close(p[0]);
         char r[16],c[16];snprintf(r,sizeof(r),"%u",w->rate);snprintf(c,sizeof(c),"%u",w->channels);
-        execl("/usr/bin/aplay","aplay","-q","-D",w->rate==48000&&w->channels==2&&w->bits==16?"hw:0,0":"plughw:CARD=hibysoundcard,DEV=0","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
+        if(bluetooth_output&&setenv("ALSA_CONFIG_PATH","/run/pocketos-bluetooth/asound.conf",1))_exit(126);
+        execl("/usr/bin/aplay","aplay","-q","-D",bluetooth_output?"pocketos_bluetooth":w->rate==48000&&w->channels==2&&w->bits==16?"hw:0,0":"plughw:CARD=hibysoundcard,DEV=0","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
         _exit(127);
     }
     close(p[0]);
@@ -267,6 +270,7 @@ static int playback(struct wav *w,int volume,int controlled){
     return 0;
 }
 int main(int argc,char **argv){
+    if(argc==2&&!strcmp(argv[1],"--test-bt-audio")){printf("ready=%d\n",bt_audio_ready());return 0;}
     if(argc==2&&!strcmp(argv[1],"--test-playback-gain")){
         unsigned char a[]={0,128,255,127}, b[]={0,128,255,127}, c[]={0,128,255,127};
         gain(a,sizeof(a),16,100,1);gain(b,sizeof(b),16,15,0);gain(c,sizeof(c),16,0,1);
@@ -283,7 +287,7 @@ int main(int argc,char **argv){
         vol_command(130,&v,&e);return v!=100;
     }
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS music v1");return 0;}
-    if(argc<3||argc>9)return 2;
+    if(argc<3||argc>10)return 2;
     const char *mode=argv[1];int volume=25,controlled=0;
     if(argc>=4){
         char *end;long v=strtol(argv[3],&end,10);
@@ -292,6 +296,7 @@ int main(int argc,char **argv){
     }
     for(int i=4;i<argc;i++){
         if(!strcmp(argv[i],"--controlled"))controlled=1;
+        else if(!strcmp(argv[i],"--bluetooth"))bluetooth_output=1;
         else if(!strcmp(argv[i],"--start")&&i+1<argc){
             char *end;long v=strtol(argv[++i],&end,10);
             if(end==argv[i]||*end||v<0||v>604800)return 2;
@@ -306,8 +311,9 @@ int main(int argc,char **argv){
     }
     if(strcmp(mode,"--probe")&&strcmp(mode,"--decode")&&strcmp(mode,"--allow-play"))return 2;
     if(controlled&&strcmp(mode,"--allow-play"))return 2;
+    if(bluetooth_output&&strcmp(mode,"--allow-play"))return 2;
     if(!strcmp(mode,"--allow-play")){
-        if(!r1_headphones()){fputs("Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
+        if(bluetooth_output?!bt_audio_ready():!r1_headphones()){fputs(bluetooth_output?"Connect Bluetooth audio before playback\n":"Connect headphones before playback\n",stderr);return AUDIO_NO_JACK;}
     }
     struct wav w={.decoder_fd=-1};
     const char *format=pocketos_demuxer(argv[2]);

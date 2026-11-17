@@ -23,6 +23,7 @@
 #include <strings.h>
 #include "pocketos-audio-formats.h"
 #include "pocketos-volume.h"
+#include "pocketos-bt-audio.h"
 #include "pocketos-reader-font.h"
 #include "pocketos-files.h"
 #include "pocketos-radio-ui.h"
@@ -110,6 +111,7 @@ static int fm_allow=0,fm_panel=0,fm_confirm=0,fm_preview=0;
 static char fm_message[40],fm_rename[64];
 static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0,volume_extended=0,volume_warning=0;
+static int music_keep_audio(int route,int jack);
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
 static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
@@ -584,7 +586,7 @@ static int music_volume_state(void){
 static int volume_confirm(int jack){
     if(!volume_warning)return 0;
     volume_warning=0;
-    if(!smart_keep_audio(output,jack))return 0;
+    if(!music_keep_audio(output,jack))return 0;
     volume_extended=1;return music_volume_state();
 }
 static void volume_revoke(void){
@@ -593,6 +595,7 @@ static void volume_revoke(void){
     volume_extended=0;volume=vol_clamp(volume,0);(void)music_volume_state();
 }
 static void music_start(void);
+static int music_keep_audio(int route,int jack){return route==2?bt_audio_ready():smart_keep_audio(route,jack);}
 static void music_select(int idx){
     music_index=idx;music_details();
     if(music_index<music_top)music_top=music_index;
@@ -624,15 +627,15 @@ static int music_reap(void){
     if(music_fd>=0)close(music_fd);
     if(music_report>=0){(void)music_read_report();close(music_report);}
     music_report=-1;music_fd=-1;music_pid=-1;music_pause=0;
-    if(smart_asleep&&(was_paused||!smart_keep_audio(output,smart_jack()))){music_pending=-1;music_start_at=music_pos;}
+    if(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack()))){music_pending=-1;music_start_at=music_pos;}
     if(music_pending>=0){int idx=music_pending;music_pending=-1;music_select(idx);music_start();}
-    else if(!music_error&&!music_manual_stop&&!(smart_asleep&&(was_paused||!smart_keep_audio(output,smart_jack())))){int next=music_next_index();if(next>=0){music_select(next);music_start();}}
+    else if(!music_error&&!music_manual_stop&&!(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack())))){int next=music_next_index();if(next>=0){music_select(next);music_start();}}
     music_manual_stop=0;return 1;
 }
 static void music_start(void){
     if(music_pid>=0)return;
     if(!allow_audio){music_error=2;return;}
-    if(!smart_keep_audio(output,smart_jack())){music_error=12;return;}
+    if(!music_keep_audio(output,smart_jack())){music_error=12;return;}
     if(music_count<1||access("/usr/bin/pocketos-music",X_OK)!=0){music_error=1;return;}
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path)){music_error=1;return;}
@@ -648,7 +651,8 @@ static void music_start(void){
     if(pid==0){
         close(f[1]);if(dup2(f[0],STDIN_FILENO)<0)_exit(126);close(f[0]);
         close(r[0]);char fdtext[16];snprintf(fdtext,sizeof(fdtext),"%d",r[1]);
-        execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,(char*)NULL);
+        if(output==2)execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,"--bluetooth",(char*)NULL);
+        else execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,(char*)NULL);
         _exit(127);
     }
     close(f[0]);close(r[1]);
@@ -660,7 +664,7 @@ static void music_start(void){
 /* If pause cannot be queued, stop the child instead of permitting unintended
  * playback; retain last reported position for a later explicit Play. */
 static void smart_audio_apply(int jack){
-    if(smart_keep_audio(output,jack))return;
+    if(music_keep_audio(output,jack))return;
     volume_revoke();
     if(music_pid<0||music_pause)return;
     music_pending=-1;
@@ -688,7 +692,7 @@ static int smart_audio_test(void){
 static void music_action(int action){
     if(action==1){
         if(music_pid<0)music_start();
-        else if(music_pause&&!smart_keep_audio(output,smart_jack()))music_error=12;
+        else if(music_pause&&!music_keep_audio(output,smart_jack()))music_error=12;
         else if(music_send(music_pause?201:200)){music_pause=!music_pause;music_error=0;}
     } else if(action==2){
         volume_revoke();music_pending=-1;music_start_at=0;music_manual_stop=1;
@@ -706,7 +710,7 @@ static const char *music_error_text(int error){
     case 2:return "PLAYBACK LOCKED";
     case 10:return "AUDIO DECODER MISSING";
     case 11:return "INVALID AUDIO FILE";
-    case 12:return "CONNECT HEADPHONES";
+    case 12:return output==2?"BLUETOOTH NOT CONNECTED":output==1?"USB OUTPUT UNAVAILABLE":"CONNECT HEADPHONES";
     case 13:return "AUDIO ROUTE FAILED";
     case 14:return "ALSA OUTPUT FAILED";
     default:return "PLAYBACK UNAVAILABLE";
@@ -1953,7 +1957,7 @@ static int native(const char *input) {
             if(size<=0)continue;
             for(size_t j=0;j<(size_t)size/sizeof(*events);j++){
                 int delta=volume_input_event(&volume_inputs[k],&events[j],mono_ms());
-                if(delta&&(!smart_asleep||(music_pid>=0&&!music_pause&&smart_keep_audio(output,smart_jack())))){
+                if(delta&&(!smart_asleep||(music_pid>=0&&!music_pause&&music_keep_audio(output,smart_jack())))){
                     if(delta<0)volume_warning=0;
                     if(!volume_warning)set_volume_target(volume+delta*5);
                     volume_changed=1;

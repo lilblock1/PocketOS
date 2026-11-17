@@ -33,6 +33,13 @@ classic inquiry. Routine controller queries have bounded execution, and the
 pairing command registers a NoInputNoOutput agent. These latest UI/helper
 changes are in testing; do not confuse source synchronization with deployment.
 
+The selected earbuds were subsequently rediscovered in new-device pairing mode.
+Pairing and connection succeeded, and BlueALSA exposed an A2DP source PCM for
+that device. Music routing and an HCI link check are being integrated next;
+audible wireless playback and disconnect behavior are not verified yet.
+The incremental build recipe pins all three public source archives and provides
+their sources/licenses alongside the resulting audio components.
+
 After Bluetooth is fixed, the requested next feature is on-device online and
 microSD updates, with recovery/bootloader preserved. Then measure and optimize
 memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.
