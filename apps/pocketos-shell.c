@@ -900,7 +900,8 @@ static void quick_tile(int i,const char *label,const char *value,int active) {
 static void render(void) {
     palette();
     rect(0,0,W,H,bg);statusbar();
-    text_at(12,37,page==CONTROL?"QUICK CONTROLS":titles[page],page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
+    if(page==HOME)reader_print(12,33,"PocketOS",24,fg,bg,0,1,228);
+    else text_at(12,37,page==CONTROL?"QUICK CONTROLS":titles[page],page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
     if(page==CONTROL) {
         char v[16];
         reader_print(12,63,"Swipe-friendly essentials",12,muted,bg,0,0,228);
@@ -1041,11 +1042,11 @@ static void render(void) {
                 rect(56+i*2,66+j*2,2,2,RGB(cover[k],cover[k+1],cover[k+2]));
             }
         }else{rounded(56,66,128,128,card);icon(106,115,MUSIC);}
-        text_at(12,201,track_title[0]?track_title:"NO TRACK SELECTED",1,fg);
-        text_at(12,212,track_artist[0]?track_artist:"UNKNOWN ARTIST",1,muted);
-        text_at(12,223,track_album[0]?track_album:"UNKNOWN ALBUM",1,muted);
-        rect(12,238,216,7,edge);
-        if(music_length){unsigned pct=music_pos>=music_length?100:(unsigned)((uint64_t)music_pos*100/music_length);rect(12,238,(int)(216*pct/100),7,mint);}
+        reader_print(12,200,track_title[0]?track_title:"No track selected",16,fg,bg,0,1,228);
+        reader_print(12,219,track_artist[0]?track_artist:"Unknown artist",12,muted,bg,0,0,228);
+        reader_print(12,232,track_album[0]?track_album:"Unknown album",10,muted,bg,0,0,228);
+        rect(12,244,216,5,edge);
+        if(music_length){unsigned pct=music_pos>=music_length?100:(unsigned)((uint64_t)music_pos*100/music_length);rect(12,244,(int)(216*pct/100),5,mint);}
         char times[40];
         if(music_length)snprintf(times,sizeof(times),"%u:%02u / %u:%02u",music_pos/60,music_pos%60,music_length/60,music_length%60);
         else snprintf(times,sizeof(times),"%u:%02u / --:--",music_pos/60,music_pos%60);
@@ -1101,7 +1102,7 @@ static void render(void) {
             rounded(x,y,106,42,tile);
             if(i==selected)rect(x,y+6,2,30,mint);
             icon(x+7,y+7,home_items[i]);
-            reader_print(x+42,y+14,titles[home_items[i]],12,fg,tile,0,1,x+104);
+            reader_print(x+42,y+14,titles[home_items[i]],strlen(titles[home_items[i]])>6?10:12,fg,tile,0,1,x+104);
         }
         reader_print(12,298,"Modern  /  Lightweight",11,muted,bg,0,0,226);
     } else if(page==SETTINGS) {
