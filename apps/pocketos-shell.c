@@ -1399,20 +1399,26 @@ static void render(void) {
             }
             reader_print(12,243,"Keep microSD inserted",13,fg,bg,0,0,228);
         }else if(update_confirm){
-            reader_print(12,94,"Select previous version?",18,fg,bg,0,1,228);
-            reader_print(12,130,"Rollback rechecks signatures.",12,muted,bg,0,0,228);
+            if(update_confirm==U_ROLLBACK){
+                reader_print(12,94,"Select previous version?",18,fg,bg,0,1,228);
+                reader_print(12,130,"Rollback rechecks signatures.",12,muted,bg,0,0,228);
+            }else{
+                char offer[64];snprintf(offer,sizeof(offer),"%s release %u",update_confirm==U_STABLE?"Stable":"Pre-release",update_offer);
+                reader_print(12,94,offer,18,fg,bg,0,1,228);
+                reader_print(12,130,"Download signed update to SD?",12,muted,bg,0,0,228);
+            }
             reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
             rounded(12,240,104,36,card);rounded(124,240,104,36,mint);
             reader_print(20,250,"Cancel",15,fg,card,0,0,112);
             reader_print(132,250,"Confirm",15,bg,mint,0,1,225);
         }else{
-            const char *const labels[]={"GitHub test updates","Stage from microSD","Roll back selection"};
-            const char *const detail[]={"Download signed test-latest","PocketOS-inbox folder","Return to previous package"};
-            for(int i=0;i<3;i++){
-                int y=81+i*49;rounded(12,y,216,44,card);
-                if(selected==i)rect(12,y+4,2,36,mint);
-                reader_print(20,y+5,labels[i],16,fg,card,0,1,226);
-                reader_print(20,y+24,detail[i],11,muted,card,0,0,226);
+            const char *const labels[]={"Stable updates","Test / pre-release","Stage from microSD","Roll back selection"};
+            const char *const detail[]={"Check official stable release","Check experimental channel","PocketOS-inbox folder","Return to previous package"};
+            for(int i=0;i<4;i++){
+                int y=81+i*37;rounded(12,y,216,34,card);
+                if(selected==i)rect(12,y+3,2,28,mint);
+                reader_print(20,y+3,labels[i],14,fg,card,0,1,226);
+                reader_print(20,y+19,detail[i],10,muted,card,0,0,226);
             }
             reader_print(12,239,update_note,12,mint,bg,0,0,228);
             reader_print(12,256,update_allow?"SD staging only / no flash":"Updates locked",11,muted,bg,0,0,228);
@@ -1557,11 +1563,11 @@ static void set_volume_target(int v){
 }
 static void update_choose(int i){
     if(update_pid>=0)return;
-    if(i==2){
+    if(i==3){
         if(!update_allow){update_message("Update actions locked");return;}
         if(!update_previous){update_message("No previous staged version");return;}
         update_confirm=U_ROLLBACK;
-    }else if(i==0||i==1)(void)update_spawn(i==0?U_GITHUB:U_SD);
+    }else if(i==0||i==1||i==2)(void)update_spawn(i==0?U_CHECK_STABLE:i==1?U_CHECK_TEST:U_SD);
 }
 static void tap(int x,int y) {
     if(page==SOUND&&volume_warning){
@@ -1574,8 +1580,8 @@ static void tap(int x,int y) {
     if(page==POWER&&y>=112&&y<160){saver=!saver;save_error=!save_preferences();return;}
     if(page==UPDATES){
         if(update_pid>=0)return;
-        if(update_confirm){if(y>=240&&y<279){update_confirm=U_NONE;if(x>=120)(void)update_spawn(U_ROLLBACK);}return;}
-        if(y>=81&&y<228){selected=(y-81)/49;update_choose(selected);}
+        if(update_confirm){if(y>=240&&y<279){enum update_job job=update_confirm;update_confirm=U_NONE;if(x>=120)(void)update_spawn(job);}return;}
+        if(y>=81&&y<229){selected=(y-81)/37;update_choose(selected);}
         else if(y>=287){if(x<120)back();else (void)update_spawn(U_STATUS);}
         return;
     }
@@ -1666,8 +1672,8 @@ static int key(unsigned code) {
     if(page==UPDATES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(update_pid>=0)return 0;
-        if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){update_confirm=U_NONE;(void)update_spawn(U_ROLLBACK);return 1;}return 0;}
-        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+3+(code==KEY_UP?-1:1))%3;return 1;}
+        if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){enum update_job job=update_confirm;update_confirm=U_NONE;(void)update_spawn(job);return 1;}return 0;}
+        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+4+(code==KEY_UP?-1:1))%4;return 1;}
         if(code==KEY_ENTER||code==KEY_OK){update_choose(selected);return 1;}
         return 0;
     }
@@ -2136,7 +2142,7 @@ int main(int argc,char **argv) {
         if(update_current!=8||update_previous!=7||update_percent!=60)return 1;
         if(update_spawn(U_GITHUB)||update_pid>=0)return 1;
         page=UPDATES;update_allow=1;
-        update_choose(2);if(update_confirm!=U_ROLLBACK)return 1;
+        update_choose(3);if(update_confirm!=U_ROLLBACK)return 1;
         tap(20,260);if(update_confirm||update_pid>=0)return 1;
         render();update_close();return 0;
     }

@@ -9,13 +9,14 @@ from pathlib import Path
 
 p=argparse.ArgumentParser()
 p.add_argument("--sequence",type=int,required=True)
+p.add_argument("--channel",choices=("stable","test"),default="test")
 p.add_argument("--key",type=Path,required=True)
 p.add_argument("--output",type=Path,required=True)
 p.add_argument("files",type=Path,nargs="+")
 a=p.parse_args()
 if not 1<=a.sequence<=999999999 or not 1<=len(a.files)<=64:
     p.error("Invalid sequence or file count")
-rows=[f"POCKETOS-SD-1 test r1-mipsel {a.sequence}"]
+rows=[f"POCKETOS-SD-1 {a.channel} r1-mipsel {a.sequence}"]
 total=0
 names=set()
 for f in a.files:
@@ -34,4 +35,4 @@ for f in a.files:
     shutil.copyfile(f,a.output/f.name)
 (a.output/"manifest").write_text("\n".join(rows)+"\n")
 subprocess.run(["openssl","dgst","-sha256","-sign",str(a.key),"-out",str(a.output/"manifest.sig"),str(a.output/"manifest")],check=True)
-print("Signed SD-only test package. Not firmware.")
+print(f"Signed {a.channel} staging package. Not an installer.")

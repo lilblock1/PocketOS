@@ -20,7 +20,7 @@ else
     awk '$2=="/mnt/sd_0" {found=1} END {exit !found}' /proc/mounts || die "microSD not mounted"
 fi
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
-[ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | github TAG | rollback"
+[ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | check-github TAG | github TAG [SEQUENCE] | rollback"
 mode=$1;shift
 [ -d "$root" ] && [ ! -L "$root" ] || die "Unsafe SD root"
 cd "$root" || die "Cannot enter SD root"
@@ -93,7 +93,7 @@ verify_manifest(){
     openssl dgst -sha256 -verify "$key" -signature "$2" "$1" >/dev/null 2>&1 || die "Signature invalid"
     awk '
       NR==1 {
-        if(NF!=4||$1!="POCKETOS-SD-1"||$2!="test"||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
+        if(NF!=4||$1!="POCKETOS-SD-1"||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
         next
       }
       {
@@ -134,15 +134,30 @@ if [ "$mode" = sd-inbox ]; then
     [ "$#" -eq 0 ] || die "Unexpected inbox arguments"
     mode=sd; set -- ./PocketOS-inbox
 fi
-[ "$#" -eq 1 ] || die "Expected update folder or GitHub test tag"
+check_only=0
+if [ "$mode" = check-github ]; then check_only=1; mode=github; fi
+expected_channel="" expected_seq=""
+if [ "$mode" = github ] && [ "$check_only" -eq 0 ] && [ "$#" -eq 2 ]; then
+    expected_seq=$2
+    valid_seq "$expected_seq" || die "Invalid confirmed sequence"
+    set -- "$1"
+fi
+[ "$#" -eq 1 ] || die "Expected update folder or GitHub channel"
 case "$mode" in
     sd) source=$1; [ -d "$source" ] && [ ! -L "$source" ] || die "Invalid SD source" ;;
     github)
         tag=$1
-        case "$tag" in test-latest|test-[0-9]*) ;; *) die "Only test release tags accepted";; esac
-        case "$tag" in *[!a-zA-Z0-9._-]*) die "Invalid tag";; esac
         command -v curl >/dev/null || die "HTTPS downloader unavailable"
-        source="https://github.com/lilblock1/PocketOS/releases/download/$tag" ;;
+        case "$tag" in
+            stable-latest)
+                expected_channel=stable
+                source="https://github.com/lilblock1/PocketOS/releases/latest/download" ;;
+            test-latest|test-[0-9]*)
+                case "$tag" in *[!a-zA-Z0-9._-]*) die "Invalid tag";; esac
+                expected_channel=test
+                source="https://github.com/lilblock1/PocketOS/releases/download/$tag" ;;
+            *) die "Invalid update channel" ;;
+        esac ;;
     *) die "Unknown operation";;
 esac
 # Payload progress is based on signed byte counts, not number of files.
@@ -185,6 +200,14 @@ fetch manifest.sig 8192
 verify_manifest "$work/manifest" "$work/manifest.sig"
 progress 15
 read -r magic channel target seq < "$work/manifest"
+[ -z "$expected_channel" ] || [ "$channel" = "$expected_channel" ] || die "Signed manifest channel mismatch"
+[ -z "$expected_seq" ] || [ "$seq" = "$expected_seq" ] || die "Release changed; check again"
+if [ "$check_only" -eq 1 ]; then
+    if [ "$seq" -le "$high" ]; then seq=0; fi
+    if [ "$ui" -eq 1 ]; then printf 'POCKETOS AVAILABLE %s\n' "$seq"; else printf '%s\n' "$seq"; fi
+    progress 100
+    exit 0
+fi
 [ "$seq" -gt "$high" ] || die "Update is not newer than the highest staged version"
 [ ! -e "$store/versions/$seq" ] && [ ! -L "$store/versions/$seq" ] || die "Version already exists (inspect interrupted run)"
 required=$(awk 'NR>1 {sum+=$2} END {printf "%.0f\n", int((sum+1023)/1024)+16384}' "$work/manifest")

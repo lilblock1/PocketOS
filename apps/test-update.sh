@@ -88,3 +88,21 @@ if run --ui sd "$tmp/v6" > "$tmp/bad.log"; then exit 1; fi
 if grep -q '^POCKETOS PROGRESS 100$' "$tmp/bad.log"; then exit 1; fi
 grep -Fx 'POCKETOS ERROR Package checksum mismatch' "$tmp/bad.log"
 test "$(run status)" = '5 4 5'
+
+# Stable channel is signed independently and manifest-only checks do not stage data.
+python3 "$packer" --channel stable --sequence 7 --key "$tmp/private.pem" --output "$tmp/stable7" "$tmp/data-large"
+mkdir "$tmp/checkonly"
+cp "$tmp/stable7/manifest" "$tmp/stable7/manifest.sig" "$tmp/checkonly/"
+POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/check.log"
+grep -Fx 'POCKETOS AVAILABLE 7' "$tmp/check.log"
+test "$(run status)" = '5 4 5'
+test ! -e "$tmp/sd/PocketOS-updates/versions/7"
+if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui check-github test-latest > "$tmp/wrong-channel.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Signed manifest channel mismatch' "$tmp/wrong-channel.log"
+if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui github stable-latest 8 > "$tmp/changed.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Release changed; check again' "$tmp/changed.log"
+POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui github stable-latest 7 > "$tmp/stable.log"
+grep -Fx 'POCKETOS SELECTION 7 5' "$tmp/stable.log"
+test "$(run status)" = '7 5 7'
+POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/old.log"
+grep -Fx 'POCKETOS AVAILABLE 0' "$tmp/old.log"

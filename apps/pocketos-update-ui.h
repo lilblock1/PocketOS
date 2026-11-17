@@ -9,12 +9,12 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-enum update_job {U_NONE,U_STATUS,U_SD,U_GITHUB,U_ROLLBACK};
+enum update_job {U_NONE,U_STATUS,U_SD,U_GITHUB,U_ROLLBACK,U_STABLE,U_CHECK_STABLE,U_CHECK_TEST};
 static enum update_job update_active,update_confirm;
 static int update_allow,update_percent,update_fd=-1,update_len,update_drop;
 static pid_t update_pid=-1;
 static char update_line[192],update_note[80]="Select an update source";
-static unsigned update_current,update_previous,update_bytes,update_total;
+static unsigned update_current,update_previous,update_bytes,update_total,update_offer;
 static int update_error;
 static struct timespec update_deadline;
 static void update_message(const char *msg){snprintf(update_note,sizeof(update_note),"%.79s",msg);}
@@ -22,6 +22,10 @@ static void update_parse(const char *line){
     unsigned a,b;char extra;
     if(sscanf(line,"POCKETOS SELECTION %u %u %c",&a,&b,&extra)==2&&a<=999999999&&b<=999999999){
         update_current=a;update_previous=b;return;
+    }
+    if(sscanf(line,"POCKETOS AVAILABLE %u %c",&a,&extra)==1&&a<=999999999){
+        if(update_active==U_CHECK_STABLE||update_active==U_CHECK_TEST)update_offer=a;
+        return;
     }
     unsigned done,total;
     if(sscanf(line,"POCKETOS BYTES %u %u %c",&done,&total,&extra)==2&&total>0&&total<=536870912&&done<=total){
@@ -82,7 +86,12 @@ static int update_spawn(enum update_job job){
         if(nullfd<0||dup2(nullfd,STDIN_FILENO)<0)_exit(126);
         close(nullfd);
         if(job==U_SD)execl(program,program,"--ui","sd-inbox",(char*)NULL);
-        else if(job==U_GITHUB)execl(program,program,"--ui","github","test-latest",(char*)NULL);
+        else if(job==U_CHECK_STABLE||job==U_CHECK_TEST)
+            execl(program,program,"--ui","check-github",job==U_CHECK_STABLE?"stable-latest":"test-latest",(char*)NULL);
+        else if(job==U_STABLE||job==U_GITHUB){
+            char seq[16];snprintf(seq,sizeof(seq),"%u",update_offer);
+            execl(program,program,"--ui","github",job==U_STABLE?"stable-latest":"test-latest",seq,(char*)NULL);
+        }
         else if(job==U_ROLLBACK)execl(program,program,"--ui","rollback",(char*)NULL);
         else execl(program,program,"--ui","status",(char*)NULL);
         _exit(127);
@@ -91,6 +100,7 @@ static int update_spawn(enum update_job job){
     (void)setpgid(pid,pid);
     update_pid=pid;update_fd=out[0];update_active=job;
     update_len=update_drop=update_percent=update_error=0;update_bytes=update_total=0;
+    if(job==U_CHECK_STABLE||job==U_CHECK_TEST)update_offer=0;
     if(clock_gettime(CLOCK_MONOTONIC,&update_deadline)!=0)update_deadline.tv_sec=0;
     else update_deadline.tv_sec+=1800;
     update_message(job==U_STATUS?"Reading selection":"Starting signed update");
@@ -123,6 +133,10 @@ static int update_poll(void){
         if(!update_error)
             update_message("Update failed; selection not confirmed");
     }else if(job==U_STATUS)update_message(update_current?"Staged version selected":"No staged update");
+    else if(job==U_CHECK_STABLE||job==U_CHECK_TEST){
+        if(update_offer){update_confirm=job==U_CHECK_STABLE?U_STABLE:U_GITHUB;update_message("Signed release available");}
+        else update_message("No newer release than staged history");
+    }
     else{update_percent=100;update_message(job==U_ROLLBACK?"Previous package selected":"Verified package staged; not installed");}
     return 1;
 }

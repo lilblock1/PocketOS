@@ -16,6 +16,7 @@ def main():
     p.add_argument("--candidate", type=Path, required=True)
     p.add_argument("--key", type=Path, required=True)
     p.add_argument("--sequence", type=int, required=True)
+    p.add_argument("--channel", choices=("stable", "test"), default="test")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if not 1 <= a.sequence <= 999999999:
@@ -43,7 +44,7 @@ def main():
         report_file.write_text(json.dumps(report, indent=2) + "\n")
         staged = work / "signed"
         subprocess.run([sys.executable, str(REPO / "apps/pack-update.py"),
-                        "--sequence", str(a.sequence), "--key", str(a.key.resolve()),
+                        "--sequence", str(a.sequence), "--channel", a.channel, "--key", str(a.key.resolve()),
                         "--output", str(staged), str(upt), str(report_file)], check=True)
         if a.output.exists() or a.output.is_symlink():
             raise ValueError("Output directory appeared")
