@@ -541,7 +541,7 @@ static int music_reap(void){
     music_manual_stop=0;return 1;
 }
 static void music_start(void){
-    if(!allow_audio||output!=0||music_count<1||music_pid>=0||access("/usr/bin/pocketos-music",X_OK)!=0){
+    if(!allow_audio||output==1||music_count<1||music_pid>=0||access("/usr/bin/pocketos-music",X_OK)!=0){
         music_error=1;return;
     }
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
@@ -558,7 +558,10 @@ static void music_start(void){
     if(pid==0){
         close(f[1]);if(dup2(f[0],STDIN_FILENO)<0)_exit(126);close(f[0]);
         close(r[0]);char fdtext[16];snprintf(fdtext,sizeof(fdtext),"%d",r[1]);
-        execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,(char*)NULL);
+        if(output==2)
+            execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,"--output","bluetooth",(char*)NULL);
+        else
+            execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,(char*)NULL);
         _exit(127);
     }
     close(f[0]);close(r[1]);
@@ -1061,7 +1064,7 @@ static void render(void) {
             text_at(21,y+9,name,1,fg);
         }
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
-        text_at(12,213,music_pid>=0?(music_pause?"PAUSED":"PLAYBACK REQUESTED"):music_error?"PLAYBACK UNAVAILABLE":allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
+        text_at(12,213,music_pid>=0?(music_pause?"PAUSED":"PLAYBACK REQUESTED"):music_error?"PLAYBACK UNAVAILABLE":allow_audio?(output==2?"BT REQUIRES ALSA SETUP":output==1?"USB NOT CONFIGURED":"HEADPHONE PLAYBACK READY"):"PLAYBACK LOCKED",1,mint);
         const char *labels[]={"PREV",music_pid>=0?(music_pause?"GO":"PAUSE"):"PLAY","STOP","NEXT"};
         for(int i=0;i<4;i++){int x=12+i*55;rounded(x,240,51,33,card);text_at(x+5,252,labels[i],1,fg);}
         text_at(12,278,music_shuffle?"SHUFFLE ON":"SHUFFLE OFF",1,music_shuffle?mint:muted);
@@ -1156,7 +1159,7 @@ static void render(void) {
         text_at(21,93,"VOLUME TARGET",2,fg);
         text_at(21,119,b,3,mint);
         rect(24,160,192,12,edge);rect(24,160,192*volume/100,12,mint);
-        text_at(21,188,"PLAYBACK NOT CONNECTED",1,muted);
+        text_at(21,188,output==2?"BT NEEDS VERIFIED ALSA":output==1?"USB AUDIO UNAVAILABLE":"ALSA DEFAULT (UNVERIFIED)",1,muted);
         rounded(12,213,216,49,card);
         text_at(21,223,"OUTPUT PREFERENCE",1,muted);
         text_at(21,239,outputs[output],2,fg);
