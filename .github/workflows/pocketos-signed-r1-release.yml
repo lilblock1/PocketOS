@@ -1,0 +1,97 @@
+name: PocketOS R1 signed sequence 2
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: pocketos-r1-signed-release
+  cancel-in-progress: false
+jobs:
+  signed-release:
+    if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: pocketos-release
+    env:
+      SOURCE_COMMIT: 67cdac59a28931146ab1e1612e49be41e52eb1ae
+      KIT_ID: '14293303209'
+      KIT_SHA256: e6e576098a1494e923bb939e0a7b85f6681d404d658b50bf08a430cba127b937
+      PREVIEW_ID: '757071177'
+      PREVIEW_SHA256: fa36d95736555dba9ce95e33a29227668270d524f1cb419a751506f59d10a074
+    steps:
+      - name: Fetch only the verified build and pinned draft preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/pocketos-release/kit"
+          cd "$RUNNER_TEMP/pocketos-release"
+          if gh release view test-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "test-latest already exists; refusing to overwrite any published assets"
+            exit 1
+          fi
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$KIT_ID/zip" -o kit.zip
+          echo "$KIT_SHA256  kit.zip" | sha256sum -c -
+          unzip -q kit.zip -d kit
+          test "$(cat kit/SOURCE_COMMIT)" = "$SOURCE_COMMIT"
+          (cd kit && sha256sum -c SHA256SUMS)
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$PREVIEW_ID" -o preview.upt
+          echo "$PREVIEW_SHA256  preview.upt" | sha256sum -c -
+      - name: Install offline packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 openssl p7zip-full squashfs-tools genisoimage binutils
+      - name: Sign and independently verify sequence 2
+        env:
+          RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
+          PREFLIGHT_LOG: ${{ secrets.POCKETOS_PREFLIGHT_LOG }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -n "$RELEASE_KEY" && test -n "$PREFLIGHT_LOG" || { echo "Configure both environment secrets first"; exit 1; }
+          work="$RUNNER_TEMP/pocketos-release"
+          export HOME="$work/signing-home"
+          mkdir -p "$HOME/.local/share/pocketos-signing" "$work/publish"
+          key="$HOME/.local/share/pocketos-signing/release-private.pem"
+          trap 'rm -f "$key" "$work/preflight.log"' EXIT
+          printf '%s\n' "$RELEASE_KEY" > "$key"
+          printf '%s\n' "$PREFLIGHT_LOG" > "$work/preflight.log"
+          unset RELEASE_KEY PREFLIGHT_LOG
+          chmod 600 "$key"
+          openssl pkey -in "$key" -check -noout >/dev/null
+          tr -d '\r' < "$work/preflight.log" | grep -Fxq POCKETOS-R1-RECOVERY-PREFLIGHT-OK
+          cd "$work/kit"
+          bash finalize-r1-bootstrap.sh "$work/preflight.log" "$work/preview.upt" 2
+          shopt -s nullglob
+          candidates=("$HOME"/pocketos-bootstrap.*/signed)
+          test "${#candidates[@]}" = 1
+          signed="${candidates[0]}"
+          openssl pkey -in "$key" -pubout -out "$work/public.pem"
+          cd "$signed"
+          openssl dgst -sha256 -verify "$work/public.pem" -signature manifest.sig manifest
+          test "$(head -n 1 manifest)" = 'POCKETOS-R1-FW-1 test r1-mipsel 2'
+          tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -
+          cp manifest manifest.sig pocketos-r1.upt data-r1-report.json "$work/publish/"
+      - name: Publish the signed pre-release only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/pocketos-release/publish"
+          gh release create test-latest manifest manifest.sig pocketos-r1.upt data-r1-report.json \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_COMMIT" --draft --prerelease \
+            --title "PocketOS R1 — Sequence 2 (experimental)" \
+            --notes "Signed rootfs-only update for the previously provisioned HiBy R1. Automated application tests passed. Physical Wi-Fi installation and cold boot not yet verified. Preserve the stock recovery and keep the microSD inserted. Do not install on stock or an unrelated device."
+          gh release edit test-latest --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+      - name: Remove signing workspace
+        if: always()
+        run: sudo rm -rf -- "$RUNNER_TEMP/pocketos-release"
