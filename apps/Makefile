@@ -2,7 +2,11 @@ CC ?= cc
 BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
-all: $(BUILD_DIR)/pocketos-recovery-arm
+all: $(BUILD_DIR)/pocketos-recovery-arm $(BUILD_DIR)/pocketos-sd
+$(BUILD_DIR)/pocketos-sd: pocketos-sd.sh
+	mkdir -p "$(BUILD_DIR)"
+	cp "$<" "$@"
+	chmod 755 "$@"
 $(BUILD_DIR)/pocketos-recovery-arm: pocketos-recovery-arm.c
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
@@ -99,4 +103,5 @@ check: all
 	python3 test-books.py prepare-books.py
 	sh test-decoder.sh "$(abspath $(BUILD_DIR)/pocketos-decoder)"
 	sh test-start.sh "$(abspath $(BUILD_DIR)/pocketos-start)"
+	sh test-sd.sh "$(abspath $(BUILD_DIR)/pocketos-sd)"
 	sh -n "$(BUILD_DIR)/S95pocketos"

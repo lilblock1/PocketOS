@@ -66,7 +66,8 @@ static int unblank_display=0;
 static int brightness_saved=-1;
 static int internal_pct=-1, sd_pct=-1;
 static int output_busy=0;
-static int media_online=-1;
+static int media_online=-1,media_stale;
+static pid_t sd_worker=-1;
 static dev_t media_dev;
 static ino_t media_ino;
 static unsigned long long internal_free=0, sd_free=0;
@@ -604,7 +605,7 @@ static void filter_playlist(void){
     fclose(f);memcpy(music_files,list,(size_t)count*sizeof(list[0]));music_count=count;
 }
 static void music_scan(void){
-    if(music_pid>=0)return; /* Never change the playing queue under the decoder. */
+    if(music_pid>=0||sd_worker>=0||media_stale)return; /* Never change the playing queue under the decoder. */
     music_count=music_index=music_top=0;
     music_pending=-1;music_start_at=0;music_error=0;
     int budget=8192;scan_folder("",0,&budget);
@@ -714,7 +715,7 @@ static void music_start(void){
     if(!allow_audio){music_error=2;return;}
     if(!music_keep_audio(output,smart_jack())){music_error=12;return;}
     if(music_count<1||access("/usr/bin/pocketos-music",X_OK)!=0){music_error=1;return;}
-    if(!hw_sd_mounted("")){music_error=15;return;}
+    if(sd_worker>=0||media_stale||!hw_sd_mounted("")){music_error=15;return;}
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path)){music_error=1;return;}
     snprintf(v,sizeof(v),"%d",vol_clamp(volume,0));
@@ -848,6 +849,7 @@ static void scan_books(const char *rel,int depth,int *budget){
     closedir(d);
 }
 static void book_scan(void){
+    if(sd_worker>=0||media_stale)return;
     book_count=book_index=book_top=0;book_status[0]=0;
     int budget=4096;scan_books("",0,&budget);
     qsort(books,(size_t)book_count,sizeof(books[0]),compare_tracks);
@@ -1050,7 +1052,7 @@ static int book_prepare_start(const char *path){
 static int book_open(void){
     book_close();
     if(!book_count)return 0;
-    if(!strcmp(book_dir,"/mnt/sd_0/Books")&&!hw_sd_mounted("")){strcpy(book_status,"MICROSD NOT AVAILABLE");return 0;}
+    if(!strcmp(book_dir,"/mnt/sd_0/Books")&&(sd_worker>=0||media_stale||!hw_sd_mounted(""))){strcpy(book_status,"MICROSD NOT AVAILABLE");return 0;}
     int kind=book_kind(books[book_index]);char path[600];
     if(kind==3){strcpy(book_status,"DRM PROVIDER NOT INSTALLED");return 0;}
     int n=snprintf(path,sizeof(path),"%s/%s%s",book_dir,books[book_index],kind==2?".pocket.txt":"");
@@ -1122,7 +1124,7 @@ static void fm_note(const char *text){snprintf(fm_message,sizeof(fm_message),"%.
 static void fm_start(void){
     fm_panel=fm_confirm=fm_edit_new=fm_action=0;fm_message[0]=0;
     int pct;unsigned long long space;
-    if(!hw_sd_mounted("")||!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
+    if(sd_worker>=0||media_stale||!hw_sd_mounted("")||!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
         fm_close();fm_note("MICROSD NOT AVAILABLE");
     }
 }
@@ -1130,13 +1132,14 @@ static void fm_start(void){
  * format, forced unmount or mount during the updater's recovery handoff. */
 static int media_probe(void){
     struct stat st;
-    int online=hw_sd_mounted("")&&stat("/mnt/sd_0",&st)==0;
+    int online=!media_stale&&hw_sd_mounted("")&&stat("/mnt/sd_0",&st)==0;
     int changed=online!=media_online||(online&&(media_dev!=st.st_dev||media_ino!=st.st_ino));
     if(!changed)return 0;
     int was_online=media_online;
     media_online=online;
     if(online){media_dev=st.st_dev;media_ino=st.st_ino;}
     if(was_online==1){
+        if(!online)media_stale=1;
         /* The old card may have disappeared. Do not save through stale files. */
         if(book_file){fclose(book_file);book_file=NULL;book_close();if(page==READER)page=BOOKS;}
         if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
@@ -1156,6 +1159,29 @@ static int media_probe(void){
         fm_close();fm_note("MICROSD NOT AVAILABLE");
     }
     return 1;
+}
+static void sd_refresh_start(void){
+    if(sd_worker>=0||media_online!=0||update_pid>=0||fm_worker>=0||music_pid>=0||
+       book_file||book_prepare_pid>=0||page==UPDATES||radio_pid>=0)return;
+    if(access("/usr/bin/pocketos-sd",X_OK)!=0)return;
+    if(!media_stale&&access("/sys/class/block/mmcblk0p1/partition",R_OK)!=0)return;
+    fm_close();
+    pid_t pid=fork();
+    if(pid==0){
+        int log=open("/run/pocketos-sd.log",O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
+        if(log>=0){(void)dup2(log,STDERR_FILENO);(void)dup2(log,STDOUT_FILENO);close(log);}
+        execl("/usr/bin/pocketos-sd","pocketos-sd",media_stale?"replace-stale":"refresh",(char*)NULL);
+        _exit(127);
+    }
+    if(pid>0)sd_worker=pid;
+}
+static int sd_refresh_poll(void){
+    if(sd_worker<0)return 0;
+    int status;pid_t p=waitpid(sd_worker,&status,WNOHANG);
+    if(p==0||(p<0&&errno==EINTR))return 0;
+    sd_worker=-1;
+    if(p>0&&WIFEXITED(status)&&WEXITSTATUS(status)==0){media_stale=0;return media_probe();}
+    return 0;
 }
 static void fm_open_media(void){
     if(fm_count<1)return;
@@ -1834,7 +1860,7 @@ static void update_choose(int i){
     if(update_pid>=0)return;
     if(i<0||i>2)return;
     if(!update_allow){update_message("Update actions locked");return;}
-    if(music_pid>=0||book_prepare_pid>=0||fm_worker>=0||book_file){update_message("Close active media before updating");return;}
+    if(music_pid>=0||book_prepare_pid>=0||fm_worker>=0||book_file||sd_worker>=0){update_message("Close active media before updating");return;}
     fm_close();
     (void)update_spawn(i==0?U_SD:i==1?U_CHECK_TEST:U_CHECK_STABLE);
 }
@@ -2184,7 +2210,7 @@ static int native(const char *input) {
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
         long long now=mono_ms();
-        int busy=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0;
+        int busy=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||sd_worker>=0;
         int saving=saver||smart_asleep;
         if(saving!=old_saver){cpu_policy(saving);old_saver=saving;}
         /* Do not switch off the display while a transfer is in progress. */
@@ -2196,9 +2222,10 @@ static int native(const char *input) {
         int reaped=music_reap();
         int book_changed=smart_asleep?0:book_prepare_reap(),fm_changed=fm_poll_transfer();
         int radio_changed=smart_asleep?0:radio_poll(),update_changed=smart_asleep?0:update_poll(),sample_changed=0;
-        int media_changed=0;
-        if(!smart_asleep&&update_pid<0&&fm_worker<0&&now>=0&&now>=next_media){
-            media_changed=media_probe();
+        int media_changed=sd_refresh_poll();
+        if(!smart_asleep&&update_pid<0&&fm_worker<0&&sd_worker<0&&now>=0&&now>=next_media){
+            media_changed|=media_probe();
+            sd_refresh_start();
             next_media=now+((page==MUSIC||page==BOOKS||page==FILES||page==READER||music_pid>=0)?5000:30000);
         }
         /* Only refresh a visible idle library, never invalidate the live queue
@@ -2227,12 +2254,12 @@ static int native(const char *input) {
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(radio_wifi_wait&&timeout>250)timeout=250;
         if(update_pid>=0&&timeout>500)timeout=500;
-        if((book_prepare_pid>=0||fm_worker>=0)&&timeout>200)timeout=200;
+        if((book_prepare_pid>=0||fm_worker>=0||sd_worker>=0)&&timeout>200)timeout=200;
         if(((music_pid>=0&&!music_pause)||volume_extended)&&timeout>500)timeout=500;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
-        if(!smart_asleep&&update_pid<0&&fm_worker<0)timeout=limit_wait(timeout,now,next_media);
-        if(!smart_asleep&&!power_stage&&!busy&&media_online==1&&(page==MUSIC||page==BOOKS))
+        if(!smart_asleep&&update_pid<0&&fm_worker<0&&sd_worker<0)timeout=limit_wait(timeout,now,next_media);
+        if(!smart_asleep&&!power_stage&&!busy&&!down&&!pending&&media_online==1&&(page==MUSIC||page==BOOKS))
             timeout=limit_wait(timeout,now,next_library);
         if(power_allow&&!power_failed&&allow_backlight&&!busy&&now>=0&&last_input>=0&&backlight_dir[0]){
             long dim=page==READER?(saver?90:180):(saver?25:60);
@@ -2269,7 +2296,7 @@ static int native(const char *input) {
                     for(int j=0;j<16;j++)if(read(fd,discarded,sizeof(discarded))<=0)break;
                     (void)update_clock(&clock_changed);render();present(&b);continue;
                 }
-                int blocked=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||down||pending;
+                int blocked=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||sd_worker>=0||down||pending;
                 if(!blocked&&smart_allow&&smart_unlocked()&&suspend_key_released(power_fd)){
                     book_save();
                     if((!book_file||!book_allow_save||!book_save_error)&&power_wake()){
@@ -2370,6 +2397,7 @@ static int native(const char *input) {
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
     if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
+    if(sd_worker>=0){while(waitpid(sd_worker,NULL,0)<0&&errno==EINTR){}sd_worker=-1;}
     if(fm_worker>=0){(void)kill(fm_worker,SIGTERM);while(waitpid(fm_worker,NULL,0)<0&&errno==EINTR){}close(fm_worker_fd);fm_worker=-1;}
     for(int k=0;k<volume_count;k++)if(volume_inputs[k].fd>=0)close(volume_inputs[k].fd);
     if(power_fd>=0)close(power_fd);

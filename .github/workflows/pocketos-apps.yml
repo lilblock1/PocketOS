@@ -137,7 +137,7 @@ jobs:
           cp tools/provision-r1-update-trust.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/r1-update-preflight.sh tools/prepare-r1-updater-bootstrap.py bootstrap-kit/tools/
           cp tools/finalize-r1-bootstrap.sh bootstrap-kit/
           cp apps/pack-update.py bootstrap-kit/apps/
-          cp target-app-output/pocketos-shell target-app-output/pocketos-start target-app-output/pocketos-update target-app-output/pocketos-recovery-arm target-app-output/pocketos-wifi bootstrap-kit/target-apps/
+          cp target-app-output/pocketos-shell target-app-output/pocketos-start target-app-output/pocketos-update target-app-output/pocketos-recovery-arm target-app-output/pocketos-wifi target-app-output/pocketos-sd bootstrap-kit/target-apps/
           cp target-app-output/pocketos-recovery-arm bootstrap-kit/
           cp docs/updater-bootstrap-local.md bootstrap-kit/README.md
           printf '%s\n' "${GITHUB_SHA}" > bootstrap-kit/SOURCE_COMMIT

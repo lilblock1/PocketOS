@@ -14,6 +14,7 @@ REPLACEMENTS = {
     "pocketos-update":"usr/bin/pocketos-update",
     "pocketos-start":"usr/bin/pocketos-start",
     "pocketos-wifi":"usr/bin/pocketos-wifi",
+    "pocketos-sd":"usr/bin/pocketos-sd",
     "pocketos-recovery-arm":"usr/sbin/pocketos-recovery-arm",
 }
 
