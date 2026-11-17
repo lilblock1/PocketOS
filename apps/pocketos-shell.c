@@ -1408,7 +1408,7 @@ static void render(void) {
         }
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
         text_at(12,213,music_pid>=0?(music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
-        if(music_count>4){char range[32];snprintf(range,sizeof(range),"%d-%d / %d",music_top+1,music_top+4<music_count?music_top+4:music_count,music_count);text_at(12,228,range,1,muted);}
+        if(music_count>4){char range[48];snprintf(range,sizeof(range),"%d-%d / %d",music_top+1,music_top+4<music_count?music_top+4:music_count,music_count);text_at(12,228,range,1,muted);}
         list_scrollbar(82,116,music_top,music_count,4);
         rounded(12,240,104,33,card);rounded(124,240,104,33,card);
         reader_print(34,249,music_pid>=0?(music_pause?"Resume":"Pause"):"Play",15,fg,card,0,0,114);
