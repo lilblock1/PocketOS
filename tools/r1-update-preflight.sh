@@ -2,7 +2,11 @@
 # Physical read-only verification. No reboot, mounts or MTD writes.
 set -eu
 [ "$(id -u)" = 0 ]
-grep -Fxq NAME=PocketOS /etc/pocketos-release
+case "$#:${1:-}" in
+    0:) grep -Fxq NAME=PocketOS /etc/pocketos-release ;;
+    1:--bootstrap) : ;; # The first PocketOS-only install can start from stock userspace.
+    *) echo "Usage: r1-update-preflight.sh [--bootstrap]" >&2; exit 2 ;;
+esac
 [ "$(uname -r)" = 4.4.94-sonix ]
 grep -Eq '(^| )root=/dev/mtdblock_bbt_ro2( |$)' /proc/cmdline
 for entry in 'mtd1: 00500000 00020000 "kernel"' 'mtd2: 02d00000 00020000 "rootfs"' 'mtd3: 00500000 00020000 "kernel2"' 'mtd4: 01800000 00020000 "rootfs2"' 'mtd5: 00080000 00020000 "ota"'; do

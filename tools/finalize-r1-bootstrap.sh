@@ -21,7 +21,7 @@ echo "fa36d95736555dba9ce95e33a29227668270d524f1cb419a751506f59d10a074  $preview
 command -v 7z >/dev/null
 work=$(mktemp -d "$HOME/pocketos-bootstrap.XXXXXX")
 sudo python3 tools/prepare-r1-updater-bootstrap.py "$preview" target-apps "$work/root"
-keydir="$HOME/.local/share/pocketos-signing"
+keydir="$HOME/.local/share/pocketos-only-signing"
 mkdir -p -m 700 "$keydir"
 test ! -L "$keydir"
 chmod 700 "$keydir"

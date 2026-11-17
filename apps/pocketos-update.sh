@@ -45,7 +45,7 @@ if [ "$fixture" -eq 0 ]; then
 fi
 [ -d "$root" ] && [ ! -L "$root" ] || die "Unsafe SD root"
 cd "$root" || die "Cannot enter SD root"
-store="./PocketOS-updates"
+store="./PocketOS-system-updates"
 [ ! -L "$store" ] || die "Unsafe update directory"
 if [ "$mode" = status ]; then
     [ "$#" -eq 0 ] || die "Unexpected arguments"
@@ -116,8 +116,8 @@ verify_manifest(){
     openssl dgst -sha256 -verify "$key" -signature "$2" "$1" >/dev/null 2>&1 || die "Signature invalid"
     awk -v fixture="$fixture" '
       NR==1 {
-        if(NF!=4||($1!="POCKETOS-R1-FW-1"&&(fixture!=1||$1!="POCKETOS-SD-1"))||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
-        firmware=($1=="POCKETOS-R1-FW-1");
+        if(NF!=4||($1!="POCKETOS-R1-ROOTFS-1"&&(fixture!=1||$1!="POCKETOS-SD-1"))||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
+        firmware=($1=="POCKETOS-R1-ROOTFS-1");
         next
       }
       {
@@ -175,7 +175,7 @@ if [ "$mode" = install ]; then
     verify_payload "$version_dir"
     progress 35
     read -r magic channel target seq < "$version_dir/manifest"
-    [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" = "$current" ] &&
+    [ "$magic" = POCKETOS-R1-ROOTFS-1 ] && [ "$seq" = "$current" ] &&
         [ "$seq" = "$install_seq" ] && [ "$channel" = "$install_channel" ] ||
         die "Selected firmware changed; check again"
     # Match the preserved physical recovery backups, not just partition labels.
@@ -284,11 +284,11 @@ case "$mode" in
         case "$tag" in
             stable-latest)
                 expected_channel=stable
-                source="https://github.com/lilblock1/PocketOS/releases/latest/download" ;;
+                source="https://github.com/lilblock1/PocketOS/releases/download/pocketos-stable-latest" ;;
             test-latest|test-[0-9]*)
                 case "$tag" in *[!a-zA-Z0-9._-]*) die "Invalid tag";; esac
                 expected_channel=test
-                source="https://github.com/lilblock1/PocketOS/releases/download/$tag" ;;
+                source="https://github.com/lilblock1/PocketOS/releases/download/pocketos-$tag" ;;
             *) die "Invalid update channel" ;;
         esac ;;
     *) die "Unknown operation";;
@@ -351,7 +351,7 @@ read -r magic channel target seq < "$work/manifest"
 [ -z "$expected_seq" ] || [ "$seq" = "$expected_seq" ] || die "Release changed; check again"
 # Offer a retry of the same already-staged firmware, without accepting a
 # changed manifest, a rollback, or a stale installed sequence.
-if [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" -eq "$current" ] &&
+if [ "$magic" = POCKETOS-R1-ROOTFS-1 ] && [ "$seq" -eq "$current" ] &&
    [ "$seq" -eq "$high" ] && [ "$seq" -gt "$installed" ]; then
     staged="$store/versions/$seq"
     [ -d "$staged" ] && [ ! -L "$staged" ] || die "Selected firmware unavailable"
@@ -370,7 +370,7 @@ if [ "$check_only" -eq 1 ]; then
     exit 0
 fi
 [ "$seq" -gt "$floor" ] || die "Update is not newer than installed or staged firmware"
-if [ "$fixture" -eq 0 ] && [ "$magic" = POCKETOS-R1-FW-1 ]; then
+if [ "$fixture" -eq 0 ] && [ "$magic" = POCKETOS-R1-ROOTFS-1 ]; then
     battery_ok || die "Charge battery to at least 50%"
 fi
 [ ! -e "$store/versions/$seq" ] && [ ! -L "$store/versions/$seq" ] || die "Version already exists (inspect interrupted run)"
@@ -404,7 +404,7 @@ sync
 mv "$work/payload" "$store/versions/$seq"
 select_version "$seq" "$current" "$seq"
 selection "$seq" "$current"
-if [ "$magic" = POCKETOS-R1-FW-1 ]; then ready "$seq" "$channel"; fi
+if [ "$magic" = POCKETOS-R1-ROOTFS-1 ]; then ready "$seq" "$channel"; fi
 phase DONE
 progress 100
 echo "Signed SD update staged and selected: $seq. Installation requires separate confirmation."

@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <unistd.h>
 #include <mtd/mtd-user.h>
 
@@ -53,7 +54,8 @@ int main(int argc,char **argv){
                !memcmp(text,approval,sizeof(approval)-1);
         close(m);if(!ok)return fail("untrusted recovery approval");
     }
-    if(lstat("/dev/mtd5",&st)||!S_ISCHR(st.st_mode))return fail("expected MTD character device");
+    if(lstat("/dev/mtd5",&st)||!S_ISCHR(st.st_mode)||
+       major(st.st_rdev)!=90||minor(st.st_rdev)!=10)return fail("expected MTD5 character device");
     int fd=open("/dev/mtd5",(write_flag?O_RDWR:O_RDONLY)|O_CLOEXEC|O_NOFOLLOW);
     if(fd<0)return fail("cannot open boot-selection partition");
     struct mtd_info_user info;

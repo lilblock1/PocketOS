@@ -42,6 +42,23 @@ def main():
     signer = subprocess.check_output(["openssl", "pkey", "-in", str(a.key.resolve()), "-pubout", "-outform", "DER"])
     if embedded != signer:
         p.error("Signing key does not match embedded update trust")
+    # This channel is exclusively the independent PocketOS userspace. A signed
+    # hybrid/reference image must never silently bring back the Sonix launcher.
+    listing = subprocess.check_output(["unsquashfs", "-ls", str(a.rootfs)], text=True)
+    paths = {line.removeprefix("squashfs-root/") for line in listing.splitlines()
+             if line.startswith("squashfs-root/")}
+    forbidden = {"sonix_player", "sonix_launch", "sys_server", "recoveryd"}
+    if any(Path(name).name in forbidden for name in paths):
+        p.error("Sonix userspace or recovery daemon present in primary rootfs")
+    for name in ("usr/bin/pocketos-shell", "usr/bin/pocketos-start",
+                 "usr/bin/pocketos-update", "usr/sbin/pocketos-recovery-arm",
+                 "etc/init.d/S95pocketos"):
+        if name not in paths:
+            p.error("Missing independent PocketOS service: " + name)
+    if not {"NAME=PocketOS", "TARGET=hiby-r1"}.issubset(release):
+        p.error("Wrong PocketOS identity")
+    if read_image_file("etc/pocketos/recovery-enable") != b"POCKETOS-R1-RECOVERY-1\n":
+        p.error("Reviewed recovery handoff approval missing")
     candidate = json.loads(a.candidate.read_text())
     a.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".pocketos-release-", dir=a.output.parent) as temp:

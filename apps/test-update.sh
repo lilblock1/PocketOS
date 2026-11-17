@@ -5,6 +5,9 @@ packer=$2
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/sd"
+# Legacy hybrid sequence history must not block the independent channel.
+mkdir "$tmp/sd/PocketOS-updates"
+printf '500 400 500\n' > "$tmp/sd/PocketOS-updates/selection"
 if [ "$#" -ge 3 ]; then
     mkdir "$tmp/metadata"
     ln -s "$3" "$tmp/metadata/stat"
@@ -18,6 +21,7 @@ python3 "$packer" --sequence 2 --key "$tmp/private.pem" --output "$tmp/v2" "$tmp
 run(){ sh "$updater" --fixture "$tmp/sd" "$tmp/public.pem" "$@"; }
 run sd "$tmp/v1"
 test "$(run status)" = '1 0 1'
+test "$(cat "$tmp/sd/PocketOS-updates/selection")" = '500 400 500'
 if run sd "$tmp/v1"; then exit 1; fi
 printf 'tampered\n' > "$tmp/v2/data-test"
 if run sd "$tmp/v2"; then exit 1; fi
@@ -28,7 +32,7 @@ test "$(run status)" = '2 1 2'
 run rollback
 test "$(run status)" = '1 2 2'
 if run sd "$tmp/v2"; then exit 1; fi
-test -f "$tmp/sd/PocketOS-updates/versions/2/data-test"
+test -f "$tmp/sd/PocketOS-system-updates/versions/2/data-test"
 
 # Fixed SD inbox and structured UI protocol; stage without executing payloads.
 python3 "$packer" --sequence 3 --key "$tmp/private.pem" --output "$tmp/sd/PocketOS-inbox" "$tmp/data-test"
@@ -73,6 +77,11 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 [ -n "$out" ] && [ -n "$url" ] || exit 1
+# Never follow the repository's hybrid/reference test-latest or generic latest.
+case "$url" in
+    https://github.com/lilblock1/PocketOS/releases/download/pocketos-test-*/*|https://github.com/lilblock1/PocketOS/releases/download/pocketos-stable-latest/*) ;;
+    *) exit 73 ;;
+esac
 cp "$POCKETOS_TEST_RELEASE/${url##*/}" "$out"
 SH
 chmod 755 "$tmp/shims/curl"
@@ -103,7 +112,7 @@ cp "$tmp/stable7/manifest" "$tmp/stable7/manifest.sig" "$tmp/checkonly/"
 POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/check.log"
 grep -Fx 'POCKETOS AVAILABLE 7' "$tmp/check.log"
 test "$(run status)" = '5 4 5'
-test ! -e "$tmp/sd/PocketOS-updates/versions/7"
+test ! -e "$tmp/sd/PocketOS-system-updates/versions/7"
 if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui check-github test-latest > "$tmp/wrong-channel.log"; then exit 1; fi
 grep -Fx 'POCKETOS ERROR Signed manifest channel mismatch' "$tmp/wrong-channel.log"
 if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui github stable-latest 8 > "$tmp/changed.log"; then exit 1; fi
@@ -118,6 +127,13 @@ grep -Fx 'POCKETOS AVAILABLE 0' "$tmp/old.log"
 dd if=/dev/zero of="$tmp/pocketos-r1.upt" bs=2048 count=1 2>/dev/null
 printf '{}\n' > "$tmp/data-r1-report.json"
 python3 "$packer" --firmware --channel test --sequence 8 --key "$tmp/private.pem" --output "$tmp/fw8" "$tmp/pocketos-r1.upt" "$tmp/data-r1-report.json"
+# Even an authentic signature on the legacy hybrid firmware schema is rejected.
+mkdir "$tmp/legacy"
+sed '1s/POCKETOS-R1-ROOTFS-1/POCKETOS-R1-FW-1/' "$tmp/fw8/manifest" > "$tmp/legacy/manifest"
+openssl dgst -sha256 -sign "$tmp/private.pem" -out "$tmp/legacy/manifest.sig" "$tmp/legacy/manifest"
+if run --ui sd "$tmp/legacy" > "$tmp/legacy.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Invalid signed manifest format' "$tmp/legacy.log"
+test "$(run status)" = '7 5 7'
 run sd "$tmp/fw8"
 test "$(run status)" = '8 7 8'
 if python3 "$packer" --firmware --sequence 9 --key "$tmp/private.pem" --output "$tmp/invalid" "$tmp/data-test"; then exit 1; fi
@@ -138,6 +154,6 @@ run --ui sd "$tmp/fw9" > "$tmp/fw-ready.log"
 grep -Fx 'POCKETOS READY 9 stable' "$tmp/fw-ready.log"
 run --ui sd "$tmp/fw9" > "$tmp/fw-retry-sd.log"
 grep -Fx 'POCKETOS READY 9 stable' "$tmp/fw-retry-sd.log"
-printf x | dd of="$tmp/sd/PocketOS-updates/versions/9/pocketos-r1.upt" bs=1 conv=notrunc 2>/dev/null
+printf x | dd of="$tmp/sd/PocketOS-system-updates/versions/9/pocketos-r1.upt" bs=1 conv=notrunc 2>/dev/null
 if run --ui sd "$tmp/fw9" > "$tmp/fw-bad-retry.log"; then exit 1; fi
 if grep -q '^POCKETOS READY ' "$tmp/fw-bad-retry.log"; then exit 1; fi

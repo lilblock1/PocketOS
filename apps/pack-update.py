@@ -19,7 +19,7 @@ if not 1<=a.sequence<=999999999 or not 1<=len(a.files)<=64:
     p.error("Invalid sequence or file count")
 if a.firmware and (len(a.files)!=2 or {f.name for f in a.files}!={"pocketos-r1.upt","data-r1-report.json"}):
     p.error("Firmware requires the reviewed UPT and report")
-magic="POCKETOS-R1-FW-1" if a.firmware else "POCKETOS-SD-1"
+magic="POCKETOS-R1-ROOTFS-1" if a.firmware else "POCKETOS-SD-1"
 rows=[f"{magic} {a.channel} r1-mipsel {a.sequence}"]
 total=0
 names=set()

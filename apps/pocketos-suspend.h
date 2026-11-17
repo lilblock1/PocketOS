@@ -48,6 +48,8 @@ static int smart_jack(void){
 static int smart_keep_audio(int route,int jack){return route==0&&jack==1;}
 static int smart_unlocked(void){
     struct stat st;
+    if(lstat("/run/pocketos-update.lock",&st)==0||errno!=ENOENT)return 0;
+    if(lstat("/mnt/sd_0/PocketOS-system-updates/.lock",&st)==0||errno!=ENOENT)return 0;
     if(lstat("/mnt/sd_0/PocketOS-updates/.lock",&st)==0||errno!=ENOENT)return 0;
     if(lstat("/run/pocketos-wifi/start.lock",&st)==0||errno!=ENOENT)return 0;
     return 1;
