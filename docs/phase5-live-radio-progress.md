@@ -47,6 +47,11 @@ selection; a Disconnect button is also being added to Sound settings. These UI
 changes still need physical verification. No persistent radio setup or firmware
 update has been installed by this work; live changes remain in RAM.
 
+Follow-up testing found that the earlier one-off connection had not been trusted;
+its temporary device entry disappeared after disconnecting. Pair and Connect now
+both explicitly trust the selected device, and audio selection verifies Trusted
+as well as Connected. A fresh pair/disconnect/reconnect cycle remains to be tested.
+
 After Bluetooth is fixed, the requested next feature is on-device online and
 microSD updates, with recovery/bootloader preserved. Then measure and optimize
 memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.

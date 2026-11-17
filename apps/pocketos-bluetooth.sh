@@ -33,6 +33,7 @@ printf '%s\n' "$show" | grep -q 'Powered: yes' || { echo 'RADIO_ERROR=bt-power';
 select_audio(){
     info=$(bounded 3 bluetoothctl info "$1")
     printf '%s\n' "$info" | grep -q 'Connected: yes' || { echo 'RADIO_ERROR=bt-connect'; return 1; }
+    printf '%s\n' "$info" | grep -q 'Trusted: yes' || { echo 'RADIO_ERROR=bt-trust'; return 1; }
     package=/usr/lib/pocketos/radio
     if [ -f /etc/pocketos/radio-package ]; then read -r package < /etc/pocketos/radio-package; fi
     case "$package" in /usr/lib/pocketos/radio|/run/pocketos-radio-test/package) ;; *) return 1;; esac
@@ -83,7 +84,10 @@ case "$action" in
         bounded 3 bluetoothctl trust "$1" >/dev/null
         bounded 12 bluetoothctl connect "$1"
         select_audio "$1" ;;
-    connect) bounded 12 bluetoothctl connect "$1"; select_audio "$1" ;;
+    connect)
+        bounded 3 bluetoothctl trust "$1" >/dev/null
+        bounded 12 bluetoothctl connect "$1"
+        select_audio "$1" ;;
     disconnect)
         bounded 5 bluetoothctl disconnect "$1"
         info=$(bounded 3 bluetoothctl info "$1")
