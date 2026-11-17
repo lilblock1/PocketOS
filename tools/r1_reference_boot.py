@@ -243,6 +243,110 @@ def stage_sd_guard(reference, destination, loader_script, guard_script, shell_bi
     }
 
 
+
+INTERNAL_GUI_APPS = {
+    "pocketos-shell": "usr/bin/pocketos-shell",
+    "pocketos-music": "usr/bin/pocketos-music",
+    "pocketos-wifi": "usr/bin/pocketos-wifi",
+    "pocketos-bluetooth": "usr/bin/pocketos-bluetooth",
+    "pocketos-radio-observe": "usr/bin/pocketos-radio-observe",
+    "pocketos-audio-monitor": "usr/bin/pocketos-audio-monitor",
+    "pocketos-transfer": "usr/bin/pocketos-transfer",
+}
+
+
+def stage_internal_gui(reference, output, apps, launcher_script, version):
+    """Make PocketOS the default GUI without replacing stock R1 kernel/init.
+
+    This is *not* a claim of physical hardware verification. All device
+    hardware initialization and the full original player remain unchanged.
+    """
+    if output.exists() or output.is_symlink():
+        raise ValueError("Refuse to replace an existing staged image")
+    for item in (reference,apps):
+        if not item.is_dir() or item.is_symlink():
+            raise ValueError("Invalid reference/app directory")
+    if not launcher_script.is_file() or launcher_script.is_symlink():
+        raise ValueError("Invalid default PocketOS boot script")
+    if version != "0.3.0.101":
+        raise ValueError("Firmware version is not the approved test version")
+    script=launcher_script.read_text()
+    required = (
+        "ORIGINAL=/usr/bin/sonix_player.pocketos-fallback.sh",
+        "POCKETOS=/usr/bin/pocketos-shell",
+        "--auto-input",
+        "fallback",
+    )
+    if not all(fragment in script for fragment in required):
+        raise ValueError("PocketOS-first fallback launcher is incomplete")
+    # An SD dependency would reproduce the boot regression this fixes.
+    if "/mnt/sd_0" in script or "PocketOS-try-new-ui" in script:
+        raise ValueError("Default launcher must not require the microSD")
+    base = manifest(reference)
+    for name,path in INTERNAL_GUI_APPS.items():
+        source=apps/name
+        target=reference/path
+        if not source.is_file() or source.is_symlink():
+            raise ValueError("Missing internal GUI application: "+name)
+        if target.exists() or target.is_symlink():
+            raise ValueError("Would replace existing system file: "+path)
+    root_meta=reference/"usr/resource/sonix/components/system-info.json"
+    if not root_meta.is_file() or root_meta.is_symlink():
+        raise ValueError("Missing R1 reference device identity")
+    info=json.loads(root_meta.read_text())
+    if info.get("device-name")!="HiBy R1" or info.get("OS_version")!="0.3.0.99":
+        raise ValueError("Unexpected reference R1 version or model")
+    if info.get("ota-repo")!="lilblock1/Sonix-Books":
+        raise ValueError("Reference OTA repo mismatch")
+    # Keep device files, symlinks and permissions intact.
+    shutil.copytree(reference,output,symlinks=True,copy_function=shutil.copy2)
+    fallback=output/"usr/bin/sonix_player.pocketos-fallback.sh"
+    wrapper=output/"usr/bin/sonix_player.sh"
+    if fallback.exists() or fallback.is_symlink():
+        raise ValueError("Vendor player fallback already exists")
+    shutil.copy2(wrapper,fallback)
+    shutil.copy2(launcher_script,wrapper)
+    fallback.chmod(0o755)
+    wrapper.chmod(0o755)
+    if digest(fallback)!=base["usr/bin/sonix_player.sh"]:
+        raise ValueError("Fallback is not the original vendor launcher")
+    installed={}
+    for name,path in INTERNAL_GUI_APPS.items():
+        src=apps/name
+        dest=output/path
+        if dest.parent.is_symlink():
+            raise ValueError("Unsafe symlink parent: "+path)
+        shutil.copy2(src,dest)
+        dest.chmod(0o755)
+        installed[name]={"path":path,"sha256":digest(dest),"bytes":dest.stat().st_size}
+    info["OS_version"]=version
+    # The fallback Sonix updater should also target PocketOS test releases.
+    info["ota-repo"]="lilblock1/PocketOS"
+    (output/"usr/resource/sonix/components/system-info.json").write_text(json.dumps(info,indent=4)+"\n")
+    after=manifest(output)
+    changed=[name for name in base if after.get(name)!=base[name]]
+    if changed!=["usr/bin/sonix_player.sh"]:
+        raise ValueError("Unexpected vendor startup changes: "+str(changed))
+    if digest(output/"usr/bin/sonix_player")!=base["usr/bin/sonix_player"]:
+        raise ValueError("Original player binary changed")
+    return {
+        "device":"HiBy R1","version":version,
+        "mode":"Internal PocketOS GUI is default",
+        "pocketos_internal":True,"pocketos_default_boot":True,
+        "sd_boot_marker_required":False,"vendor_gui_fallback_only":True,
+        "reference_kernel_preserved":True,"reference_module_init_preserved":True,
+        "reference_vendor_player_preserved":True,
+        "original_launcher_sha256":digest(fallback),
+        "installed_pocketos_apps":installed,
+        "ota_repository":"lilblock1/PocketOS",
+        "boot_script_sha256":digest(wrapper),
+        "physical_boot_verified":False,
+        "recovery_write_targets_verified":False,
+        "flash_partition_capacity_verified":False,
+        "notes":"The firmware starts PocketOS without SD assets; original Sonix player launches only if PocketOS cannot start.",
+    }
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("reference", type=Path)
