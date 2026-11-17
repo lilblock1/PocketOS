@@ -93,7 +93,7 @@ static char track_title[65],track_artist[65],track_album[65];
 static unsigned char cover[64*64*3];
 static int cover_ok=0;
 static unsigned music_random=0x8b21a37u;
-static int music_pending=-1, music_manual_stop=0;
+static int music_pending=-1, music_manual_stop=0,music_route=-1,music_switch=0,music_seek_paused=0;
 #define BOOK_CAP 128
 #define BOOK_ROWS 18
 #define BOOK_HISTORY 256
@@ -120,9 +120,9 @@ static pid_t fm_worker=-1;
 static int fm_worker_fd=-1,fm_worker_action;
 static unsigned fm_percent;
 static const char *music_dir="/mnt/sd_0/Music";
-static int volume=25, output=0,volume_extended=0,volume_warning=0;
+static int volume=25, output=3,volume_extended=0,volume_warning=0;
 static int music_keep_audio(int route,int jack);
-static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
+static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH","AUTO"};
 static char clock_label[16]="--:--";
 static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
@@ -168,10 +168,11 @@ static void load_preferences(void) {
         if(!strcmp(version,"POCKETOS1")) n=fscanf(f,"%d %d %d %d %c",&a,&b,&c,&d,&extra)==4;
         if(!strcmp(version,"POCKETOS2")) n=fscanf(f,"%d %d %d %d %d %c",&a,&b,&c,&d,&z,&extra)==5;
         if(!strcmp(version,"POCKETOS3")) n=fscanf(f,"%d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&extra)==7;
-        if(!strcmp(version,"POCKETOS4")) n=fscanf(f,"%d %d %d %d %d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&br,&sh,&rp,&pl,&extra)==11;
+        if(!strcmp(version,"POCKETOS4")||!strcmp(version,"POCKETOS5")) n=fscanf(f,"%d %d %d %d %d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&br,&sh,&rp,&pl,&extra)==11;
+        if(n&&strcmp(version,"POCKETOS5")&&o==0)o=3;
     }
     fclose(f);
-    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6&&v>=0&&v<=100&&o>=0&&o<3&&
+    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6&&v>=0&&v<=100&&o>=0&&o<4&&
        (br==-1||(br>=10&&br<=100))&&sh>=0&&sh<=1&&rp>=0&&rp<=2&&pl>=0&&pl<=1){
         brightness_saved=br;music_shuffle=sh;music_repeat=rp;music_list=pl;
         theme=a;clock24=b;readable=c;saver=d;timezone_choice=z;volume=v>VOL_BOOT_MAX?VOL_BOOT_MAX:v;volume_extended=volume_warning=0;output=o;apply_timezone();
@@ -184,7 +185,7 @@ static int save_preferences(void) {
     if(n<0||(size_t)n>=sizeof(tmp))return 0;
     int fd=mkstemp(tmp);if(fd<0)return 0;
     FILE *f=fdopen(fd,"w");if(!f){close(fd);unlink(tmp);return 0;}
-    int ok=fprintf(f,"POCKETOS4 %d %d %d %d %d %d %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice,vol_clamp(volume,0),output,brightness_saved,music_shuffle,music_repeat,music_list)>0;
+    int ok=fprintf(f,"POCKETOS5 %d %d %d %d %d %d %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice,vol_clamp(volume,0),output,brightness_saved,music_shuffle,music_repeat,music_list)>0;
     if(fflush(f)!=0||fsync(fd)!=0)ok=0;
     if(fclose(f)!=0)ok=0;
     if(ok&&rename(tmp,config_path)==0){
@@ -643,7 +644,7 @@ static int music_volume_state(void){
     unsigned char cmd[2]={volume_extended?VOL_ENABLE:VOL_DISABLE,(unsigned char)volume};
     if(music_fd>=0&&write(music_fd,cmd,sizeof(cmd))==(ssize_t)sizeof(cmd))return 1;
     /* If consent/revocation or gain cannot be delivered, stop audio. */
-    music_pending=-1;music_manual_stop=1;music_start_at=music_pos;
+    music_pending=-1;music_switch=music_seek_paused=0;music_manual_stop=1;music_start_at=music_pos;
     if(music_fd>=0){close(music_fd);music_fd=-1;}
     (void)kill(music_pid,SIGTERM);return 0;
 }
@@ -659,7 +660,17 @@ static void volume_revoke(void){
     volume_extended=0;volume=vol_clamp(volume,0);(void)music_volume_state();
 }
 static void music_start(void);
-static int music_keep_audio(int route,int jack){return route==2?bt_audio_ready():smart_keep_audio(route,jack);}
+/* Never guess a USB route, or use Bluetooth merely because the radio is on. */
+static int audio_auto_route(int jack,int bt){return jack==1?0:bt?2:-1;}
+static int audio_route(int preference,int jack){
+    if(preference==3)return audio_auto_route(jack,jack==1?0:bt_audio_ready());
+    return (preference==2?bt_audio_ready():smart_keep_audio(preference,jack))?preference:-1;
+}
+static int music_keep_audio(int route,int jack){return audio_route(route,jack)>=0;}
+static const char *audio_active_label(void){
+    int route=music_pid>=0?music_route:audio_route(output,smart_jack());
+    return route>=0&&route<3?outputs[route]:"NO AUDIO DEVICE";
+}
 static void music_select(int idx){
     if(idx<0||idx>=music_count)return;
     music_index=idx;music_details();
@@ -693,27 +704,34 @@ static int music_reap(void){
     if(music_pid<0)return 0;
     int status=0;pid_t n=waitpid(music_pid,&status,WNOHANG);
     if(n==0||(n<0&&errno==EINTR))return 0;
-    int was_paused=music_pause;
+    int was_paused=music_pause,old_route=music_route;
     music_error=n<0||!WIFEXITED(status)?1:WEXITSTATUS(status);
     if(music_fd>=0)close(music_fd);
     if(music_report>=0){(void)music_read_report();close(music_report);}
-    music_report=-1;music_fd=-1;music_pid=-1;music_pause=0;
-    if(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack()))){music_pending=-1;music_start_at=music_pos;}
+    music_report=-1;music_fd=-1;music_pid=-1;music_pause=0;music_route=-1;
+    int switching=music_switch;music_switch=0;
+    int seek_paused=music_seek_paused;music_seek_paused=0;
     if(music_manual_stop){
         music_pos=music_start_at;
         music_pending=-1;
     }else if(music_pending>=0){
         int idx=music_pending;music_pending=-1;
-        if(idx>=0&&idx<music_count){music_select(idx);music_pos=music_start_at;music_start();}
-    }else if(!music_error&&!(smart_asleep&&(was_paused||!music_keep_audio(output,smart_jack())))){
+        if(idx>=0&&idx<music_count){music_select(idx);music_pos=music_start_at;music_error=0;if(!seek_paused)music_start();}
+    }else if(switching||(output==3&&music_error&&old_route>=0&&audio_route(output,smart_jack())!=old_route)){
+        /* Use the last decoder report, never restart a different track. */
+        music_start_at=music_pos;music_error=0;
+        if(!was_paused&&switching!=2&&music_keep_audio(output,smart_jack()))music_start();
+        else if(!music_keep_audio(output,smart_jack()))music_error=12;
+    }else if(!music_error&&!was_paused&&music_keep_audio(output,smart_jack())){
         int next=music_next_index();if(next>=0){music_start_at=0;music_select(next);music_start();}
-    }
+    }else if(was_paused||music_error){music_start_at=music_pos;}
     music_manual_stop=0;output_busy=0;return 1;
 }
 static void music_start(void){
     if(music_pid>=0)return;
     if(!allow_audio){music_error=2;return;}
-    if(!music_keep_audio(output,smart_jack())){music_error=12;return;}
+    int route=audio_route(output,smart_jack());
+    if(route<0){music_error=12;return;}
     if(music_count<1||access("/usr/bin/pocketos-music",X_OK)!=0){music_error=1;return;}
     if(sd_worker>=0||media_stale||!hw_sd_mounted("")){music_error=15;return;}
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
@@ -730,14 +748,14 @@ static void music_start(void){
     if(pid==0){
         close(f[1]);if(dup2(f[0],STDIN_FILENO)<0)_exit(126);close(f[0]);
         close(r[0]);char fdtext[16];snprintf(fdtext,sizeof(fdtext),"%d",r[1]);
-        if(output==2)execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,"--bluetooth",(char*)NULL);
+        if(route==2)execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,"--bluetooth",(char*)NULL);
         else execl("/usr/bin/pocketos-music","pocketos-music","--allow-play",path,v,"--controlled","--start",seek,"--progress-fd",fdtext,(char*)NULL);
         _exit(127);
     }
     close(f[0]);close(r[1]);
     if(pid<0){close(f[1]);close(r[0]);music_error=1;return;}
     music_report=r[0];
-    music_pid=pid;music_fd=f[1];music_pause=0;music_error=0;music_manual_stop=0;music_start_at=0;
+    music_pid=pid;music_fd=f[1];music_route=route;music_pause=0;music_error=0;music_manual_stop=0;music_start_at=0;
     if(volume_extended)(void)music_volume_state();
 }
 /* If pause cannot be queued, stop the child instead of permitting unintended
@@ -754,8 +772,24 @@ static void smart_audio_apply(int jack){
         (void)kill(music_pid,SIGTERM);
     }
 }
-static void smart_audio_guard(void){
-    if((music_pid>=0&&!music_pause)||volume_extended)smart_audio_apply(smart_jack());
+/* Stop/reap the old decoder before opening the new route. No overlapping
+ * output streams and no automatic start from an idle or paused state. */
+static int music_auto_apply(int desired){
+    if(music_pid<0||music_fd<0||music_manual_stop||music_switch||music_pending>=0||desired==music_route)return 0;
+    music_switch=music_pause||desired<0?2:1;
+    volume_warning=volume_extended=0;volume=vol_clamp(volume,0);
+    int sent=music_send(202);close(music_fd);music_fd=-1;
+    if(!sent)(void)kill(music_pid,SIGTERM);
+    return 1;
+}
+static int smart_audio_guard(void){
+    int jack=smart_jack();
+    if(output==3){
+        int desired=audio_route(output,jack);
+        if(music_auto_apply(desired))return 1;
+        if(desired<0&&volume_extended)volume_revoke();
+    }else if((music_pid>=0&&!music_pause)||volume_extended)smart_audio_apply(jack);
+    return 0;
 }
 static int smart_audio_test(void){
     int f[2];if(pipe(f))return 10;
@@ -766,14 +800,21 @@ static int smart_audio_test(void){
     smart_audio_apply(0);if(!music_pause||music_pending!=-1||read(f[0],&cmd,1)!=1||cmd!=200)return 13;
     smart_audio_apply(1);if(!music_pause||read(f[0],&cmd,1)>=0||errno!=EAGAIN)return 14;
     music_pause=0;smart_audio_apply(-1);if(!music_pause||read(f[0],&cmd,1)!=1||cmd!=200)return 15;
-    close(f[0]);close(f[1]);music_pid=-1;music_fd=-1;music_pause=0;return 0;
+    if(audio_auto_route(1,1)!=0||audio_auto_route(0,1)!=2||audio_auto_route(-1,0)!=-1)return 16;
+    output=3;music_route=0;music_pause=0;music_pending=-1;
+    if(!music_auto_apply(2)||music_switch!=1||music_fd!=-1||read(f[0],&cmd,1)!=1||cmd!=202)return 17;
+    close(f[0]);music_pid=-1;music_switch=0;
+    if(pipe(f))return 18;
+    music_pid=getpid();music_fd=f[1];music_route=2;music_pause=1;
+    if(!music_auto_apply(0)||music_switch!=2||read(f[0],&cmd,1)!=1||cmd!=202)return 19;
+    close(f[0]);music_pid=-1;music_route=-1;music_switch=music_pause=0;output=0;return 0;
 }
 /* Changing tracks never carries a pending seek from the prior track. */
 static void music_choose_track(int idx,int play){
     if(idx<0||idx>=music_count)return;
-    music_start_at=0;
+    if(music_pid>=0&&idx==music_index&&music_pending<0)return;
+    music_switch=music_seek_paused=0;music_start_at=0;
     if(music_pid>=0){
-        if(idx==music_index&&music_pending<0)return;
         music_manual_stop=0;music_pending=idx;
         if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}
         return;
@@ -784,10 +825,11 @@ static void music_choose_track(int idx,int play){
 static void music_action(int action){
     if(action==1){
         if(music_pid<0)music_start();
+        else if(music_fd<0)return;
         else if(music_pause&&!music_keep_audio(output,smart_jack()))music_error=12;
         else if(music_send(music_pause?201:200)){music_pause=!music_pause;music_error=0;}
     } else if(action==2){
-        volume_revoke();music_pending=-1;music_start_at=0;music_manual_stop=1;
+        music_switch=music_seek_paused=0;volume_revoke();music_pending=-1;music_start_at=0;music_manual_stop=1;
         if(music_pid>=0&&music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}
         else if(music_pid<0){music_pos=0;music_error=0;music_manual_stop=0;}
     } else if(music_count){
@@ -801,7 +843,7 @@ static const char *music_error_text(int error){
     case 2:return "PLAYBACK LOCKED";
     case 10:return "AUDIO DECODER MISSING";
     case 11:return "INVALID AUDIO FILE";
-    case 12:return output==2?"BLUETOOTH NOT CONNECTED":output==1?"USB OUTPUT UNAVAILABLE":"CONNECT HEADPHONES";
+    case 12:return output==3?"CONNECT AN AUDIO DEVICE":output==2?"BLUETOOTH NOT CONNECTED":output==1?"USB OUTPUT UNAVAILABLE":"CONNECT HEADPHONES";
     case 13:return "AUDIO ROUTE FAILED";
     case 14:return "ALSA OUTPUT FAILED";
     case 15:return "MICROSD NOT AVAILABLE";
@@ -813,7 +855,7 @@ static void music_seek(int percent){
     uint32_t sec=(uint32_t)((uint64_t)music_length*(unsigned)percent/100);
     if(sec>=music_length)sec=music_length-1;
     music_start_at=sec;music_pos=sec;
-    if(music_pid>=0){music_manual_stop=0;music_pending=music_index;if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}}
+    if(music_pid>=0){music_seek_paused=music_pause||music_switch==2;music_switch=0;music_manual_stop=0;music_pending=music_index;if(music_fd>=0){(void)music_send(202);close(music_fd);music_fd=-1;}}
     /* Seeking an idle track sets its next start position without autoplay. */
 }
 static int book_kind(const char *name){
@@ -1143,7 +1185,7 @@ static int media_probe(void){
         /* The old card may have disappeared. Do not save through stale files. */
         if(book_file){fclose(book_file);book_file=NULL;book_close();if(page==READER)page=BOOKS;}
         if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
-        if(music_pid>=0){music_pending=-1;music_manual_stop=1;music_start_at=0;
+        if(music_pid>=0){music_pending=-1;music_switch=music_seek_paused=0;music_manual_stop=1;music_start_at=0;
             if(music_fd>=0){close(music_fd);music_fd=-1;}(void)kill(music_pid,SIGTERM);}
         music_count=music_top=music_index=0;music_details();book_count=book_top=book_index=0;
         fm_close();fm_panel=fm_confirm=0;
@@ -1598,7 +1640,7 @@ static void render(void) {
             text_at(21,y+9,name,1,fg);
         }
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
-        text_at(12,213,music_pid>=0?(music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
+        text_at(12,213,music_pid>=0?(music_switch?"SWITCHING OUTPUT":music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?audio_active_label():"PLAYBACK LOCKED",1,mint);
         if(music_count>4){char range[48];snprintf(range,sizeof(range),"%d-%d / %d",music_top+1,music_top+4<music_count?music_top+4:music_count,music_count);text_at(12,228,range,1,muted);}
         list_scrollbar(82,116,music_top,music_count,4);
         rounded(12,240,104,33,card);rounded(124,240,104,33,card);
@@ -1726,7 +1768,7 @@ static void render(void) {
         if(volume_extended)rect(24+192*VOL_NORMAL/VOL_MAX,157,2,18,fg);
         text_at(21,188,volume_extended?"EXTENDED RANGE - CAUTION":"100% RECOMMENDED LIMIT",1,muted);
         rounded(12,213,216,49,card);
-        text_at(21,223,output_busy?"STOP MUSIC TO CHANGE":"OUTPUT PREFERENCE",1,muted);
+        text_at(21,223,output_busy?"STOP MUSIC TO CHANGE":output==3?audio_active_label():"OUTPUT PREFERENCE",1,muted);
         text_at(21,239,outputs[output],2,fg);
         if(output==2){rounded(145,235,76,23,edge);text_at(150,243,"DISCONNECT",1,mint);}
         rounded(12,265,216,23,card);text_at(21,272,volume_extended?"DISABLE HIGH VOLUME":"ENABLE HIGH VOLUME",1,mint);
@@ -1855,7 +1897,7 @@ static int change_output(void){
     /* The active decoder owns its route. Do not change the preference while
        it is playing/paused, which previously made UI and hardware disagree. */
     if(music_pid>=0){output_busy=1;return 0;}
-    output_busy=0;volume_revoke();output=(output+1)%3;
+    output_busy=0;volume_revoke();output=(output+1)%4;
     save_error=!save_preferences();return 1;
 }
 static void set_volume_target(int v){
@@ -2218,7 +2260,7 @@ static int native(const char *input) {
     }
     render();present(&b);
     long long last_input=mono_ms(),next_sample=last_input+60000;
-    long long next_media=last_input,next_library=last_input+45000;
+    long long next_media=last_input,next_library=last_input+45000,next_audio=last_input;
     int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
@@ -2231,7 +2273,8 @@ static int native(const char *input) {
         if(!smart_asleep&&power_allow&&now>=0&&last_input>=0&&!down&&!pending&&backlight_dir[0])
             power_idle(idle_target((now-last_input)/1000,saver,page==READER,busy,power_blank));
         int report=music_read_report();
-        if((music_pid>=0&&!music_pause)||volume_extended)smart_audio_guard();
+        int route_changed=0;
+        if((music_pid>=0||volume_extended)&&now>=0&&now>=next_audio){route_changed=smart_audio_guard();next_audio=now+500;}
         int reaped=music_reap();
         int book_changed=smart_asleep?0:book_prepare_reap(),fm_changed=fm_poll_transfer();
         int radio_changed=smart_asleep?0:radio_poll(),update_changed=smart_asleep?0:update_poll(),sample_changed=0;
@@ -2262,13 +2305,13 @@ static int native(const char *input) {
         int timeout=smart_asleep?0:update_clock(&clock_changed);
         if(power_stage)timeout=saver?60000:30000;
         if(!power_stage&&((book_changed&&(page==BOOKS||page==READER))||(radio_changed&&(page==WIFIUI||page==BTUI))||
-              (update_changed&&page==UPDATES)||(fm_changed&&page==FILES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
+              (update_changed&&page==UPDATES)||(fm_changed&&page==FILES)||((report||reaped||route_changed)&&(page==MUSIC||page==NOWPLAYING||page==SOUND))||
               media_changed||(page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(radio_wifi_wait&&timeout>250)timeout=250;
         if(update_pid>=0&&timeout>500)timeout=500;
         if((book_prepare_pid>=0||fm_worker>=0||sd_worker>=0)&&timeout>200)timeout=200;
-        if(((music_pid>=0&&!music_pause)||volume_extended)&&timeout>500)timeout=500;
+        if((music_pid>=0||volume_extended)&&timeout>500)timeout=500;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
         if(!smart_asleep&&update_pid<0&&fm_worker<0&&sd_worker<0)timeout=limit_wait(timeout,now,next_media);
@@ -2284,7 +2327,7 @@ static int native(const char *input) {
         }
         /* No periodic status or clock wakeups when manually asleep. Only
          * poll the headset during active audio, at most every 500 ms. */
-        if(smart_asleep)timeout=(volume_extended||(music_pid>=0&&!music_pause))?500:music_pid>=0&&music_report<0?1000:-1;
+        if(smart_asleep)timeout=(volume_extended||music_pid>=0)?500:-1;
         struct pollfd p[3+VOLUME_INPUTS]={{.fd=fd,.events=POLLIN},{.fd=music_report,.events=POLLIN}};
         p[2+volume_count]=(struct pollfd){.fd=power_fd,.events=POLLIN};
         for(int k=0;k<volume_count;k++)p[2+k]=(struct pollfd){.fd=volume_inputs[k].fd,.events=POLLIN};
@@ -2446,9 +2489,9 @@ static int selftest(void) {
     volume_warning=1;if(volume_confirm(0)||volume_extended||volume_warning)return 1;
     volume_warning=1;if(!volume_confirm(1)||!volume_extended||volume_warning||volume!=100)return 1;
     set_volume_target(140);if(volume!=130)return 1;
-    smart_audio_apply(0);if(volume_extended||volume!=100)return 1;
+    output=0;smart_audio_apply(0);if(volume_extended||volume!=100)return 1;
     smart_asleep=1;set_volume_target(105);smart_asleep=0;if(volume_warning||volume!=100)return 1;
-    tap(30,230);if(output!=1)return 1;
+    output=0;tap(30,230);if(output!=1)return 1;
     music_count=3;music_index=2;music_repeat=1;if(music_next_index()!=0)return 1;
     music_repeat=2;if(music_next_index()!=2)return 1;
     music_repeat=0;music_shuffle=1;if(music_next_index()==2)return 1;
