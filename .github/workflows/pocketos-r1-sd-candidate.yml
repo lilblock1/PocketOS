@@ -9,7 +9,7 @@ on:
       - '.github/workflows/pocketos-r1-sd-candidate.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: pocketos-r1-sd-candidate
@@ -208,6 +208,52 @@ jobs:
           path: candidate/
           if-no-files-found: error
           retention-days: 14
+      - name: Publish separate experimental PocketOS R1 pre-release
+        if: success() && github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/phase6-audio-routing'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=v0.3.0.100-test
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Separate test tag already exists; refusing to overwrite it."
+            exit 1
+          fi
+          for item in r1.upt PocketOS-R1-SD-Boot-Test.zip SHA256SUMS README-NOT-HARDWARE-VERIFIED.txt; do
+            test -s "candidate/$item"
+          done
+          (cd candidate && sha256sum -c SHA256SUMS)
+          cat > candidate/RELEASE-NOTES.txt <<'EOF'
+          EXPERIMENTAL R1 BOOT TEST — UNVERIFIED ON PHYSICAL HARDWARE.
+
+          This is a separate test pre-release. The existing test-latest channel
+          has NOT been replaced. The UPT is the original R1 kernel plus a
+          minimal modified rootfs preserving vendor hardware initialization.
+          PocketOS UI is opt-in through the microSD boot marker and
+          checksum-pinned PocketOS shell in PocketOS-R1-SD-Boot-Test.zip.
+          Without the marker, the original Sonix player launches.
+
+          No recovery or bootloader image is included, BUT the actual
+          recovery updater's write targets have not been verified.
+          The firmware could still fail to boot or require physical recovery.
+          Do not claim it is proven safe or use as a normal update.
+
+          Sonix Books devices configured to check lilblock1/Sonix-Books will
+          NOT discover a release hosted only under lilblock1/PocketOS.
+          PocketOS signed SD staging alone does not flash this UPT.
+          EOF
+          gh release create "$tag" \
+            candidate/r1.upt \
+            candidate/PocketOS-R1-SD-Boot-Test.zip \
+            candidate/SHA256SUMS \
+            candidate/README-NOT-HARDWARE-VERIFIED.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --draft --prerelease \
+            --title "PocketOS R1 0.3.0.100 — Separate Experimental Boot Test" \
+            --notes-file candidate/RELEASE-NOTES.txt
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url,isPrerelease --jq '{url,isPrerelease}'
       - name: Upload findings (no firmware image)
         if: always()
         uses: actions/upload-artifact@v4
