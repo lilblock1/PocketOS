@@ -78,6 +78,14 @@ printf 'hyn_ts\n' > "$tmp/sys/class/input/event7/device/name"
 rm -f "$tmp/features-ok.log"
 "$start" --fixture "$tmp" "$tmp/features-ok"
 grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"
+
+# A system Classic marker selects the approved UI without unlocking features.
+printf 'POCKETOS-R1-CLASSIC-1\n' > "$tmp/etc/pocketos/classic-ui-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --classic-ui --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'invalid\n' > "$tmp/etc/pocketos/classic-ui-enable"
+if "$start" --fixture "$tmp" "$tmp/features-ok"; then exit 1; fi
+rm "$tmp/etc/pocketos/classic-ui-enable"
 test "$(cat "$tmp/run/pocketos-ui/input")" = event7
 mkdir -p "$tmp/sys/class/input/event8/device"
 printf 'hyn_ts\n' > "$tmp/sys/class/input/event8/device/name"

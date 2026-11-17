@@ -61,6 +61,18 @@ if [ "$fixture" -eq 0 ]; then
 fi
 state="$run/pocketos-ui"
 feature_args=
+# The installed, read-only system chooses the approved Classic interface.
+# This marker enables no hardware, storage, radio or update permissions.
+classic_marker="$root/etc/pocketos/classic-ui-enable"
+if [ -e "$classic_marker" ] || [ -L "$classic_marker" ]; then
+    [ -f "$classic_marker" ] && [ ! -L "$classic_marker" ] || die "Unsafe Classic UI marker"
+    [ "$(wc -c < "$classic_marker")" -eq 22 ] &&
+    grep -Fxq POCKETOS-R1-CLASSIC-1 "$classic_marker" || die "Invalid Classic UI marker"
+    if [ "$fixture" -eq 0 ]; then
+        case "$("$stat_cmd" -c '%u:%a' "$classic_marker")" in 0:400|0:444|0:600|0:644) ;; *) die "Untrusted Classic UI marker";; esac
+    fi
+    feature_args=--classic-ui
+fi
 features="$root/etc/pocketos/features"
 if [ -e "$features" ] || [ -L "$features" ]; then
     [ -f "$features" ] && [ ! -L "$features" ] || die "Unsafe feature configuration"
@@ -68,7 +80,7 @@ if [ -e "$features" ] || [ -L "$features" ]; then
     if [ "$fixture" -eq 0 ]; then
         case "$("$stat_cmd" -c '%u:%a' "$features")" in 0:400|0:600) ;; *) die "Untrusted feature configuration";; esac
     fi
-    feature_args='--allow-audio --allow-bookmarks --allow-book-preparation --allow-radio --allow-backlight'
+    feature_args="$feature_args --allow-audio --allow-bookmarks --allow-book-preparation --allow-radio --allow-backlight"
 fi
 # Playback can be approved without unlocking unrelated development features.
 audio_marker="$root/etc/pocketos/audio-enable"
