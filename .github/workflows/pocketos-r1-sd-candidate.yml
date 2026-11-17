@@ -6,6 +6,7 @@ on:
       - 'tools/r1_reference_boot.py'
       - 'tools/test_r1_reference_boot.py'
       - 'apps/pocketos-r1-sd-guard.sh'
+      - 'apps/pocketos-r1-sd-loader.sh'
       - '.github/workflows/pocketos-r1-sd-candidate.yml'
   workflow_dispatch:
 permissions:
@@ -32,6 +33,7 @@ jobs:
         run: |
           python3 -m unittest discover -s tools -p 'test_r1_reference_boot.py' -v
           sh -n apps/pocketos-r1-sd-guard.sh
+          sh -n apps/pocketos-r1-sd-loader.sh
       - name: Install R1 offline format and emulator tools
         run: |
           sudo apt-get update
@@ -121,7 +123,7 @@ jobs:
           from pathlib import Path
           sys.path.insert(0,'tools')
           from r1_reference_boot import stage_sd_guard
-          data=stage_sd_guard(Path('reference-work/root'),Path('staging/reference-root'),Path('apps/pocketos-r1-sd-guard.sh'),Path('static-apps/pocketos-shell'),'0.3.0.100')
+          data=stage_sd_guard(Path('reference-work/root'),Path('staging/reference-root'),Path('apps/pocketos-r1-sd-loader.sh'),Path('apps/pocketos-r1-sd-guard.sh'),Path('static-apps/pocketos-shell'),'0.3.0.100')
           Path('reports/reference-boot-preservation.json').write_text(json.dumps(data,indent=2)+'\n')
           PY
           sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
@@ -144,8 +146,9 @@ jobs:
           mismatches=[name for name in before if before[name]!=after.get(name)]
           assert mismatches==["usr/bin/sonix_player.sh"], "Unexpected reference startup changes: "+str(mismatches)
           assert digest(base/"usr/bin/sonix_player.sh")==digest(checked/"usr/bin/sonix_player.pocketos-fallback.sh"), "Fallback not original"
-          assert digest(Path("apps/pocketos-r1-sd-guard.sh"))==digest(checked/"usr/bin/sonix_player.sh"), "Guard changed"
-          assert digest(Path("static-apps/pocketos-shell"))== (checked/"etc/pocketos/boot-shell.sha256").read_text().strip(), "SD hash does not match verified binary"
+          loader=(checked/"usr/bin/sonix_player.sh").read_text()
+          assert digest(Path("apps/pocketos-r1-sd-guard.sh")) in loader, "Guard SHA missing in boot loader"
+          assert digest(Path("static-apps/pocketos-shell")) in loader, "Shell SHA missing in boot loader"
           info=json.loads((checked/"usr/resource/sonix/components/system-info.json").read_text())
           assert info["device-name"]=="HiBy R1" and info["OS_version"]=="0.3.0.100"
           assert info["ota-repo"]=="lilblock1/Sonix-Books"
@@ -178,10 +181,11 @@ jobs:
           cp staging/r1.upt candidate/r1.upt
           mkdir -p sd-package/PocketOS/bin
           cp static-apps/pocketos-shell sd-package/PocketOS/bin/pocketos-shell
+          cp apps/pocketos-r1-sd-guard.sh sd-package/PocketOS/boot-guard.sh
           printf 'POCKETOS-R1-TRY-1\n' > sd-package/PocketOS-try-new-ui
           cat > sd-package/README-FIRST.txt <<'EOF'
           Experimental PocketOS R1 beta. DO NOT USE UNTIL RECOVERY IS VERIFIED.
-          Put PocketOS/bin/pocketos-shell on the microSD root.
+          Put PocketOS/bin/pocketos-shell and PocketOS/boot-guard.sh on the microSD root.
           Only put PocketOS-try-new-ui on SD when ready to try the new GUI.
           Without the marker the original Sonix player starts.
           If the UI crashes, the original player starts.
