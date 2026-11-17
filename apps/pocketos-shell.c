@@ -107,7 +107,7 @@ static off_t book_page_span=0;
 static off_t book_offsets[BOOK_HISTORY],book_pos=0,book_next=0,book_bytes=0;
 static const char *book_dir="/mnt/sd_0/Books";
 static FILE *book_file=NULL;
-static int fm_allow=0,fm_panel=0,fm_confirm=0,fm_preview=0;
+static int fm_allow=0,fm_panel=0,fm_confirm=0,fm_preview=0,fm_edit_new=0,fm_action=0;
 static char fm_message[40],fm_rename[64];
 static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0,volume_extended=0,volume_warning=0;
@@ -1008,7 +1008,7 @@ static void book_select(int direction){
 }
 static void fm_note(const char *text){snprintf(fm_message,sizeof(fm_message),"%.39s",text);}
 static void fm_start(void){
-    fm_panel=fm_confirm=0;fm_message[0]=0;
+    fm_panel=fm_confirm=fm_edit_new=fm_action=0;fm_message[0]=0;
     int pct;unsigned long long space;
     if(!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
         fm_close();fm_note("MICROSD NOT AVAILABLE");
@@ -1023,24 +1023,50 @@ static void fm_open_media(void){
     if(!strncmp(rel,"Music/",6)&&audio_name(rel)){
         if(music_pid>=0){fm_note("STOP ACTIVE MUSIC FIRST");return;}
         music_list=0;music_scan();
-        for(int j=0;j<music_count;j++)if(!strcmp(music_files[j],rel+6)){music_select(j);page=NOWPLAYING;return;}
+        for(int j=0;j<music_count;j++)if(!strcmp(music_files[j],rel+6)){fm_close();music_select(j);page=NOWPLAYING;return;}
     }else if(!strncmp(rel,"Books/",6)&&book_kind(rel)){
         book_scan();
         for(int j=0;j<book_count;j++)if(!strcmp(books[j],rel+6)){
             book_index=j;book_top=j>=4?j-3:0;
-            if(!book_open())page=BOOKS;
+            fm_close();if(!book_open())page=BOOKS;
             return;
         }
     }
     fm_note("NO APP / MOVE TO MUSIC OR BOOKS");
 }
+static int fm_writable(void){
+    if(!fm_allow||fm_root<0)return 0;
+    FILE *f=fopen("/proc/mounts","r");if(!f)return 0;
+    char line[1024],dev[128],loc[128],type[32],opts[512];int ok=0;
+    while(fgets(line,sizeof(line),f)){
+        if(sscanf(line,"%127s %127s %31s %511s",dev,loc,type,opts)!=4)continue;
+        if(strcmp(dev,"/dev/mmcblk0p1")||strcmp(loc,"/mnt/sd_0")||strcmp(type,"vfat"))continue;
+        int bits=0;char *save=NULL;
+        for(char *o=strtok_r(opts,",",&save);o;o=strtok_r(NULL,",",&save)){
+            if(!strcmp(o,"rw"))bits|=1;else if(!strcmp(o,"nosuid"))bits|=2;
+            else if(!strcmp(o,"nodev"))bits|=4;else if(!strcmp(o,"noexec"))bits|=8;
+        }
+        if(bits==15)ok=1;
+    }
+    fclose(f);
+    struct stat a,b;
+    return ok&&!fstat(fm_root,&a)&&!stat("/mnt/sd_0",&b)&&a.st_dev==b.st_dev&&a.st_ino==b.st_ino;
+}
+static void fm_cancel(void){
+    if(fm_confirm==2||fm_confirm==3||(fm_panel==2&&!fm_edit_new))fm_clip=0;
+    fm_panel=fm_confirm=fm_edit_new=0;fm_note("CANCELLED");
+}
 static void fm_operation(int action){
     fm_panel=0;
-    if(!fm_allow){fm_note("FILE WRITES LOCKED");return;}
+    if(!fm_writable()){fm_note("FILE WRITES LOCKED / READ ONLY");return;}
     if(music_pid>=0||book_file){fm_note("CLOSE ACTIVE MEDIA FIRST");return;}
+    if(action==5){
+        if(*fm_dir&&!fm_user_dir(fm_dir)){fm_note("PROTECTED LOCATION");return;}
+        fm_edit_new=1;fm_rename[0]=0;fm_panel=2;return;
+    }
     if(action==2){
         if(!fm_clip){fm_note("NOTHING TO PASTE");return;}
-        if(!fm_user_dir(fm_dir)){fm_note("OPEN A USER FOLDER");return;}
+        if(!fm_user_file(fm_dir,fm_source_name)){fm_note("OPEN A USER FOLDER");return;}
         fm_confirm=1;return;
     }
     if(!fm_count||fm_items[fm_index].dir){fm_note("SELECT A REGULAR FILE");return;}
@@ -1050,18 +1076,20 @@ static void fm_operation(int action){
     else if(action==3){fm_confirm=2;}
     else if(action==4){
         if(strlen(name)>=sizeof(fm_rename)){fm_clip=0;fm_note("NAME TOO LONG TO EDIT");return;}
-        strcpy(fm_rename,name);fm_panel=2;
+        fm_edit_new=0;strcpy(fm_rename,name);fm_panel=2;
     }
 }
 static void fm_apply(void){
     int action=fm_confirm;fm_confirm=0;
-    if(!fm_allow||music_pid>=0||book_file){fm_clip=0;fm_note("FILE WRITES LOCKED");return;}
+    if(!fm_writable()||music_pid>=0||book_file){fm_clip=0;fm_note("FILE WRITES LOCKED");return;}
     int result=0;
     if(action==1)result=fm_transfer(fm_source_name,fm_clip==2);
     else if(action==2)result=fm_delete();
     else if(action==3)result=fm_transfer(fm_rename,1);
+    else if(action==4)result=fm_mkdir(fm_rename);
+    fm_edit_new=0;
     fm_note(result==2?"COPIED; SOURCE NOT REMOVED":result?"DONE":"FAILED / EXISTS / NO SPACE");
-    if(action!=1)fm_clip=0;
+    if(action==2||action==3)fm_clip=0;
     (void)fm_scan();
 }
 static void fm_edit_char(int x,int y){
@@ -1075,8 +1103,8 @@ static void fm_edit_char(int x,int y){
     }else if(y>=251&&y<280){
         if(x<85){size_t n=strlen(fm_rename);if(n)fm_rename[n-1]=0;}
         else if(x<151)fm_rename[0]=0;
-        else if(fm_name_ok(fm_rename)){fm_panel=0;fm_confirm=3;}
-    }else if(y>=288){fm_panel=0;fm_clip=0;}
+        else if(fm_new_name_ok(fm_rename)){fm_panel=0;fm_confirm=fm_edit_new?4:3;}
+    }else if(y>=288){fm_cancel();}
 }
 static const char *radio_keys(void){
     static const char *const layers[]={
@@ -1185,21 +1213,21 @@ static void render(void) {
     } else if(page==FILES){
         if(fm_confirm){
             reader_print(14,65,"Confirm file operation",17,fg,bg,0,1,228);
-            reader_print(14,103,fm_confirm==2?"Delete permanently?":fm_confirm==3?"Rename file?":fm_clip==2?"Move file here?":"Copy file here?",16,fg,bg,0,0,228);
-            reader_print(14,144,fm_source_name,14,muted,bg,0,0,228);
+            reader_print(14,103,fm_confirm==4?"Create folder?":fm_confirm==2?"Delete permanently?":fm_confirm==3?"Rename file?":fm_clip==2?"Move file here?":"Copy file here?",16,fg,bg,0,0,228);
+            reader_print(14,144,fm_confirm==4?fm_rename:fm_source_name,14,muted,bg,0,0,228);
             if(fm_confirm==3)reader_print(14,168,fm_rename,14,mint,bg,0,0,228);
             rounded(12,246,102,35,card);rounded(126,246,102,35,mint);
             text_at(23,259,"CANCEL",1,fg);text_at(139,259,"CONFIRM",1,bg);
         }else if(fm_panel==2){
-            reader_print(14,65,"Rename file",17,fg,bg,0,1,228);
+            reader_print(14,65,fm_edit_new?"New folder":"Rename file",17,fg,bg,0,1,228);
             reader_print(14,88,fm_rename,14,mint,bg,0,0,228);
             const char *keys="abcdefghijklmnopqrstuvwxyz0123456789.-_ ";
             for(int k=0;k<40;k++){int x=10+k%8*28,y=104+k/8*28;char c[2]={keys[k],0};rounded(x,y,26,26,card);reader_print(x+8,y+5,c,15,fg,card,0,0,x+25);}
             text_at(14,260,"ERASE",1,mint);text_at(87,260,"CLEAR",1,mint);text_at(163,260,"OK",1,mint);
             text_at(14,301,"CANCEL",2,mint);
         }else if(fm_panel==1){
-            const char *const labels[]={"COPY","MOVE","PASTE HERE","DELETE","RENAME"};
-            for(int i=0;i<5;i++){rounded(12,78+39*i,216,34,card);reader_print(22,86+39*i,labels[i],16,fg,card,0,0,220);}
+            const char *const labels[]={"Copy","Move","Paste here","Delete","Rename","New folder"};
+            for(int i=0;i<6;i++){int y=78+33*i;uint16_t tile=fm_action==i?edge:card;rounded(12,y,216,30,tile);reader_print(22,y+7,labels[i],15,fg,tile,0,0,220);}
             text_at(12,301,"CANCEL",2,mint);
         }else{
             char location[40],info[40];snprintf(location,sizeof(location),"SD / %.33s",fm_dir);
@@ -1217,7 +1245,7 @@ static void render(void) {
             if(!fm_count)text_at(12,112,fm_root<0&&!fm_preview?"NO MICROSD":"EMPTY FOLDER",1,muted);
             if(fm_message[0])text_at(12,245,fm_message,1,muted);
             else if(fm_clip)text_at(12,245,fm_clip==2?"MOVE READY":"COPY READY",1,mint);
-            else if(fm_truncated)text_at(12,245,"LIST LIMITED TO 160 ITEMS",1,muted);
+            else if(fm_truncated)text_at(12,245,"LIST LIMITED TO 512 ITEMS",1,muted);
             else text_at(12,245,fm_allow?"MICROSD USER FILES":"READ ONLY",1,muted);
             const char *const buttons[]={"UP","OPEN","MORE","DOWN"};
             for(int j=0;j<4;j++){int x=12+j*55;rounded(x,261,51,24,card);text_at(x+5,269,buttons[j],1,mint);}
@@ -1529,7 +1557,7 @@ static void back(void) {
     if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_active==R_BT_SCAN)radio_cancel_scan();if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
-    if(page==FILES){if(fm_confirm||fm_panel){fm_confirm=fm_panel=0;return;}fm_close();page=HOME;selected=0;return;}
+    if(page==FILES){if(fm_confirm||fm_panel){fm_cancel();return;}if(*fm_dir){if(!fm_up())fm_note("CANNOT OPEN PARENT");else fm_message[0]=0;return;}fm_close();page=HOME;selected=0;return;}
     page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
 }
 static void activate(int i) {
@@ -1553,7 +1581,7 @@ static void activate(int i) {
         selected=0;return;
     }
     if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
-    else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
+    else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){fm_close();update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
     selected=0;
 }
 static void set_volume_target(int v){
@@ -1599,15 +1627,15 @@ static void tap(int x,int y) {
     }
     if(page==RADIO&&y>=81&&y<214){radio_open(y>=153);return;}
     if(page==FILES){
-        if(fm_confirm){if(y>=241&&y<285){if(x>=120)fm_apply();else{fm_confirm=0;fm_note("CANCELLED");}}return;}
+        if(fm_confirm){if(y>=246&&y<281&&x>=12&&x<228){if(x>=126)fm_apply();else if(x<114)fm_cancel();}return;}
         if(fm_panel==2){fm_edit_char(x,y);return;}
-        if(fm_panel==1){if(y>=78&&y<273)fm_operation((y-78)/39);else if(y>=288)fm_panel=0;return;}
-        if(y>=84&&y<239){
+        if(fm_panel==1){if(x>=12&&x<228&&y>=78&&y<276&&(y-78)%33<30)fm_operation((y-78)/33);else if(y>=288)fm_cancel();return;}
+        if(x>=12&&x<228&&y>=84&&y<239&&(y-84)%31<28){
             int idx=fm_top+(y-84)/31;
             if(idx<fm_count){if(fm_index==idx)fm_open_media();else fm_index=idx;}
-        }else if(y>=261&&y<285){
+        }else if(x>=12&&x<228&&y>=261&&y<285&&(x-12)%55<51){
             int action=(x-12)/55;
-            if(action==0)fm_select(-1);else if(action==1)fm_open_media();else if(action==2)fm_panel=1;else fm_select(1);
+            if(action==0)fm_select(-1);else if(action==1)fm_open_media();else if(action==2){fm_action=0;fm_panel=1;}else fm_select(1);
         }else if(y>=288){if(x<120)back();else (void)fm_up();}
         return;
     }
@@ -1693,11 +1721,17 @@ static int key(unsigned code) {
     if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){radio_open(code==KEY_DOWN);return 1;}
     if(page==FILES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
-        if(fm_confirm||fm_panel)return 0;
+        if(fm_confirm){if(code==KEY_ENTER||code==KEY_OK){fm_apply();return 1;}return 0;}
+        if(fm_panel==1){
+            if(code==KEY_UP||code==KEY_DOWN){fm_action=(fm_action+6+(code==KEY_UP?-1:1))%6;return 1;}
+            if(code==KEY_ENTER||code==KEY_OK){fm_operation(fm_action);return 1;}
+            return 0;
+        }
+        if(fm_panel)return 0;
         if(code==KEY_UP||code==KEY_DOWN){fm_select(code==KEY_UP?-1:1);return 1;}
         if(code==KEY_ENTER||code==KEY_OK||code==KEY_RIGHT){fm_open_media();return 1;}
         if(code==KEY_LEFT){(void)fm_up();return 1;}
-        if(code==KEY_MENU){fm_panel=1;return 1;}
+        if(code==KEY_MENU){fm_action=0;fm_panel=1;return 1;}
     }
     if(page==READER&&(code==KEY_ENTER||code==KEY_OK)){book_menu=!book_menu;return 1;}
     if(page==READER&&!book_menu&&(code==KEY_LEFT||code==KEY_RIGHT||code==KEY_PAGEUP||code==KEY_PAGEDOWN)){
@@ -2031,7 +2065,12 @@ static int native(const char *input) {
                     if(x>=0&&y>=0){
                         if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL&&page!=UPDATES)open_control();
                         else if(page==CONTROL&&start_y>=0&&start_y-y>=40)back();
-                        else tap(x,y);
+                        else if(page==FILES&&!fm_panel&&!fm_confirm&&start_y>=84&&start_y<239&&
+                                (start_y-y>=25||y-start_y>=25)){
+                            int delta=start_y-y;int steps=(abs(delta)+15)/31;
+                            if(steps<1)steps=1;
+                            fm_select(delta>0?steps:-steps);
+                        }else tap(x,y);
                         changed=1;
                     }
                 }
@@ -2177,7 +2216,12 @@ int main(int argc,char **argv) {
         if(fm_transfer("existing.txt",0)||!fm_transfer("example.txt",0))return 1;
         if(!fm_capture("example.txt",2)||fm_transfer("../bad",1)||!fm_transfer("renamed.txt",1))return 1;
         if(!fm_capture("renamed.txt",2)||!fm_delete())return 1;
-        if(!fm_up()||!fm_enter("PocketOS-updates")||fm_capture("protected.txt",2))return 1;
+        if(!fm_up()||!fm_enter("PocketOS-updates")||fm_capture("protected.txt",2)||fm_mkdir("bad"))return 1;
+        if(!fm_up()||fm_capture("r1.upt",2)||!fm_capture("loose.txt",2)||!fm_enter("Documents"))return 1;
+        if(!fm_transfer("loose.txt",1)||!fm_mkdir("New folder")||fm_mkdir("New folder")||fm_mkdir("../escape"))return 1;
+        if(!fm_enter("New folder")||!fm_up()||strcmp(fm_items[fm_index].name,"New folder"))return 1;
+        fm_select(-999);if(fm_index!=0)return 1;
+        fm_select(999);if(fm_index!=fm_count-1)return 1;
         fm_close();return 0;
     }
     if(argc==3&&!strcmp(argv[1],"--test-books")&&argv[2][0]=='/'){

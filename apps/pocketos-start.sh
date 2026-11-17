@@ -110,6 +110,16 @@ if [ -e "$smart_marker" ] || [ -L "$smart_marker" ]; then
     fi
     feature_args="$feature_args --allow-smart-sleep"
 fi
+# File management uses the independent, trusted SD-write approval. Its
+# descriptor-relative operations still limit writes to user files and folders.
+sd_marker="$root/etc/pocketos/sd-write-enable"
+if [ -f "$sd_marker" ] && [ ! -L "$sd_marker" ] &&
+   [ "$(wc -c < "$sd_marker")" -eq 23 ] &&
+   grep -Fxq POCKETOS-R1-SD-WRITE-1 "$sd_marker"; then
+    if [ "$fixture" -eq 1 ] || [ "$("$stat_cmd" -c '%u:%a' "$sd_marker")" = 0:400 ]; then
+        feature_args="$feature_args --allow-file-writes"
+    fi
+fi
 # Signed update staging is separately approved. Missing/invalid trust must not
 # prevent the rest of PocketOS from booting. No flash installer is enabled.
 update_marker="$root/etc/pocketos/update-enable"

@@ -36,6 +36,8 @@ mkdir -p "$tmp/sd/Documents" "$tmp/sd/Downloads" "$tmp/sd/PocketOS-updates"
 printf 'file manager test\n' > "$tmp/sd/Documents/example.txt"
 printf 'preserve\n' > "$tmp/sd/Downloads/existing.txt"
 printf 'protected\n' > "$tmp/sd/PocketOS-updates/protected.txt"
+printf 'loose media\n' > "$tmp/sd/loose.txt"
+printf 'firmware\n' > "$tmp/sd/r1.upt"
 ln -s "$tmp" "$tmp/sd/Documents/link"
 "$bin" --test-files "$tmp/sd"
 test "$(cat "$tmp/sd/Documents/example.txt")" = 'file manager test'
@@ -43,6 +45,11 @@ test "$(cat "$tmp/sd/Downloads/existing.txt")" = preserve
 test "$(cat "$tmp/sd/PocketOS-updates/protected.txt")" = protected
 test ! -e "$tmp/sd/Downloads/renamed.txt"
 test ! -e "$tmp/sd/Downloads/example.txt"
+test "$(cat "$tmp/sd/Documents/loose.txt")" = 'loose media'
+test ! -e "$tmp/sd/loose.txt"
+test "$(cat "$tmp/sd/r1.upt")" = firmware
+test -d "$tmp/sd/Documents/New folder"
+test ! -d "$tmp/sd/PocketOS-updates/bad"
 "$bin" --preview FILES "$tmp/FILES.ppm"
 test "$(wc -c < "$tmp/FILES.ppm")" -eq 1152015
 

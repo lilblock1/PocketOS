@@ -12,7 +12,7 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 
-#define FM_CAP 160
+#define FM_CAP 512
 #define FM_PATH 768
 #define FM_COPY_MAX (64ULL*1024*1024)
 struct fm_item {char name[256];int dir;unsigned long long bytes;};
@@ -65,6 +65,29 @@ static int fm_user_dir(const char *path){
     }
     return 0;
 }
+/* Root-level loose media/documents may be moved into normal user folders.
+ * Recovery images, update manifests, scripts and system directories remain protected. */
+static int fm_user_file(const char *path,const char *name){
+    if(!fm_name_ok(name))return 0;
+    if(fm_user_dir(path))return 1;
+    if(*path)return 0;
+    const char *ext=strrchr(name,'.');
+    const char *const allowed[]={".txt",".epub",".pdf",".md",".rtf",".doc",".docx",".csv",".html",".htm",".mobi",".azw3",".fb2",".mp3",".flac",".wav",".ogg",".opus",".aac",".m4a",".alac",".aiff",".ape",".wma",".jpg",".jpeg",".png",".gif",".bmp",".webp",".mp4",".mkv",".avi",".mov"};
+    if(!ext)return 0;
+    for(size_t i=0;i<sizeof(allowed)/sizeof(allowed[0]);i++)if(!strcasecmp(ext,allowed[i]))return 1;
+    return 0;
+}
+static int fm_new_name_ok(const char *name){
+    if(!fm_name_ok(name)||strpbrk(name,"<>:\"|?*"))return 0;
+    size_t n=strlen(name);
+    return name[n-1]!='.'&&name[n-1]!=' ';
+}
+static int fm_mkdir(const char *name){
+    if(!fm_new_name_ok(name)||(!fm_user_dir(fm_dir)&&(*fm_dir||!fm_user_dir(name))))return 0;
+    int fd=fm_open_dir(fm_dir);if(fd<0)return 0;
+    int ok=mkdirat(fd,name,0700)==0;
+    close(fd);if(ok)sync();return ok;
+}
 static int fm_cmp(const void *a,const void *b){
     const struct fm_item *x=a,*y=b;
     if(x->dir!=y->dir)return y->dir-x->dir;
@@ -94,16 +117,23 @@ static int fm_enter(const char *name){
     int n=snprintf(path,sizeof(path),"%s%s%s",fm_dir,*fm_dir?"/":"",name);
     if(n<0||(size_t)n>=sizeof(path))return 0;
     int fd=fm_open_dir(path);if(fd<0)return 0;close(fd);
-    strcpy(fm_dir,path);return fm_scan();
+    char old[FM_PATH];strcpy(old,fm_dir);
+    strcpy(fm_dir,path);if(fm_scan())return 1;
+    strcpy(fm_dir,old);(void)fm_scan();return 0;
 }
 static int fm_up(void){
     if(!*fm_dir)return 0;
-    char *p=strrchr(fm_dir,'/');if(p)*p=0;else fm_dir[0]=0;
-    return fm_scan();
+    char old[FM_PATH],child[256];strcpy(old,fm_dir);
+    char *p=strrchr(fm_dir,'/');strcpy(child,p?p+1:fm_dir);
+    if(p)*p=0;else fm_dir[0]=0;
+    if(!fm_scan()){strcpy(fm_dir,old);(void)fm_scan();return 0;}
+    for(int i=0;i<fm_count;i++)if(!strcmp(fm_items[i].name,child)){fm_index=i;fm_top=i>=5?i-4:0;break;}
+    return 1;
 }
 static void fm_select(int step){
     if(!fm_count)return;
-    fm_index=(fm_index+fm_count+step)%fm_count;
+    int next=fm_index+step;
+    fm_index=next<0?0:next>=fm_count?fm_count-1:next;
     if(fm_index<fm_top)fm_top=fm_index;
     if(fm_index>=fm_top+5)fm_top=fm_index-4;
 }
@@ -112,7 +142,7 @@ static int fm_identity(const struct stat *a,const struct stat *b){
         a->st_size==b->st_size&&a->st_mtime==b->st_mtime;
 }
 static int fm_capture(const char *name,int mode){
-    if(!fm_user_dir(fm_dir)||!fm_name_ok(name)||mode<1||mode>2)return 0;
+    if(!fm_user_file(fm_dir,name)||mode<1||mode>2)return 0;
     int fd=fm_open_dir(fm_dir);if(fd<0)return 0;
     struct stat st;
     int ok=fstatat(fd,name,&st,AT_SYMLINK_NOFOLLOW)==0&&S_ISREG(st.st_mode)&&st.st_dev==fm_device;
@@ -127,7 +157,7 @@ static int fm_match(int fd,const char *name,const struct stat *expected){
 /* No overwrite: destination is created with O_EXCL. A move is copy+verify+delete.
  * Power loss can leave a partial destination; never delete before successful fsync. */
 static int fm_transfer(const char *destination,int remove_source){
-    if(!fm_clip||!fm_user_dir(fm_dir)||!fm_user_dir(fm_source_dir)||!fm_name_ok(destination))return 0;
+    if(!fm_clip||!fm_user_file(fm_dir,destination)||!fm_user_file(fm_source_dir,fm_source_name)||!fm_new_name_ok(destination))return 0;
     if(!strcmp(fm_dir,fm_source_dir)&&!strcmp(destination,fm_source_name))return 0;
     int a=fm_open_dir(fm_source_dir),b=fm_open_dir(fm_dir);
     if(a<0||b<0){if(a>=0)close(a);if(b>=0)close(b);return 0;}
@@ -172,7 +202,7 @@ end:
     return result;
 }
 static int fm_delete(void){
-    if(!fm_clip||!fm_user_dir(fm_source_dir))return 0;
+    if(!fm_clip||!fm_user_file(fm_source_dir,fm_source_name))return 0;
     int fd=fm_open_dir(fm_source_dir);if(fd<0)return 0;
     int ok=fm_match(fd,fm_source_name,&fm_source_stat)&&unlinkat(fd,fm_source_name,0)==0;
     close(fd);if(ok)fm_clip=0;return ok;

@@ -115,3 +115,11 @@ grep -Fx -- '--boot-splash --unblank-display --allow-updates --fb /dev/input/eve
 rm "$tmp/etc/pocketos/update-enable"
 "$start" --fixture "$tmp" "$tmp/features-ok"
 grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"
+
+# Only the exact SD approval enables file writes; it grants no update access.
+printf 'POCKETOS-R1-SD-WRITE-1\n' > "$tmp/etc/pocketos/sd-write-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --allow-file-writes --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'invalid\n' > "$tmp/etc/pocketos/sd-write-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/features-ok.log"
