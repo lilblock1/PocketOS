@@ -1,0 +1,7 @@
+# Phase 5 candidate staging checkpoint
+
+Cumulative local source `d6e532528cf7bd81132296ae900a84e664f81aa3` was verified against the source bundle. Full MIPS applications build completed using the matching SDK's normal shared-library link mode (`LDFLAGS=-s`); the book utility links libz.so.1, present in the candidate root. Static zlib is not needed for this path. 31 hardware-tool tests passed. The host suite completed through the updater tests before a tool timeout in music tests; music (six tests), book preparation, decoder and startup checks then passed separately. The pre-generated font header was reused.
+
+Offline firstboot root staging succeeded with build ID `ea47b5df5285acf5`; the exact physical decoder pin, all 26 board module digests and firstboot file digests verified. Low-gain audio and software Smart Sleep opt-in markers are present. No FFmpeg binary in internal root, no kernel suspend or update trust marker. No QEMU execution or final UPT: qemu-mipsel, mksquashfs and genisoimage are absent in current environment. A private staged-root packaging kit was delivered to the owner. Packaging script syntax checked, not tested end-to-end. No flashing approved or performed. Recovery screen progress remains unresolved.
+
+Direct Git transport could not resolve github.com; cumulative source remains local, and this status commit does not synchronize it. Do not build a hardware candidate directly from this older remote branch.

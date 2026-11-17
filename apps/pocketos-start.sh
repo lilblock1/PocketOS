@@ -73,6 +73,14 @@ if [ "$fixture" -eq 0 ]; then
         sleep 1
     done
 fi
+# Optional decoder is independent from audio/radio hardware approval. Only
+# activate when a digest is provisioned in the trusted rootfs. Failure is
+# nonfatal: native WAV and the interface must still start.
+if [ "$fixture" -eq 0 ] && [ -f "$root/etc/pocketos/decoder.sha256" ] && [ ! -L "$root/etc/pocketos/decoder.sha256" ]; then
+    if [ -x /usr/bin/pocketos-decoder ]; then
+        /usr/bin/pocketos-decoder ensure > "$state/decoder.log" 2>&1 || :
+    fi
+fi
 # One initial launch and at most two retries. No repeated splash, no hardware flags.
 attempt=1
 while [ "$attempt" -le 3 ]; do

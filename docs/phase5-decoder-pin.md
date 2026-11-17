@@ -1,0 +1,7 @@
+# Physical HiBy R1 decoder approval candidate
+
+The device owner reported SHA-256 `c536f32c0c30c00fc6333479d6cb3d0e4c37464b592034f3b2dade6f82d680a7` from /run/pocketos-decoder/ffmpeg after the successful native FFmpeg and audible FLAC tests. The tested binary was FFmpeg 7.1.5, 3,570,684 bytes, from assembly run 43809187583, artifact 14199528222. The hash is pinned in boards/hiby-r1/verified-decoder.sha256 outside the default rootfs overlay. It is a device-owner-reported digest, not an independently recomputed artifact hash or an upstream signature.
+
+For the next explicitly approved physical development candidate: independently compare the downloaded artifact binary against the pinned digest, then provision that exact digest as root-owned /etc/pocketos/decoder.sha256 (mode 0444) in the offline candidate. Do not add it to the generic Buildroot overlay or bypass the offline assembly trust-marker gate. The candidate-specific provisioning step must occur after generic assembly; re-run all appropriate candidate checks. The regular development assembly remains non-flashable. Keep the exact decoder binary at /mnt/sd_0/PocketOS-codecs/pocketos-ffmpeg, with normal SD read-only/noexec protections. The decoder loader copies and verifies a bounded RAM snapshot before execution; no decoder binary is needed in internal flash.
+
+No firmware was built, installed, or authorized for flashing by this commit. Persistent SD installation, startup activation, whole-source synchronization, safe volume calibration, and Smart Sleep remain to be verified.
