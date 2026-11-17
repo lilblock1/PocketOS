@@ -162,12 +162,17 @@ if [ "$mode" = install ]; then
     done
     /usr/sbin/pocketos-recovery-arm --check || die "Boot-selection preflight failed"
     expected=$(awk '$3=="pocketos-r1.upt" {print $1}' "$version_dir/manifest")
-    # Never replace an unrelated user-supplied recovery file.
+    # Prior manual firmware may still be on the card. Keep it intact in a
+    # unique backup directory; do not require card removal or overwrite it.
+    needs_copy=1
+    old_digest=""
     if [ -e ./r1.upt ] || [ -L ./r1.upt ]; then
         [ -f ./r1.upt ] && [ ! -L ./r1.upt ] || die "Unsafe existing recovery file"
-        actual=$(sha256sum ./r1.upt)
-        [ "${actual%% *}" = "$expected" ] || die "Existing r1.upt differs; move it first"
-    else
+        actual=$(sha256sum ./r1.upt) || die "Cannot read existing recovery file"
+        old_digest=${actual%% *}
+        [ "$old_digest" != "$expected" ] || needs_copy=0
+    fi
+    if [ "$needs_copy" -eq 1 ]; then
         needed=$(awk '$3=="pocketos-r1.upt" {printf "%d",int(($2+1023)/1024)+16384}' "$version_dir/manifest")
         free=$(df -Pk . | awk 'NR==2 {print $4}')
         case "$free" in ''|*[!0-9]*) die "Cannot determine SD free space";; esac
@@ -177,8 +182,18 @@ if [ "$mode" = install ]; then
         actual=$(sha256sum "$work/r1.upt")
         [ "${actual%% *}" = "$expected" ] || die "Recovery copy checksum mismatch"
         sync
-        mv "$work/r1.upt" ./r1.upt
+        if [ -n "$old_digest" ]; then
+            actual=$(sha256sum ./r1.upt) || die "Existing recovery file changed"
+            [ "${actual%% *}" = "$old_digest" ] || die "Existing recovery file changed"
+            backup=$(mktemp -d "$store/recovery-backup.XXXXXX") || die "Cannot preserve old recovery file"
+            mv ./r1.upt "$backup/r1.upt" || die "Cannot preserve old recovery file"
+            sync
+        fi
+        [ ! -e ./r1.upt ] && [ ! -L ./r1.upt ] || die "Recovery file appeared"
+        mv "$work/r1.upt" ./r1.upt || die "Cannot stage verified recovery file"
     fi
+    actual=$(sha256sum ./r1.upt) || die "Cannot recheck recovery file"
+    [ "${actual%% *}" = "$expected" ] || die "Final recovery checksum mismatch"
     sync
     battery_ok || die "Battery check failed before recovery"
     # Release the staging directory and working directory before the clean unmount.
