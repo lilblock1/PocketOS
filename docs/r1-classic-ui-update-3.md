@@ -34,3 +34,11 @@ Use Settings → Updates → Pre-release on the R1. Signed SD staging assets are
 also attached to the release for the existing PocketOS-inbox flow.
 No personal files, credentials, device logs or private signing material are
 included in this source update or release.
+
+## On-device channel check
+
+The installed sequence-2 R1 ran its production `check-github test-latest`
+operation against the public channel and verified the signed manifest. It
+reported `POCKETOS INSTALLED 2` and `POCKETOS AVAILABLE 3`, completing at 100%.
+No firmware download, recovery handoff, installation or reboot was requested.
+The temporary UI review ended and the existing installed PocketOS UI resumed.
