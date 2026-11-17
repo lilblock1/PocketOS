@@ -2,6 +2,9 @@
 # Run from an extracted trusted kit under Debian WSL. Builds only; never flashes.
 set -euo pipefail
 umask 077
+test "$#" -eq 2 || { echo "Usage: bash finalize-r1-bootstrap.sh PREFLIGHT_LOG PINNED_PREVIEW_UPT"; exit 2; }
+preflight=$(realpath -e "$1")
+preview=$(realpath -e "$2")
 cd "$(dirname "$0")"
 test "$EUID" -ne 0 || { echo "Run as normal user (sudo is used for the candidate tree)"; exit 1; }
 command -v openssl >/dev/null
@@ -10,9 +13,12 @@ command -v mksquashfs >/dev/null
 command -v unsquashfs >/dev/null
 sha256sum -c SHA256SUMS
 # Require the explicit physical read-only gate before building an update-enabled candidate.
-test "$#" -eq 1
-test -f "$1"
-tr -d '\r' < "$1" | grep -Fxq POCKETOS-R1-RECOVERY-PREFLIGHT-OK
+test -f "$preflight" && test -f "$preview"
+tr -d '\r' < "$preflight" | grep -Fxq POCKETOS-R1-RECOVERY-PREFLIGHT-OK
+echo "fa36d95736555dba9ce95e33a29227668270d524f1cb419a751506f59d10a074  $preview" | sha256sum -c -
+command -v 7z >/dev/null
+work=$(mktemp -d "$HOME/pocketos-bootstrap.XXXXXX")
+sudo python3 tools/prepare-r1-updater-bootstrap.py "$preview" target-apps "$work/root"
 keydir="$HOME/.local/share/pocketos-signing"
 mkdir -p -m 700 "$keydir"
 test ! -L "$keydir"
@@ -23,10 +29,7 @@ if [ ! -e "$key" ]; then
 fi
 test -f "$key" && test ! -L "$key"
 chmod 600 "$key"
-work=$(mktemp -d "$HOME/pocketos-bootstrap.XXXXXX")
-mkdir "$work/root"
 openssl pkey -in "$key" -pubout -out "$work/public.pem"
-sudo tar --numeric-owner -xzf rootfs-template.tar.gz -C "$work/root"
 seq=1
 sudo python3 tools/provision-r1-update-trust.py "$work/root" "$work/public.pem" "$seq"
 # Offline candidate only, based on successful read-only physical preflight.
