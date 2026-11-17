@@ -7,7 +7,6 @@ ORIGINAL=/usr/bin/sonix_player.pocketos-fallback.sh
 RUNTIME=/mnt/sd_0
 BIN="$RUNTIME/PocketOS/bin/pocketos-shell"
 MARKER="$RUNTIME/PocketOS-try-new-ui"
-HASH=/etc/pocketos/boot-shell.sha256
 fallback() { exec "$ORIGINAL"; }
 [ -f "$ORIGINAL" ] && [ -x "$ORIGINAL" ] && [ ! -L "$ORIGINAL" ] || exit 1
 [ "$(id -u)" = 0 ] || fallback
@@ -18,9 +17,9 @@ awk '$2=="/mnt/sd_0" {found=1} END {exit !found}' /proc/mounts || fallback
 [ "$(cat "$MARKER")" = "POCKETOS-R1-TRY-1" ] || fallback
 [ -d "$RUNTIME/PocketOS" ] && [ ! -L "$RUNTIME/PocketOS" ] || fallback
 [ -d "$RUNTIME/PocketOS/bin" ] && [ ! -L "$RUNTIME/PocketOS/bin" ] || fallback
-[ -f "$BIN" ] && [ ! -L "$BIN" ] && [ -f "$HASH" ] && [ ! -L "$HASH" ] || fallback
+[ -f "$BIN" ] && [ ! -L "$BIN" ] || fallback
 [ "$(wc -c < "$BIN")" -le 4194304 ] || fallback
-hash=$(cat "$HASH") || fallback
+hash=${POCKETOS_SHELL_SHA256:-}
 case "$hash" in
     *[!0-9a-f]*|'') fallback ;;
 esac
