@@ -64,7 +64,8 @@ jobs:
           PY
           curl --fail --location --retry 3 "$(cat reference-url.txt)" -o reference.upt
           python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
-          sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
+          sudo unsquashfs -no-progress -d reference-work/root reference-work/reference.squashfs
+          unsquashfs -s reference-work/reference.squashfs | tee reports-reference-compression.txt
       - name: Diagnose reference runtime and dynamic ABI (nonfatal)
         run: |
           set -euo pipefail
@@ -115,7 +116,24 @@ jobs:
           sudo python3 tools/r1_reference_boot.py reference-work/root static-apps staging/reference-root reports/reference-boot-preservation.json
           sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
           timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" staging/reference-root/usr/bin/pocketos-shell --self-test
-          sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          # Match the vendor firmware's LZO compressor and block size.
+          # XZ may be unsupported by the R1's legacy kernel: never substitute.
+          grep -Eiq 'Compression[[:space:]]+lzo' reports-reference-compression.txt
+          grep -Eiq 'Block size[[:space:]]+131072' reports-reference-compression.txt
+          sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs -noappend -comp lzo -Xalgorithm lzo1x_999 -Xcompression-level 9 -b 131072 -processors 2 -no-progress >/dev/null
+          sudo unsquashfs -no-progress -d staging/rechecked-root staging/reference-compatible.squashfs >/dev/null
+          sudo python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0,"tools")
+          from r1_reference_boot import manifest,APPLICATIONS,digest
+          base=Path("reference-work/root")
+          checked=Path("staging/rechecked-root")
+          assert manifest(base)==manifest(checked), "Repacked reference hardware/startup files differ"
+          for name,rel in APPLICATIONS.items():
+              assert digest(Path("static-apps")/name)==digest(checked/rel),name
+          print("Rootfs roundtrip preserved R1 boot files and every PocketOS binary.")
+          PY
           python3 - <<'PY'
           import json
           from pathlib import Path
