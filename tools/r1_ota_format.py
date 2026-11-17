@@ -95,9 +95,10 @@ def validate_tree(iso):
     if set(p.name for p in iso.iterdir()) != {"ota_config.in", "ota_v0"}:
         raise ValueError("Unexpected top-level paths")
     ota = iso / "ota_v0"
-    for filename in ("ota_update.in", "ota_v0.ok", "ota_compatibility.in"):
-        if not regular(ota / filename):
-            raise ValueError("Missing OTA compatibility marker: " + filename)
+    # The pinned R1 reference omits some markers found on other HiBy models.
+    # Preserve optional vendor compatibility files verbatim, never invent them.
+    if not regular(ota / "ota_update.in"):
+        raise ValueError("Missing OTA image manifest")
     if not regular(iso / "ota_config.in"):
         raise ValueError("Missing config")
     records = metadata(ota / "ota_update.in")
