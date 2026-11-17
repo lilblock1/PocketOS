@@ -32,7 +32,7 @@ jobs:
       - name: Install R1 offline format and emulator tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y qemu-user p7zip-full squashfs-tools genisoimage
+          sudo apt-get install -y qemu-user p7zip-full squashfs-tools genisoimage python3-pil fonts-dejavu-core
       - name: Authenticate pinned MIPS binaries
         run: |
           set -euo pipefail
@@ -65,25 +65,54 @@ jobs:
           curl --fail --location --retry 3 "$(cat reference-url.txt)" -o reference.upt
           python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
           sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
-      - name: Check exact PocketOS binary ABI against reference runtime
+      - name: Diagnose reference runtime and dynamic ABI (nonfatal)
         run: |
           set -euo pipefail
           mkdir -p reports
           readelf -l target-apps/pocketos-shell > reports/pocketos-interpreter.txt
           readelf -d target-apps/pocketos-shell > reports/pocketos-dynamic.txt
-          printf 'Target reference-run output\n' > reports/abi-probe.txt
-          for command in "--version" "--self-test"; do
-            echo "pocketos-shell $command" | tee -a reports/abi-probe.txt
-            timeout 30 qemu-mipsel -L "$PWD/reference-work/root" target-apps/pocketos-shell "$command" >> reports/abi-probe.txt 2>&1
+          readelf -V target-apps/pocketos-shell > reports/pocketos-symbol-versions.txt
+          { ls -l reference-work/root/lib/ld.so.1 || :; ls -l reference-work/root/lib/libc.so.6 || :; } > reports/reference-loader.txt 2>&1
+          { readelf -V reference-work/root/lib/libc.so.6 || :; } > reports/reference-libc-versions.txt 2>&1
+          set +e
+          timeout 30 qemu-mipsel -strace -L "$PWD/reference-work/root" target-apps/pocketos-shell --version > reports/dynamic-abi-probe.txt 2>&1
+          result=$?
+          set -e
+          echo "dynamic_pocketos_exit=$result" | tee reports/dynamic-status.txt
+          # Check that the existing reference userland is usable by QEMU.
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" reference-work/root/bin/busybox --help >/dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-compiled-MIPS-SDK
+          run-id: 43804882930
+          github-token: ${{ github.token }}
+          path: previous-sdk
+      - name: Recompile lightweight native apps statically for old vendor libc
+        run: |
+          set -euo pipefail
+          mkdir -p sdk
+          tar -xzf previous-sdk/pocketos-sdk.tar.gz -C sdk --no-same-owner --no-same-permissions
+          (cd sdk/pocketos-sdk && ./relocate-sdk.sh)
+          compiler=
+          for candidate in "$PWD"/sdk/pocketos-sdk/bin/mipsel*-gcc; do
+            if [ -x "$candidate" ]; then compiler="$candidate"; break; fi
           done
-          for executable in pocketos-transfer pocketos-r1-runtime pocketos-info; do
-            timeout 30 qemu-mipsel -L "$PWD/reference-work/root" "target-apps/$executable" --version >> reports/abi-probe.txt 2>&1
-          done
-      - name: Stage apps without changing proven vendor boot and drivers
+          test -n "$compiler"
+          make -C apps CC="$compiler" \
+            CFLAGS="-Os -Wall -Wextra -Werror -ffunction-sections -fdata-sections" \
+            LDFLAGS="-static -s -Wl,--gc-sections" \
+            BUILD_DIR="$PWD/static-apps" all
+          file static-apps/pocketos-shell static-apps/pocketos-transfer | tee reports/static-binary-types.txt
+          readelf -l static-apps/pocketos-shell > reports/static-interpreter.txt
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-shell --version | tee reports/static-smoke.txt
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-transfer --version
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-r1-runtime --version
+      - name: Stage static apps without changing vendor startup, drivers or libs
         run: |
           set -euo pipefail
           mkdir -p staging
-          sudo python3 tools/r1_reference_boot.py reference-work/root target-apps staging/reference-root reports/reference-boot-preservation.json
+          sudo python3 tools/r1_reference_boot.py reference-work/root static-apps staging/reference-root reports/reference-boot-preservation.json
           sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
           timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" staging/reference-root/usr/bin/pocketos-shell --self-test
           sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
