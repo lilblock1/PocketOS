@@ -1,0 +1,251 @@
+name: PocketOS R1 internal GUI default-boot candidate (NOT HARDWARE VERIFIED)
+on:
+  push:
+    branches: [phase6-audio-routing]
+    paths:
+      - 'tools/r1_reference_boot.py'
+      - 'tools/test_r1_reference_boot.py'
+      - 'apps/pocketos-r1-default-boot.sh'
+      - 'apps/pocketos-shell.c'
+      - '.github/workflows/pocketos-r1-default-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: pocketos-r1-internal-default-candidate
+  cancel-in-progress: true
+jobs:
+  preserve-and-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APP_RUN: '44013473948'
+      APP_SHA: '6e67044343f5cccc943a6d5e67d6c281f75486b7'
+      APP_ARTIFACT_ID: '14298395085'
+      APP_DIGEST: 'sha256:508f0c209fac0e7330fc3a6a0e3b2e244441d44a22820e841b56b72556ab25c0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test reference-preserving overlay against fixtures
+        run: |
+          python3 -m unittest discover -s tools -p 'test_r1_reference_boot.py' -v
+          sh -n apps/pocketos-r1-default-boot.sh
+      - name: Install R1 offline format and emulator tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user p7zip-full squashfs-tools genisoimage python3-pil fonts-dejavu-core
+      - name: Authenticate pinned MIPS binaries
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN" > app-run.json
+          jq -e --arg sha "$APP_SHA" '.head_sha==$sha and .status=="completed" and .conclusion=="success" and .head_branch=="phase6-audio-routing" and .head_repository.full_name=="lilblock1/PocketOS"' app-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN/artifacts?per_page=100" > app-artifacts.json
+          jq -e --argjson id "$APP_ARTIFACT_ID" --arg digest "$APP_DIGEST" '[.artifacts[] | select(.id==$id and .digest==$digest and .name=="PocketOS-R1-MIPS-applications-NOT-FIRMWARE" and .expired==false)] | length==1' app-artifacts.json >/dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-MIPS-applications-NOT-FIRMWARE
+          run-id: 44013473948
+          github-token: ${{ github.token }}
+          path: target-apps
+      - name: Verify uploaded application hashes
+        run: |
+          set -euo pipefail
+          (cd target-apps && sha256sum -c SHA256SUMS)
+          file target-apps/pocketos-shell target-apps/pocketos-transfer
+          readelf -h target-apps/pocketos-shell | grep -q 'MIPS'
+      - name: Download and verify pinned R1 reference firmware
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reference=json.loads(Path('boards/hiby-r1/reference.json').read_text())['reference']
+          print('Pinned reference:',reference['tag'])
+          with open('reference-url.txt','w') as f:f.write(reference['url'])
+          PY
+          curl --fail --location --retry 3 "$(cat reference-url.txt)" -o reference.upt
+          python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
+          sudo unsquashfs -no-progress -d reference-work/root reference-work/reference.squashfs
+          unsquashfs -s reference-work/reference.squashfs | tee reports-reference-compression.txt
+      - name: Diagnose reference runtime and dynamic ABI (nonfatal)
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          readelf -l target-apps/pocketos-shell > reports/pocketos-interpreter.txt
+          readelf -d target-apps/pocketos-shell > reports/pocketos-dynamic.txt
+          readelf -V target-apps/pocketos-shell > reports/pocketos-symbol-versions.txt
+          { ls -l reference-work/root/lib/ld.so.1 || :; ls -l reference-work/root/lib/libc.so.6 || :; } > reports/reference-loader.txt 2>&1
+          { readelf -V reference-work/root/lib/libc.so.6 || :; } > reports/reference-libc-versions.txt 2>&1
+          set +e
+          timeout 30 qemu-mipsel -strace -L "$PWD/reference-work/root" target-apps/pocketos-shell --version > reports/dynamic-abi-probe.txt 2>&1
+          result=$?
+          set -e
+          echo "dynamic_pocketos_exit=$result" | tee reports/dynamic-status.txt
+          # Check that the existing reference userland is usable by QEMU.
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" reference-work/root/bin/busybox --help >/dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-compiled-MIPS-SDK
+          run-id: 43804882930
+          github-token: ${{ github.token }}
+          path: previous-sdk
+      - name: Recompile lightweight native apps statically for old vendor libc
+        run: |
+          set -euo pipefail
+          mkdir -p sdk
+          tar -xzf previous-sdk/pocketos-sdk.tar.gz -C sdk --no-same-owner --no-same-permissions
+          (cd sdk/pocketos-sdk && ./relocate-sdk.sh)
+          compiler=
+          for candidate in "$PWD"/sdk/pocketos-sdk/bin/mipsel*-gcc; do
+            if [ -x "$candidate" ]; then compiler="$candidate"; break; fi
+          done
+          test -n "$compiler"
+          make -C apps CC="$compiler" \
+            CFLAGS="-Os -Wall -Wextra -Werror -ffunction-sections -fdata-sections" \
+            LDFLAGS="-static -s -Wl,--gc-sections" \
+            BUILD_DIR="$PWD/static-apps" all
+          file static-apps/pocketos-shell static-apps/pocketos-transfer | tee reports/static-binary-types.txt
+          readelf -l static-apps/pocketos-shell > reports/static-interpreter.txt
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-shell --version | tee reports/static-smoke.txt
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-transfer --version
+          timeout 30 qemu-mipsel -L "$PWD/reference-work/root" static-apps/pocketos-r1-runtime --version
+      - name: Embed PocketOS GUI and helpers internally as default R1 player
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          sudo python3 - <<'PY'
+          import json,sys
+          from pathlib import Path
+          sys.path.insert(0,'tools')
+          from r1_reference_boot import stage_internal_gui
+          report=stage_internal_gui(
+              Path('reference-work/root'),
+              Path('staging/reference-root'),
+              Path('static-apps'),
+              Path('apps/pocketos-r1-default-boot.sh'),
+              '0.3.0.101')
+          Path('reports/pocketos-internal-default-boot.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+          sudo chown "$(id -u):$(id -g)" reports/pocketos-internal-default-boot.json
+          test -x staging/reference-root/usr/bin/pocketos-shell
+          timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" \
+            staging/reference-root/usr/bin/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" \
+            staging/reference-root/usr/bin/pocketos-shell --version |
+            grep -Fx 'PocketOS shell v1'
+          # No microSD required. Original Sonix can only launch as fallback.
+          ! grep -Eq 'PocketOS-try-new-ui|/mnt/sd_0' staging/reference-root/usr/bin/sonix_player.sh
+          grep -Fq 'POCKETOS=/usr/bin/pocketos-shell' staging/reference-root/usr/bin/sonix_player.sh
+          grep -Fq 'fallback' staging/reference-root/usr/bin/sonix_player.sh
+          grep -Fq 'auto-input' staging/reference-root/usr/bin/sonix_player.sh
+          sh -n staging/reference-root/usr/bin/sonix_player.sh
+          grep -Eiq 'Compression[[:space:]]+lzo' reports-reference-compression.txt
+          grep -Eiq 'Block size[[:space:]]+131072' reports-reference-compression.txt
+          sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs \
+            -noappend -comp lzo -Xalgorithm lzo1x_999 \
+            -Xcompression-level 9 -b 131072 -processors 2 -no-progress >/dev/null
+          sudo unsquashfs -no-progress -d staging/roundtrip-root \
+            staging/reference-compatible.squashfs >/dev/null
+          sudo python3 - <<'PY'
+          import json,sys
+          from pathlib import Path
+          sys.path.insert(0,'tools')
+          from r1_reference_boot import manifest,digest,INTERNAL_GUI_APPS
+          reference=Path('reference-work/root')
+          installed=Path('staging/roundtrip-root')
+          before,after=manifest(reference),manifest(installed)
+          changed=[p for p in before if before[p]!=after.get(p)]
+          assert changed==['usr/bin/sonix_player.sh'], changed
+          assert digest(reference/'usr/bin/sonix_player.sh')==digest(installed/'usr/bin/sonix_player.pocketos-fallback.sh')
+          assert digest(reference/'usr/bin/sonix_player')==digest(installed/'usr/bin/sonix_player')
+          assert digest(Path('apps/pocketos-r1-default-boot.sh'))==digest(installed/'usr/bin/sonix_player.sh')
+          for src,dest in INTERNAL_GUI_APPS.items():
+              assert digest(Path('static-apps')/src)==digest(installed/dest),src
+          info=json.loads((installed/'usr/resource/sonix/components/system-info.json').read_text())
+          assert info['device-name']=='HiBy R1' and info['OS_version']=='0.3.0.101'
+          assert info['ota-repo']=='lilblock1/PocketOS'
+          assert not (installed/'usr/bin/sonix_player.sh').is_symlink()
+          print('PASS: PocketOS is internal default; original vendor player preserved.')
+          PY
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          ref=Path('reference-work/reference.squashfs').stat().st_size
+          candidate=Path('staging/reference-compatible.squashfs').stat().st_size
+          # Reference R1 kernel has a 0x02d00000 rootfs MTD region in the
+          # previous firmware checks. Save at least 1 MiB for erase blocks
+          # and bad-block margin. This is NOT a physical capacity verification.
+          engineering_cap=min(ref+1048576,0x02d00000-1048576)
+          report={
+            'reference_squashfs_bytes':ref,
+            'candidate_squashfs_bytes':candidate,
+            'increase_bytes':candidate-ref,
+            'engineering_cap_bytes':engineering_cap,
+            'within_engineering_cap':candidate<=engineering_cap,
+            'device_partition_verified':False,
+            'pocketos_internal':True,'pocketos_default':True,
+            'physical_boot_tested':False,
+          }
+          Path('reports/internal-gui-footprint.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(report)
+          assert candidate<=engineering_cap, 'Internal GUI exceeds R1 engineering size cap'
+          PY
+      - name: Verify temporary R1 OTA chunk/manifest round-trip
+        run: |
+          set -euo pipefail
+          sudo python3 tools/r1_ota_format.py reference-work/iso \
+            staging/reference-compatible.squashfs staging/r1.upt \
+            reports/ota-roundtrip.json
+          sudo chown "$(id -u):$(id -g)" reports/ota-roundtrip.json
+          mkdir -p candidate
+          cp staging/r1.upt candidate/r1.upt
+          (cd candidate && sha256sum r1.upt > SHA256SUMS)
+          cat > candidate/IMPORTANT.txt <<'EOF'
+          PocketOS R1 0.3.0.101 - INTERNAL GUI DEFAULT BOOT
+          The PocketOS shell IS embedded in this firmware and starts by default.
+          No special microSD marker or optional app ZIP is required.
+          The stock R1 kernel, hardware initialization, and original Sonix
+          player are preserved solely as a crash/startup fallback.
+          Experimental firmware: physical cold boot, display/touch, recovery
+          write targets and flash capacity are not fully verified.
+          This firmware can fail to boot, despite successful host tests.
+          EOF
+          sudo rm -rf staging reference-work reference.upt
+      - name: Upload internal-PocketOS experimental firmware candidate
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-R1-Internal-Default-OTA-EXPERIMENTAL
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish separate immutable PocketOS default-GUI test release
+        if: success() && github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/phase6-audio-routing'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=v0.3.0.101-test
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "This test tag already exists. Do not overwrite it."
+            exit 1
+          fi
+          (cd candidate && sha256sum -c SHA256SUMS)
+          gh release create "$tag" candidate/r1.upt candidate/SHA256SUMS \
+            candidate/IMPORTANT.txt --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --latest=false \
+            --title 'PocketOS R1 0.3.0.101 - Internal GUI Boots by Default (experimental)' \
+            --notes-file candidate/IMPORTANT.txt
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json url,isPrerelease
+      - name: Upload findings (no firmware image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-R1-Internal-Default-Boot-Report
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
