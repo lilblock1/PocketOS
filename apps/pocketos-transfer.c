@@ -237,7 +237,8 @@ static void download_file(int fd,const char *folder,const char *name){
     int file=openat(d,name,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);
     struct stat st;
     if(file<0||fstat(file,&st)!=0||!S_ISREG(st.st_mode)){
-        if(file>=0)close(file);close(d);
+        if(file>=0)close(file);
+        close(d);
         message(fd,404,"Not Found","File unavailable");return;
     }
     head(fd,200,"OK","application/octet-stream",(unsigned long long)st.st_size,1);
