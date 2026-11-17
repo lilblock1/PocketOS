@@ -35,6 +35,28 @@ class Stage(unittest.TestCase):
             self.assertEqual(set(report["added_applications"]),set(overlay.APPLICATIONS))
             self.assertEqual((base/"candidate/usr/bin/sonix_player").read_bytes(), b"ORIGINAL-usr/bin/sonix_player")
             self.assertTrue((base/"candidate/usr/bin/pocketos-shell").is_file())
+    def test_opt_in_guard_preserves_exact_original_player_and_hardware(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base=Path(temp)
+            root=base/"ref"
+            apps=base/"apps"
+            make_fixture(root,apps)
+            original=overlay.manifest(root)
+            report=overlay.stage(root,apps,base/"candidate")
+            guard=base/"guard.sh"
+            guard.write_text("#!/bin/sh\nexec /usr/bin/sonix_player.pocketos-fallback.sh\n")
+            result=overlay.add_guard(base/"candidate",original,guard,report)
+            self.assertTrue(result["guarded_boot_opt_in"])
+            self.assertFalse(result["installation_allowed"])
+            self.assertFalse(result["flashable"])
+            self.assertTrue(result["vendor_hardware_initialization_unchanged"])
+            self.assertFalse(result["pocketos_launcher_autostart"])
+            self.assertEqual((base/"candidate/usr/bin/sonix_player.pocketos-fallback.sh").read_bytes(),
+                             (root/"usr/bin/sonix_player.sh").read_bytes())
+            self.assertEqual((base/"candidate/module_driver/soc_fb.ko").read_bytes(),
+                             (root/"module_driver/soc_fb.ko").read_bytes())
+            with self.assertRaisesRegex(ValueError,"collision"):
+                overlay.add_guard(base/"candidate",original,guard,report)
     def test_refuses_collision_with_reference(self):
         with tempfile.TemporaryDirectory() as temp:
             base=Path(temp)
