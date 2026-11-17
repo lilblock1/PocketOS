@@ -34,7 +34,7 @@
 static uint16_t canvas[W*H];
 static uint16_t bg=RGB(13,19,24), card=RGB(25,35,43), edge=RGB(47,62,70),
     fg=RGB(239,246,246), muted=RGB(151,171,179), mint=RGB(109,226,182);
-enum page { HOME, MUSIC, BOOKS, GAMES, FILES, SETTINGS, DIAGNOSTICS, DISPLAY, SOUND, RADIO, POWER, STORAGE, UPDATES, PREFERENCES, CONTROL, NOWPLAYING, READER, WIFIUI, BTUI };
+enum page { HOME, MUSIC, BOOKS, GAMES, FILES, SETTINGS, DIAGNOSTICS, DISPLAY, SOUND, RADIO, POWER, STORAGE, UPDATES, PREFERENCES, CONTROL, NOWPLAYING, READER, WIFIUI, BTUI, TRANSFERUI };
 static enum page page=HOME, return_page=HOME;
 static int return_selected=0, clock24=0, theme=0, readable=0, saver=0, save_error=0;
 static const char *config_path=NULL;
@@ -84,7 +84,7 @@ static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0;
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
-static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","WIRELESS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
+static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","WIRELESS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH","FILE TRANSFER"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
 static const enum page setting_items[]={DISPLAY,SOUND,RADIO,POWER,STORAGE,UPDATES,PREFERENCES};
 static const unsigned char glyph[][7]={
@@ -1190,13 +1190,25 @@ static void render(void) {
         }
     } else if(page==RADIO){
         reader_print(12,62,"Wireless & Connections",12,muted,bg,0,0,228);
-        rounded(12,81,216,60,card);
-        reader_print(21,91,"Wi-Fi",18,fg,card,0,1,220);
-        reader_print(21,116,wifi_present?"Interface detected":"Interface not detected",12,muted,card,0,0,220);
-        rounded(12,153,216,60,card);
-        reader_print(21,163,"Bluetooth",18,fg,card,0,1,220);
-        reader_print(21,188,bt_present?"Adapter detected":"Adapter not detected",12,muted,card,0,0,220);
-        reader_print(12,239,radio_allow?"Manual scans only":"Wireless changes locked",12,muted,bg,0,0,228);
+        rounded(12,81,216,51,selected==0?edge:card);
+        reader_print(21,87,"Wi-Fi",17,fg,card,0,1,220);
+        reader_print(21,110,wifi_present?"Interface detected":"Interface not detected",11,muted,card,0,0,220);
+        rounded(12,139,216,51,selected==1?edge:card);
+        reader_print(21,145,"Bluetooth",17,fg,card,0,1,220);
+        reader_print(21,168,bt_present?"Adapter detected":"Adapter not detected",11,muted,card,0,0,220);
+        rounded(12,197,216,51,selected==2?edge:card);
+        reader_print(21,203,"Wireless File Transfer",16,fg,card,0,1,220);
+        reader_print(21,226,"Transfer files over Wi-Fi",11,muted,card,0,0,220);
+        reader_print(12,261,"Transfer server not installed yet",11,muted,bg,0,0,228);
+        text_at(12,301,"BACK",2,mint);
+    } else if(page==TRANSFERUI){
+        rounded(12,81,216,174,card);
+        reader_print(21,94,"Wireless File Transfer",17,fg,card,0,1,220);
+        reader_print(21,131,"Transfer music, books and",13,muted,card,0,0,220);
+        reader_print(21,150,"files from your computer",13,muted,card,0,0,220);
+        reader_print(21,169,"or phone using Wi-Fi.",13,muted,card,0,0,220);
+        reader_print(21,203,"NOT AVAILABLE YET",14,mint,card,0,1,220);
+        reader_print(12,267,"No transfer server is running",12,muted,bg,0,0,228);
         text_at(12,301,"BACK",2,mint);
     } else {
         rounded(12,81,216,92,card);
@@ -1225,6 +1237,7 @@ static void open_control(void) {
 static void back(void) {
     if(page==UPDATES){if(update_pid>=0)return;if(update_confirm){update_confirm=U_NONE;return;}page=SETTINGS;selected=5;return;}
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
+    if(page==TRANSFERUI){page=RADIO;return;}
     if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
@@ -1252,7 +1265,7 @@ static void activate(int i) {
         selected=0;return;
     }
     if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
-    else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
+    else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==RADIO)selected=0;if(page==UPDATES){update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
     selected=0;
 }
 static void set_volume_target(int v){
@@ -1286,7 +1299,8 @@ static void tap(int x,int y) {
         }else radio_tap(x,y);
         return;
     }
-    if(page==RADIO&&y>=81&&y<214){radio_open(y>=153);return;}
+    if(page==TRANSFERUI)return;
+    if(page==RADIO&&y>=81&&y<248){if(y<132)radio_open(0);else if(y>=139&&y<190)radio_open(1);else if(y>=197)page=TRANSFERUI;return;}
     if(page==FILES){
         if(fm_confirm){if(y>=241&&y<285){if(x>=120)fm_apply();else{fm_confirm=0;fm_note("CANCELLED");}}return;}
         if(fm_panel==2){fm_edit_char(x,y);return;}
@@ -1372,7 +1386,14 @@ static int key(unsigned code) {
         }
         return 0;
     }
-    if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){radio_open(code==KEY_DOWN);return 1;}
+    if(page==TRANSFERUI&&(code==KEY_ENTER||code==KEY_OK)){return 1;}
+    if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){
+        if(code==KEY_UP)selected=(selected+2)%3;
+        else if(code==KEY_DOWN)selected=(selected+1)%3;
+        else if(selected==2)page=TRANSFERUI;
+        else radio_open(selected==1);
+        return 1;
+    }
     if(page==FILES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(fm_confirm||fm_panel)return 0;
