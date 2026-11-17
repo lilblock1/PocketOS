@@ -1,6 +1,15 @@
-name: PocketOS R1 signed sequence 2
+name: PocketOS R1 signed pre-release
 on:
   workflow_dispatch:
+    inputs:
+      source_run:
+        description: Successful PocketOS applications workflow run ID
+        required: true
+        type: string
+      sequence:
+        description: New firmware sequence (strictly increasing)
+        required: true
+        type: string
 permissions:
   contents: write
   actions: read
@@ -14,9 +23,8 @@ jobs:
     timeout-minutes: 25
     environment: pocketos-release
     env:
-      SOURCE_COMMIT: 67cdac59a28931146ab1e1612e49be41e52eb1ae
-      KIT_ID: '14293303209'
-      KIT_SHA256: e6e576098a1494e923bb939e0a7b85f6681d404d658b50bf08a430cba127b937
+      SOURCE_RUN: ${{ inputs.source_run }}
+      SEQUENCE: ${{ inputs.sequence }}
       PREVIEW_ID: '757071177'
       PREVIEW_SHA256: fa36d95736555dba9ce95e33a29227668270d524f1cb419a751506f59d10a074
     steps:
@@ -29,10 +37,32 @@ jobs:
           umask 077
           mkdir -p "$RUNNER_TEMP/pocketos-release/kit"
           cd "$RUNNER_TEMP/pocketos-release"
-          if gh release view test-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "test-latest already exists; refusing to overwrite any published assets"
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{0,19}$ && "$SEQUENCE" =~ ^[1-9][0-9]{0,8}$ ]]
+          [[ "$SEQUENCE" -gt 2 ]] || { echo "Sequence 2 already published"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .conclusion=="success" and .status=="completed" and
+            .path==".github/workflows/pocketos-apps.yml" and
+            .head_branch=="phase5-r1-updater" and .head_repository.full_name==$repo
+          ' run.json >/dev/null
+          SOURCE_COMMIT=$(jq -er '.head_sha | select(test("^[a-f0-9]{40}$"))' run.json)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts?per_page=100" > artifacts.json
+          jq -e '[.artifacts[] | select(.name=="PocketOS-R1-updater-bootstrap-kit-NOT-FIRMWARE" and .expired==false)] | length==1' artifacts.json >/dev/null
+          KIT_ID=$(jq -er '.artifacts[] | select(.name=="PocketOS-R1-updater-bootstrap-kit-NOT-FIRMWARE" and .expired==false) | .id' artifacts.json)
+          KIT_SHA256=$(jq -er '.artifacts[] | select(.id=='"$KIT_ID"') | .digest | select(test("^sha256:[a-f0-9]{64}$")) | sub("^sha256:";"")' artifacts.json)
+          printf 'SOURCE_COMMIT=%s\n' "$SOURCE_COMMIT" >> "$GITHUB_ENV"
+          if gh release view "test-$SEQUENCE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Versioned release already exists; refusing to overwrite"
             exit 1
           fi
+          # Keep a verified copy of the current rolling release for an archive.
+          mkdir previous
+          gh release download test-latest --repo "$GITHUB_REPOSITORY" --dir previous \
+            --pattern manifest --pattern manifest.sig --pattern pocketos-r1.upt --pattern data-r1-report.json
+          read -r magic channel target old extra < previous/manifest
+          [[ "$magic" == POCKETOS-R1-FW-1 && "$channel" == test && "$target" == r1-mipsel && -z "$extra" && "$old" =~ ^[1-9][0-9]{0,8}$ ]]
+          [[ "$SEQUENCE" -gt "$old" ]] || { echo "Sequence must exceed current test-latest"; exit 1; }
+          printf 'PREVIOUS_SEQUENCE=%s\n' "$old" >> "$GITHUB_ENV"
           curl --fail --silent --show-error --location \
             -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$KIT_ID/zip" -o kit.zip
@@ -48,7 +78,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3 openssl p7zip-full squashfs-tools genisoimage binutils
-      - name: Sign and independently verify sequence 2
+      - name: Sign and verify new firmware
         env:
           RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
           PREFLIGHT_LOG: ${{ secrets.POCKETOS_PREFLIGHT_LOG }}
@@ -69,7 +99,11 @@ jobs:
           openssl pkey -in "$key" -check -noout >/dev/null
           tr -d '\r' < "$work/preflight.log" | grep -Fxq POCKETOS-R1-RECOVERY-PREFLIGHT-OK
           cd "$work/kit"
-          bash finalize-r1-bootstrap.sh "$work/preflight.log" "$work/preview.upt" 2
+          openssl pkey -in "$key" -pubout -out "$work/public.pem"
+          # A mismatched signing secret must never publish an unusable release.
+          (cd "$work/previous"; openssl dgst -sha256 -verify "$work/public.pem" -signature manifest.sig manifest
+           tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          bash finalize-r1-bootstrap.sh "$work/preflight.log" "$work/preview.upt" "$SEQUENCE"
           shopt -s nullglob
           candidates=("$HOME"/pocketos-bootstrap.*/signed)
           test "${#candidates[@]}" = 1
@@ -77,7 +111,7 @@ jobs:
           openssl pkey -in "$key" -pubout -out "$work/public.pem"
           cd "$signed"
           openssl dgst -sha256 -verify "$work/public.pem" -signature manifest.sig manifest
-          test "$(head -n 1 manifest)" = 'POCKETOS-R1-FW-1 test r1-mipsel 2'
+          test "$(head -n 1 manifest)" = "POCKETOS-R1-FW-1 test r1-mipsel $SEQUENCE"
           tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -
           cp manifest manifest.sig pocketos-r1.upt data-r1-report.json "$work/publish/"
       - name: Publish the signed pre-release only
@@ -86,12 +120,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/pocketos-release/publish"
-          gh release create test-latest manifest manifest.sig pocketos-r1.upt data-r1-report.json \
+          work="$RUNNER_TEMP/pocketos-release"
+          release_notes="Signed rootfs-only HiBy R1 test firmware, sequence $SEQUENCE. Source: $SOURCE_COMMIT. Automated tests passed; physical boot and Wi-Fi install require verification. Keep microSD inserted and preserve stock recovery."
+          # Archive the old rolling assets before modifying the rolling channel.
+          if ! gh release view "test-$PREVIOUS_SEQUENCE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            old_commit=$(gh release view test-latest --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)
+            [[ "$old_commit" =~ ^[a-f0-9]{40}$ ]] || old_commit="$SOURCE_COMMIT"
+            (cd "$work/previous"; gh release create "test-$PREVIOUS_SEQUENCE" manifest manifest.sig pocketos-r1.upt data-r1-report.json \
+              --repo "$GITHUB_REPOSITORY" --target "$old_commit" --draft --prerelease \
+              --title "PocketOS R1 — Sequence $PREVIOUS_SEQUENCE (archive)" --notes "Archived signed test release.")
+            gh release edit "test-$PREVIOUS_SEQUENCE" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          fi
+          cd "$work/publish"
+          # Versioned pre-release is complete before updating the rolling channel.
+          gh release create "test-$SEQUENCE" manifest manifest.sig pocketos-r1.upt data-r1-report.json \
             --repo "$GITHUB_REPOSITORY" --target "$SOURCE_COMMIT" --draft --prerelease \
-            --title "PocketOS R1 — Sequence 2 (experimental)" \
-            --notes "Signed rootfs-only update for the previously provisioned HiBy R1. Automated application tests passed. Physical Wi-Fi installation and cold boot not yet verified. Preserve the stock recovery and keep the microSD inserted. Do not install on stock or an unrelated device."
-          gh release edit test-latest --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+            --title "PocketOS R1 — Sequence $SEQUENCE (experimental)" --notes "$release_notes"
+          gh release edit "test-$SEQUENCE" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          # GitHub asset replacement is not atomic. Old/new mixed assets fail
+          # signature or checksum verification; publish the manifest last.
+          gh release upload test-latest pocketos-r1.upt data-r1-report.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload test-latest manifest.sig --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload test-latest manifest --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit test-latest --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "PocketOS R1 — Sequence $SEQUENCE (experimental)" --notes "$release_notes"
+          mkdir "$work/published"
+          gh release download test-latest --repo "$GITHUB_REPOSITORY" --dir "$work/published" \
+            --pattern manifest --pattern manifest.sig --pattern pocketos-r1.upt --pattern data-r1-report.json
+          for name in manifest manifest.sig pocketos-r1.upt data-r1-report.json; do cmp "$name" "$work/published/$name"; done
       - name: Remove signing workspace
         if: always()
         run: sudo rm -rf -- "$RUNNER_TEMP/pocketos-release"
