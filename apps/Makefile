@@ -3,6 +3,10 @@ BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
 all: $(BUILD_DIR)/pocketos-timeout
+all: $(BUILD_DIR)/pocketos-userdata
+$(BUILD_DIR)/pocketos-userdata: ../tools/r1-userdata.c
+	mkdir -p "$(BUILD_DIR)"
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 $(BUILD_DIR)/pocketos-timeout: pocketos-timeout.c
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)

@@ -52,6 +52,20 @@ its temporary device entry disappeared after disconnecting. Pair and Connect now
 both explicitly trust the selected device, and audio selection verifies Trusted
 as well as Connected. A fresh pair/disconnect/reconnect cycle remains to be tested.
 
+## Saved-settings preparation
+
+A private, complete logical userdata readback was independently SHA-256 checked
+on the host and device. It is not in this repository and excludes NAND OOB.
+The existing UBI header and userdata geometry were verified read-only.
+
+Added a constrained userdata attachment helper and mount service for later saved
+network/pairing/update settings. They accept only the existing userdata partition
+and existing `user_data` volume; there is no erase, format or volume creation
+operation. The attachment path is not enabled or physically exercised yet.
+Timeout and userdata helpers are now included in offline application assembly.
+Host/MIPS compilation and native `--check` passed. The radio audio build recipe
+also reproduced its SBC, BlueALSA and audio-enabled BlueZ components successfully.
+
 After Bluetooth is fixed, the requested next feature is on-device online and
 microSD updates, with recovery/bootloader preserved. Then measure and optimize
 memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.

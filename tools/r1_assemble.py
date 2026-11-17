@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 
 CORE = {
+    "pocketos-timeout": "usr/bin/pocketos-timeout",
+    "pocketos-userdata": "usr/sbin/pocketos-userdata",
     "pocketos-stat": "usr/bin/pocketos-stat",
     "pocketos-book-prepare": "usr/bin/pocketos-book-prepare",
     "book-prepare-LICENSE.txt": "usr/share/pocketos/book-prepare-LICENSE.txt",
@@ -23,7 +25,7 @@ CORE = {
     "S95pocketos": "etc/init.d/S95pocketos",
     "reader-font-LICENSE.txt": "usr/share/pocketos/reader-font-LICENSE.txt",
 }
-ELFS = {"pocketos-info","pocketos-stat","pocketos-book-prepare","pocketos-shell","pocketos-music","pocketos-wifi","pocketos-r1-runtime"}
+ELFS = {"pocketos-info","pocketos-stat","pocketos-timeout","pocketos-userdata","pocketos-book-prepare","pocketos-shell","pocketos-music","pocketos-wifi","pocketos-r1-runtime"}
 CORE_CAP = 4 * 1024 * 1024
 ROOTFS_CAP = 48 * 1024 * 1024  # development engineering cap only, not partition capacity
 
