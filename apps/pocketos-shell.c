@@ -2694,6 +2694,13 @@ int main(int argc,char **argv) {
         if(fputs("POCKETOS3 2 1 1 1 3 37 2\n",legacy)<0){fclose(legacy);return 1;}
         if(fclose(legacy))return 1;
         load_preferences();if(theme!=2||volume!=37||brightness_saved!=-1||music_shuffle||music_repeat)return 1;
+        FILE *old=fopen(config_path,"w");if(!old)return 1;
+        if(fputs("POCKETOS4 2 1 1 1 3 37 0 -1 0 0 0\n",old)<0){fclose(old);return 1;}
+        if(fclose(old))return 1;
+        load_preferences();if(output!=3)return 1;
+        if(!save_preferences())return 1;
+        output=0;load_preferences();if(output!=3)return 1;
+        output=2;
         brightness_saved=42;music_shuffle=1;music_repeat=2;music_list=1;
         if(!save_preferences())return 1;
         theme=clock24=readable=saver=timezone_choice=volume=output=music_shuffle=music_repeat=music_list=0;brightness_saved=-1;load_preferences();

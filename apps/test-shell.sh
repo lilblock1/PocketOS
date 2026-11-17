@@ -1,5 +1,5 @@
 #!/bin/sh
-set -eu
+set -eux
 bin=$1
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
@@ -12,7 +12,7 @@ done
 if cmp -s "$tmp/HOME.ppm" "$tmp/SETTINGS.ppm"; then exit 1; fi
 if "$bin" --preview UNKNOWN "$tmp/no.ppm"; then exit 1; fi
 "$bin" --test-config "$tmp/preferences"
-test "$(cat "$tmp/preferences")" = 'POCKETOS4 2 1 1 1 3 37 2 42 1 2 1'
+test "$(cat "$tmp/preferences")" = 'POCKETOS5 2 1 1 1 3 37 2 42 1 2 1'
 "$bin" --test-volume-config "$tmp/volume-preferences"
 
 mkdir "$tmp/backlight"
