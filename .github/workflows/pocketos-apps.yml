@@ -1,7 +1,7 @@
 name: PocketOS - Applications (no Linux rebuild)
 on:
   push:
-    branches: [main]
+    branches: [main, phase6-audio-routing]
     paths: ['apps/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', '.github/workflows/pocketos-apps.yml']
   workflow_dispatch:
     inputs:
