@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -113,9 +114,18 @@ static void transfer_stop(void){
 static void transfer_cleanup(void){
     if(transfer_pid>0){
         (void)kill(transfer_pid,SIGTERM);
-        /* No upload should survive parent shutdown. */
-        (void)kill(transfer_pid,SIGKILL);
-        (void)waitpid(transfer_pid,NULL,0);
+        /* Let the server unlink an interrupted partial upload. */
+        for(int i=0;i<30&&transfer_pid>0;i++){
+            int status=0;
+            pid_t got=waitpid(transfer_pid,&status,WNOHANG);
+            if(got==transfer_pid||(got<0&&errno==ECHILD)){transfer_pid=-1;break;}
+            struct timespec delay={.tv_sec=0,.tv_nsec=100000000};
+            (void)nanosleep(&delay,NULL);
+        }
+        if(transfer_pid>0){
+            (void)kill(transfer_pid,SIGKILL);
+            (void)waitpid(transfer_pid,NULL,0);
+        }
     }
     transfer_pid=-1;
     if(transfer_fd>=0)close(transfer_fd);
