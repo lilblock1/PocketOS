@@ -3,6 +3,7 @@
  * current wlan0 IPv4 address and require an eight-digit on-screen pairing key.
  * Use ONLY on a trusted local Wi-Fi network. NEVER port-forward this service.
  */
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 #include <arpa/inet.h>
@@ -23,6 +24,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -33,7 +35,10 @@
 static volatile sig_atomic_t running=1;
 static char key[9],address[INET_ADDRSTRLEN];
 static const char *root="/mnt/sd_0";
-static int test_fixture=0,unauthorized=0;
+static int unauthorized=0;
+#ifdef POCKETOS_TEST_FIXTURE
+static int test_fixture=0;
+#endif
 static void stopping(int sig){(void)sig;running=0;}
 static int random_bytes(unsigned char *p,size_t n){
     int f=open("/dev/urandom",O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
@@ -108,7 +113,7 @@ static void head(int fd,int code,const char *reason,const char *type,unsigned lo
     int n=snprintf(b,sizeof(b),"HTTP/1.0 %d %s\r\nContent-Type: %s\r\n"
       "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
       "Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n"
-      "Access-Control-Allow-Origin: null\r\nConnection: close\r\n"
+      "Connection: close\r\n"
       "%s",code,reason,type,known?"":"");
     if(n>0&&(size_t)n<sizeof(b))(void)send_all(fd,b,(size_t)n);
     if(known){
@@ -318,7 +323,7 @@ static void serve(int fd){
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS Transfer v1");return 0;}
 #ifdef POCKETOS_TEST_FIXTURE
-    if(argc==4&&!strcmp(argv[1],"--fixture-root")&&argv[2][0]=='/'){
+    if(argc==3&&!strcmp(argv[1],"--fixture-root")&&argv[2][0]=='/'){
         test_fixture=1;root=argv[2];
         if(strlen(root)>400||strstr(root,".."))return 2;
     }else
