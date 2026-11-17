@@ -205,24 +205,15 @@ static int fm_transfer(const char *destination,int remove_source){
         while(remaining){
             if(fm_cancel_transfer)goto end;
             size_t need=remaining>sizeof(buf)?sizeof(buf):(size_t)remaining;
-            size_t offset=0;
-            while(offset<need){
-                if(offset>=sizeof(buf)||need>sizeof(buf)||offset>=need)goto end;
-                size_t left=need-offset;
-                ssize_t n=read(src,buf+offset,left);
-                if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
-                if(n<=0||(size_t)n>left)goto end;
-                offset+=(size_t)n;
-            }
-            offset=0;
-            while(offset<need){
-                if(offset>=sizeof(check)||need>sizeof(check)||offset>=need)goto end;
-                size_t left=need-offset;
-                ssize_t n=read(dst,check+offset,left);
-                if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
-                if(n<=0||(size_t)n>left)goto end;
-                offset+=(size_t)n;
-            }
+            /* Regular file reads are bounded by the full buffer size. If
+               a short read occurs, retry this block from its original offset
+               rather than using a variable offset in the stack buffer. */
+            off_t at=(off_t)(total-remaining);
+            ssize_t got_src,got_dst;
+            do{got_src=pread(src,buf,need,at);}while(got_src<0&&errno==EINTR&&!fm_cancel_transfer);
+            if(got_src!=(ssize_t)need)goto end;
+            do{got_dst=pread(dst,check,need,at);}while(got_dst<0&&errno==EINTR&&!fm_cancel_transfer);
+            if(got_dst!=(ssize_t)need)goto end;
             if(memcmp(buf,check,need))goto end;
             remaining-=need;
             unsigned pct=80+(unsigned)((total-remaining)*19/total);
