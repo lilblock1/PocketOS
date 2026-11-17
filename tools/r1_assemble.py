@@ -14,13 +14,16 @@ CORE = {
     "pocketos-wifi": "usr/bin/pocketos-wifi",
     "pocketos-bluetooth": "usr/bin/pocketos-bluetooth",
     "pocketos-update": "usr/bin/pocketos-update",
+    "pocketos-transfer": "usr/bin/pocketos-transfer",
+    "pocketos-audio-monitor": "usr/bin/pocketos-audio-monitor",
+    "pocketos-radio-observe": "usr/bin/pocketos-radio-observe",
     "pocketos-decoder": "usr/bin/pocketos-decoder",
     "pocketos-start": "usr/bin/pocketos-start",
     "pocketos-r1-runtime": "usr/sbin/pocketos-r1-runtime",
     "S95pocketos": "etc/init.d/S95pocketos",
     "reader-font-LICENSE.txt": "usr/share/pocketos/reader-font-LICENSE.txt",
 }
-ELFS = {"pocketos-info","pocketos-shell","pocketos-music","pocketos-wifi","pocketos-r1-runtime"}
+ELFS = {"pocketos-info","pocketos-shell","pocketos-music","pocketos-wifi","pocketos-r1-runtime","pocketos-transfer","pocketos-audio-monitor"}
 CORE_CAP = 4 * 1024 * 1024
 ROOTFS_CAP = 48 * 1024 * 1024  # development engineering cap only, not partition capacity
 
