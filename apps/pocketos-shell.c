@@ -1838,7 +1838,7 @@ int main(int argc,char **argv) {
         return ppm(argv[3]);
     }
     if(argc>=5&&!strcmp(argv[1],"--config")&&argv[2][0]=='/') {config_path=argv[2];argc-=2;argv+=2;}
-    while(argc>=4){
+    while(argc>=2){
         if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
