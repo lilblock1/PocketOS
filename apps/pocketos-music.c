@@ -252,6 +252,7 @@ static int playback(struct wav *w,int volume,int controlled){
     if(pid<0){close(p[0]);close(p[1]);return 1;}
     if(!pid){
         close(p[1]);if(dup2(p[0],STDIN_FILENO)<0)_exit(126);close(p[0]);
+        if(bluetooth_output&&setenv("ALSA_CONFIG_PATH","/run/pocketos-bluetooth/asound.conf",1))_exit(126);
         char r[16],c[16];snprintf(r,sizeof(r),"%u",w->rate);snprintf(c,sizeof(c),"%u",w->channels);
         if(bluetooth_output&&setenv("ALSA_CONFIG_PATH","/run/pocketos-bluetooth/asound.conf",1))_exit(126);
         execl("/usr/bin/aplay","aplay","-q","-D",bluetooth_output?"pocketos_bluetooth":w->rate==48000&&w->channels==2&&w->bits==16?"hw:0,0":"plughw:CARD=hibysoundcard,DEV=0","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);

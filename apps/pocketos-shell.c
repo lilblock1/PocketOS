@@ -1102,6 +1102,13 @@ static void radio_choose(void){
     radio_security=item->security;radio_clear_key();radio_keyboard=1;
     radio_message(radio_security?"Enter Wi-Fi password":"Open network - confirm Join");
 }
+static void radio_disconnect_audio(void){
+    if(radio_active==R_BT_SCAN)radio_cancel_scan();
+    if(radio_pid>=0)return;
+    char selected[18];
+    if(bt_audio_selected(selected))(void)radio_spawn(R_BT_DISCONNECT,selected);
+    else if(radio_count)(void)radio_spawn(R_BT_DISCONNECT,radio_items[radio_index].address);
+}
 static void radio_tap(int x,int y){
     if(radio_keyboard){
         if(radio_security&&x>=180&&y>=55&&y<79){radio_show_key=!radio_show_key;return;}
@@ -1428,6 +1435,7 @@ static void render(void) {
         rounded(12,213,216,49,card);
         text_at(21,223,"OUTPUT PREFERENCE",1,muted);
         text_at(21,239,outputs[output],2,fg);
+        if(output==2){rounded(145,235,76,23,edge);text_at(150,243,"DISCONNECT",1,mint);}
         rounded(12,265,216,23,card);text_at(21,272,volume_extended?"DISABLE HIGH VOLUME":"ENABLE HIGH VOLUME",1,mint);
         text_at(12,301,"BACK",2,mint);
         if(volume_warning){
@@ -1465,7 +1473,8 @@ static void render(void) {
             const char *labels[]={"UP",radio_mode?"PAIR":"JOIN","DOWN","SCAN","STATUS",radio_mode?"CONNECT":"DISCONN"};
             for(int i=0;i<6;i++){int x=12+i%3*74,y=224+i/3*30;rounded(x,y,70,26,card);text_at(x+5,y+9,labels[i],1,mint);}
             text_at(12,301,"BACK",2,mint);
-            if(radio_mode&&radio_count)text_at(134,301,"DISCONNECT",1,mint);
+            char selected_audio[18];
+            if(radio_mode&&(radio_count||bt_audio_selected(selected_audio)))text_at(134,301,"DISCONNECT",1,mint);
         }
     } else if(page==RADIO){
         rounded(12,81,216,60,card);
@@ -1573,7 +1582,7 @@ static void tap(int x,int y) {
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
     if(page==WIFIUI||page==BTUI){
         if(!radio_keyboard&&y>=288){
-            if(page==BTUI&&x>=125&&radio_count&&radio_pid<0)(void)radio_spawn(R_BT_DISCONNECT,radio_items[radio_index].address);
+            if(page==BTUI&&x>=125)radio_disconnect_audio();
             else back();
         }else radio_tap(x,y);
         return;
@@ -1632,6 +1641,7 @@ static void tap(int x,int y) {
         return;
     }
     if(page==SOUND&&x>=24&&x<=216&&y>=148&&y<=183){set_volume_target((x-24)*(volume_extended?VOL_MAX:VOL_NORMAL)/192);return;}
+    if(page==SOUND&&output==2&&x>=145&&x<221&&y>=235&&y<258){radio_disconnect_audio();return;}
     if(page==SOUND&&x>=12&&x<228&&y>=213&&y<263){volume_revoke();output=(output+1)%3;save_error=!save_preferences();return;}
     if(page==SOUND&&x>=12&&x<228&&y>=265&&y<288){if(volume_extended)volume_revoke();else volume_warning=1;return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}

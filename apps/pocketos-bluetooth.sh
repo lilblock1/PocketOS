@@ -86,7 +86,10 @@ case "$action" in
     connect) bounded 12 bluetoothctl connect "$1"; select_audio "$1" ;;
     disconnect)
         bounded 5 bluetoothctl disconnect "$1"
+        info=$(bounded 3 bluetoothctl info "$1")
+        printf '%s\n' "$info" | grep -q 'Connected: no' || { echo 'RADIO_ERROR=bt-disconnect'; exit 1; }
         if [ -f /run/pocketos-bluetooth/output ] && grep -Fxiq "$1" /run/pocketos-bluetooth/output; then
             rm -f /run/pocketos-bluetooth/output /run/pocketos-bluetooth/asound.conf
-        fi ;;
+        fi
+        echo POCKETOS_BT_DISCONNECTED ;;
 esac

@@ -213,6 +213,8 @@ static int radio_poll(void){
         radio_message(strstr(radio_buffer,"Powered: yes")?"Bluetooth powered on":"Bluetooth not powered / unknown");
     }else if(job==R_WIFI_JOIN){struct timespec now;if(!clock_gettime(CLOCK_MONOTONIC,&now))radio_wifi_wait=now.tv_sec+25;radio_message("Connecting...");}
     else if(job==R_WIFI_DISCONNECT){radio_wifi_wait=0;radio_message("Not connected");}
+    else if(strstr(radio_buffer,"POCKETOS_BT_CONNECTED"))radio_message("Connected");
+    else if(strstr(radio_buffer,"POCKETOS_BT_DISCONNECTED"))radio_message("Disconnected");
     else if(strstr(radio_buffer,"Failed")||strstr(radio_buffer,"not available"))radio_message("Bluetooth request failed");
     else radio_message("Bluetooth request sent; verify device");
     return 1;

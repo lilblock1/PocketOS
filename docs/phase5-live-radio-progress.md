@@ -40,6 +40,13 @@ audible wireless playback and disconnect behavior are not verified yet.
 The incremental build recipe pins all three public source archives and provides
 their sources/licenses alongside the resulting audio components.
 
+The owner then confirmed wireless music, Pause and physical volume controls work.
+An explicit disconnect request succeeded on the device. The UI disconnect action
+is being corrected to use the selected connected output independently of scan
+selection; a Disconnect button is also being added to Sound settings. These UI
+changes still need physical verification. No persistent radio setup or firmware
+update has been installed by this work; live changes remain in RAM.
+
 After Bluetooth is fixed, the requested next feature is on-device online and
 microSD updates, with recovery/bootloader preserved. Then measure and optimize
 memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.
