@@ -58,3 +58,25 @@ and no bootloader/recovery/userdata writes. Hardware automatic completion and
 reboot remain a separate physical test; simulated success is not that test.
 Incremental bar smoothness also remains unverified: the original renderer
 polls transient chunk markers, which are not proof of NAND persistence.
+
+## Published candidate and device staging
+
+System update 2 is published as `pocketos-test-2`, build
+`3b57c9b46524dc6d`, 16,271,360 bytes. Its UPT SHA-256 is
+`1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80`.
+The implementation commit `e51684c351f50ff83286b3ee0378839e5db85120`
+passed the SDK application workflow. Public firmware/signature downloads match
+the locally tested files. An altered kernel is rejected before creating a UPT.
+
+On the running sequence-1 device, the corrected helper was supplied in RAM
+and temporarily bound over the updater executable. The existing public key
+verified the staged system-2 package. A production online channel check on the
+R1 resolved the public pointer, verified the signed release, rechecked the
+already staged bytes and reported `READY 2 test`. This was a channel/staging
+check, not a fresh on-device payload download or an installation.
+
+The corrected signed inbox and card-root `r1.upt` are staged and verified.
+The primary boot flag is still normal, installed sequence remains 1, and no
+firmware installation/reboot was invoked. The owner now explicitly requires
+review and approval before applying UI changes or installing firmware. Physical
+automatic completion/reboot remains pending that approval.
