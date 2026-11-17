@@ -1688,8 +1688,8 @@ static int selftest(void) {
     test.tm_hour=12;format_clock(&test,label);if(strcmp(label,"12:05 PM"))return 1;
     test.tm_hour=23;test.tm_min=59;format_clock(&test,label);if(strcmp(label,"11:59 PM"))return 1;
     format_clock(NULL,label);if(strcmp(label,"--:--"))return 1;
-    page=HOME;selected=0;tap(20,80);if(page!=MUSIC)return 1;back();
-    tap(20,215);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
+    page=HOME;selected=0;tap(20,160);if(page!=MUSIC)return 1;back();
+    tap(20,245);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
     if(page!=SETTINGS)return 1;
     back();
     if(page!=HOME)return 1;
@@ -1697,7 +1697,7 @@ static int selftest(void) {
     back();tap(100,10);if(page!=CONTROL)return 1;
     tap(20,210);if(!saver||page!=CONTROL)return 1;
     tap(20,300);if(page!=HOME)return 1;
-    tap(20,215);if(page!=SETTINGS)return 1;
+    tap(20,245);if(page!=SETTINGS)return 1;
     tap(20,260);if(page!=PREFERENCES)return 1;
     tap(20,110);if(!clock24)return 1;
     format_clock(&test,label);if(strcmp(label,"23:59"))return 1;
@@ -1710,6 +1710,7 @@ static int selftest(void) {
     music_repeat=2;if(music_next_index()!=2)return 1;
     music_repeat=0;music_shuffle=1;if(music_next_index()==2)return 1;
     page=MUSIC;tap(100,305);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
+    page=HOME;tap(24,100);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
     render();return 0;
 }
 int main(int argc,char **argv) {
