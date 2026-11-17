@@ -84,7 +84,7 @@ static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0;
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH"};
 static char clock_label[16]="--:--";
-static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
+static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","WIRELESS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
 static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
 static const enum page setting_items[]={DISPLAY,SOUND,RADIO,POWER,STORAGE,UPDATES,PREFERENCES};
 static const unsigned char glyph[][7]={
@@ -911,7 +911,7 @@ static void render(void) {
         snprintf(v,sizeof(v),"%d%% TARGET",volume);quick_tile(3,"VOLUME",v,0);
         quick_tile(4,"BATTERY SAVER",saver?"PREFERRED":"STANDARD",saver);
         quick_tile(5,"SETTINGS","OPEN",1);
-        text_at(12,270,radio_allow?"RADIO CONTROLS ENABLED":"RADIO CHANGES LOCKED",1,muted);
+        text_at(12,270,radio_allow?"WIRELESS CONTROLS ON":"WIRELESS CHANGES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
     } else if(page==FILES){
         if(fm_confirm){
@@ -1189,13 +1189,14 @@ static void render(void) {
             if(radio_mode&&radio_count)text_at(134,301,"DISCONNECT",1,mint);
         }
     } else if(page==RADIO){
+        reader_print(12,62,"Wireless & Connections",12,muted,bg,0,0,228);
         rounded(12,81,216,60,card);
         reader_print(21,91,"Wi-Fi",18,fg,card,0,1,220);
         reader_print(21,116,wifi_present?"Interface detected":"Interface not detected",12,muted,card,0,0,220);
         rounded(12,153,216,60,card);
         reader_print(21,163,"Bluetooth",18,fg,card,0,1,220);
         reader_print(21,188,bt_present?"Adapter detected":"Adapter not detected",12,muted,card,0,0,220);
-        reader_print(12,239,radio_allow?"Manual scans only":"Radio changes locked",12,muted,bg,0,0,228);
+        reader_print(12,239,radio_allow?"Manual scans only":"Wireless changes locked",12,muted,bg,0,0,228);
         text_at(12,301,"BACK",2,mint);
     } else {
         rounded(12,81,216,92,card);
