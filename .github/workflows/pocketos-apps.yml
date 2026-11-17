@@ -30,6 +30,20 @@ jobs:
           make -C apps BUILD_DIR="$PWD/host-app-output" check
           host-app-output/pocketos-shell --test-update-ui
           python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py tools/test-r1-recovery-monitor.py
+      - name: Render host-only Classic visual concepts
+        run: |
+          cc -Os -Wall -Wextra -Werror -Wno-unused-const-variable -I host-app-output tools/render-classic-concept.c -o /tmp/pocketos-classic-concept
+          mkdir -p ui-concepts
+          for page in home music settings player; do
+            /tmp/pocketos-classic-concept "$page" "ui-concepts/$page.ppm"
+            test "$(wc -c < "ui-concepts/$page.ppm")" -eq 1152015
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-Classic-Concept-PREVIEWS-ONLY
+          path: ui-concepts/
+          if-no-files-found: error
+          retention-days: 14
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews

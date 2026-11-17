@@ -1,5 +1,10 @@
 # Classic player UI proposal — not installed
 
+The current design review is the [closer-to-original Classic visual concept](../ui-concepts/README.md).
+The functional list-based draft below is retained as development history and
+has not been approved or installed. Its memory figures do not certify the newer
+concept's integrated RAM use.
+
 The proposed interface is a complete list-based visual system inspired by classic
 music-player menus. It uses a light LCD-style palette, blue full-row selection,
 centered titles, a compact clock/battery bar, flat dividers, and simple Back/Home
