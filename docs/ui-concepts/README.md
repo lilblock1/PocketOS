@@ -9,6 +9,19 @@ a split menu/context-artwork view, and an on-screen wheel. Images are rendered a
 480x800 using the approved PocketOS native glyphs and RGB565 colors. Metadata and
 album artwork are synthetic demonstration content, with no personal files.
 
+## Reading transition
+
+![Classic library and full-screen reading](reading-transition.png)
+
+The owner selected this visual direction and asked how reading would work.
+Opening a book hides the shell frame and software wheel and uses the entire
+480x800 panel. Left/right taps turn pages; a center tap opens existing reading
+settings for font, size, spacing and Library. Returning to Library restores the
+Classic controls. The reading half of this image is rendered by the existing
+working PocketOS reader with generic sample text, not a newly implemented reader.
+Its approved typography and font choices are retained. No new reader engine,
+second canvas or image cache is proposed. Integrated UI RAM still needs testing.
+
 This is a **visual concept**, not an installed or functionally complete UI.
 `tools/render-classic-concept.c` is a standalone host renderer, with no device,
 flash or update access. The wheel, menu interaction and contextual artwork need
@@ -34,3 +47,4 @@ Host rendering uses the generated compact `pocketos-reader-font.h` include path:
     ./classic-concept music music.ppm
     ./classic-concept settings settings.ppm
     ./classic-concept player player.ppm
+    ./classic-concept books books.ppm

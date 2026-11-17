@@ -34,7 +34,7 @@ jobs:
         run: |
           cc -Os -Wall -Wextra -Werror -Wno-unused-const-variable -I host-app-output tools/render-classic-concept.c -o /tmp/pocketos-classic-concept
           mkdir -p ui-concepts
-          for page in home music settings player; do
+          for page in home music settings player books; do
             /tmp/pocketos-classic-concept "$page" "ui-concepts/$page.ppm"
             test "$(wc -c < "ui-concepts/$page.ppm")" -eq 1152015
           done

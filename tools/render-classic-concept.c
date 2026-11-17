@@ -95,10 +95,16 @@ static void player(void){
     text(40,406,"0:45",0,soft,200);text(387,406,"3:30",0,soft,445);
     centered(240,471,"1 of 7  -  Paused",0,soft);
 }
+static void books(void){
+    shell("Books");
+    static const char *const titles[]={"The Quiet Woods","Reading notes","A Short Journey"};
+    for(int i=0;i<3;i++)selected_row(27,104+i*66,426,titles[i],i==0);
+    centered(240,476,"Select a book to read",0,soft);
+}
 int main(int argc,char **argv){
     if(argc!=3)return 2;
     if(!strcmp(argv[1],"home"))home();else if(!strcmp(argv[1],"music"))list("Music",0);
-    else if(!strcmp(argv[1],"settings"))list("Settings",1);else if(!strcmp(argv[1],"player"))player();else return 2;
+    else if(!strcmp(argv[1],"settings"))list("Settings",1);else if(!strcmp(argv[1],"player"))player();else if(!strcmp(argv[1],"books"))books();else return 2;
     FILE *f=fopen(argv[2],"wb");if(!f)return 1;fprintf(f,"P6\n%d %d\n255\n",W,H);
     for(unsigned i=0;i<W*H;i++){uint16_t c=pixels[i];unsigned char b[]={((c>>11)&31)*255/31,((c>>5)&63)*255/63,(c&31)*255/31};if(fwrite(b,1,3,f)!=3){fclose(f);return 1;}}
     return fclose(f)!=0;
