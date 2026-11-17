@@ -140,8 +140,8 @@ static int radio_spawn(enum radio_job job,const char *arg){
     close(in[1]);
     radio_pid=pid;radio_fd=out[0];radio_active=job;radio_used=radio_parsed=0;radio_overflow=0;
     if(clock_gettime(CLOCK_MONOTONIC,&radio_deadline)!=0)radio_deadline.tv_sec=0;
-    else radio_deadline.tv_sec+=45;
-    radio_message(job==R_WIFI_SCAN||job==R_BT_SCAN?"Scanning...":"Working...");
+    else radio_deadline.tv_sec+=job==R_WIFI_JOIN?90:45;
+    radio_message(job==R_WIFI_JOIN?"Joining network...":job==R_WIFI_SCAN||job==R_BT_SCAN?"Scanning...":"Working...");
     return 1;
 }
 static void radio_drain(void){
@@ -194,6 +194,9 @@ static int radio_poll(void){
         if(timed_out)radio_message("Radio request timed out");
         else if(strstr(radio_buffer,"RADIO_ERROR=wifi-start-failed"))radio_message("Wi-Fi driver or service failed to start");
         else if(strstr(radio_buffer,"RADIO_ERROR=supplicant-unavailable"))radio_message("Wi-Fi service not running");
+        else if(strstr(radio_buffer,"RADIO_ERROR=profile-cleanup")||strstr(radio_buffer,"RADIO_ERROR=profile-restore"))radio_message("Wi-Fi profile recovery failed; retry");
+        else if(strstr(radio_buffer,"RADIO_ERROR=association-failed"))radio_message("Could not join; check password / signal");
+        else if(strstr(radio_buffer,"RADIO_ERROR=profile-list"))radio_message("Could not read saved networks");
         else if(strstr(radio_buffer,"RADIO_ERROR=scan-incomplete"))radio_message("Wi-Fi scan incomplete; retry");
         else if(strstr(radio_buffer,"RADIO_ERROR=bt-service"))radio_message("Bluetooth service unavailable");
         else if(strstr(radio_buffer,"RADIO_ERROR=bt-controller"))radio_message("Bluetooth controller not ready");

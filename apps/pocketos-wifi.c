@@ -103,9 +103,62 @@ static int read_key(char *b,size_t n){
     if(tcsetattr(STDIN_FILENO,TCSANOW,&old)!=0)yes=0;
     fputc('\n',stderr);return yes;
 }
+/* Preserve enabled profiles across SELECT_NETWORK, which disables the others.
+ * Reject an incomplete list before changing anything. Never read a saved PSK. */
+#define SAVED_CAP 64
+static int saved_enabled(int ids[SAVED_CAP],int *count){
+    char r[16384];*count=0;
+    if(!request("LIST_NETWORKS",r,sizeof(r)))return 0;
+    char *line=strchr(r,'\n');
+    if(strncmp(r,"network id",10)||!line)return 0;
+    ++line;
+    while(*line){
+        char *next=strchr(line,'\n');if(!next)return 0;*next=0;
+        char *end;errno=0;long id=strtol(line,&end,10);
+        if(errno||end==line||*end!='\t'||id<0||id>999999)return 0;
+        char *flags=strrchr(end+1,'\t');
+        if(!flags||flags==end+1)return 0;
+        if(!strstr(flags,"[DISABLED]")&&!strstr(flags,"[P2P-PERSISTENT]")){
+            if(*count>=SAVED_CAP)return 0;
+            ids[(*count)++]=(int)id;
+        }
+        line=next+1;
+    }
+    return 1;
+}
+static int restore_enabled(const int *ids,int count){
+    int success=1;char cmd[48];
+    for(int i=0;i<count;i++){
+        snprintf(cmd,sizeof(cmd),"ENABLE_NETWORK %d",ids[i]);
+        if(!ok(cmd))success=0;
+    }
+    return success;
+}
+static int associated_id(int id){
+    char r[4096],wanted[32];int state=0,match=0;
+    snprintf(wanted,sizeof(wanted),"id=%d",id);
+    if(!request("STATUS",r,sizeof(r)))return 0;
+    char *save=NULL;
+    for(char *s=strtok_r(r,"\n",&save);s;s=strtok_r(NULL,"\n",&save)){
+        if(!strcmp(s,"wpa_state=COMPLETED"))state=1;
+        if(!strcmp(s,wanted))match=1;
+    }
+    return state&&match;
+}
+static int wait_for_association(int id){
+    struct timespec now;if(clock_gettime(CLOCK_MONOTONIC,&now)!=0)return 0;
+    time_t deadline=now.tv_sec+15;
+    do{
+        if(associated_id(id))return 1;
+        struct timespec pause={.tv_nsec=500000000L};
+        (void)nanosleep(&pause,NULL);
+        if(clock_gettime(CLOCK_MONOTONIC,&now)!=0)return 0;
+    }while(now.tv_sec<deadline);
+    return 0;
+}
 static int join_network(void){
     char ssid[34]={0},key[66]={0},hex[65]={0},secret[132]={0},cmd[256]={0},reply[256];
-    int result=1,id=-1;
+    int result=1,id=-1,selected=0,count=0,enabled[SAVED_CAP];
     if(isatty(STDIN_FILENO))fputs("SSID: ",stderr);
     if(!line(ssid,sizeof(ssid))||!ssid[0]||strlen(ssid)>32||!read_key(key,sizeof(key)))goto done;
     size_t len=strlen(key);
@@ -117,6 +170,7 @@ static int join_network(void){
         secret[j++]='"';secret[j]=0;
     }
     for(size_t i=0;i<strlen(ssid);i++)snprintf(hex+i*2,3,"%02x",(unsigned char)ssid[i]);
+    if(!saved_enabled(enabled,&count)){puts("RADIO_ERROR=profile-list");goto done;}
     if(!request("ADD_NETWORK",reply,sizeof(reply)))goto done;
     char *end;errno=0;long n=strtol(reply,&end,10);
     if(end==reply||errno||n<0||n>999999||(*end&&strcmp(end,"\n")))goto done;
@@ -130,14 +184,25 @@ static int join_network(void){
         if(!ok(cmd))goto done;
     }
     snprintf(cmd,sizeof(cmd),"SELECT_NETWORK %d",id);
+    selected=1;
     if(!ok(cmd))goto done;
-    /* Saving is permitted only by the supplicant's protected update_config.
-     * RAM-only test configurations deliberately reject this command. */
-    (void)ok("SAVE_CONFIG");
-    puts("Association requested.");
+    /* Association must be for the new profile, not a stale IP or old SSID. */
+    if(!wait_for_association(id)){puts("RADIO_ERROR=association-failed");goto done;}
+    if(!restore_enabled(enabled,count)){puts("RADIO_ERROR=profile-restore");goto done;}
+    /* Save only after the requested network authenticated successfully.
+     * RAM-only configurations deliberately reject SAVE_CONFIG. */
+    if(!ok("SAVE_CONFIG"))puts("RADIO_NOTICE=not-saved");
+    puts("RADIO_ASSOCIATED=1");
     result=0;
 done:
-    if(result&&id>=0){snprintf(cmd,sizeof(cmd),"REMOVE_NETWORK %d",id);(void)ok(cmd);}
+    if(result&&id>=0){
+        snprintf(cmd,sizeof(cmd),"REMOVE_NETWORK %d",id);
+        if(!ok(cmd))puts("RADIO_ERROR=profile-cleanup");
+        if(selected){
+            if(!restore_enabled(enabled,count))puts("RADIO_ERROR=profile-restore");
+            if(count)(void)ok("RECONNECT");
+        }
+    }
     wipe(key,sizeof(key));wipe(secret,sizeof(secret));wipe(cmd,sizeof(cmd));
     if(result)fputs("Wi-Fi request failed or invalid input; inspect supplicant status.\n",stderr);
     return result;

@@ -8,6 +8,8 @@ class TestWifi(unittest.TestCase):
             messages = []
             listener = None
             failed_scan = False
+            reject_join = False
+            wrong_network = False
             with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as server:
                 server.bind(path); server.settimeout(.2)
                 stop = threading.Event()
@@ -17,7 +19,7 @@ class TestWifi(unittest.TestCase):
                         try: cmd, peer = server.recvfrom(2048)
                         except socket.timeout: continue
                         messages.append(cmd)
-                        reply = b"4\n" if cmd == b"ADD_NETWORK" else b"wpa_state=COMPLETED\n" if cmd == b"STATUS" else b"00:11:22:33:44:55\t2412\t-50\t[ESS]\tTest Network\n" if cmd == b"SCAN_RESULTS" else b"OK\n"
+                        reply = b"4\n" if cmd == b"ADD_NETWORK" else b"wpa_state=COMPLETED\nid=3\n" if cmd == b"STATUS" and wrong_network else b"wpa_state=COMPLETED\nid=4\n" if cmd == b"STATUS" else b"network id / ssid / bssid / flags\n1\tOld network\tany\t[CURRENT]\n2\tDisabled network\tany\t[DISABLED]\n" if cmd == b"LIST_NETWORKS" else b"FAIL\n" if cmd == b"SELECT_NETWORK 4" and reject_join else b"00:11:22:33:44:55\t2412\t-50\t[ESS]\tTest Network\n" if cmd == b"SCAN_RESULTS" else b"OK\n"
                         if cmd == b"DETACH":
                             listener = None
                             continue
@@ -43,6 +45,25 @@ class TestWifi(unittest.TestCase):
                     self.assertIn(b'SET_NETWORK 4 ssid 54657374204e6574776f726b',messages)
                     self.assertIn(b'SET_NETWORK 4 psk "safe\\"pass\\\\word"',messages)
                     self.assertIn(b'SELECT_NETWORK 4',messages)
+                    self.assertLess(messages.index(b'SELECT_NETWORK 4'), messages.index(b'SAVE_CONFIG'))
+                    self.assertIn(b'ENABLE_NETWORK 1',messages)
+                    self.assertNotIn(b'ENABLE_NETWORK 2',messages)
+                    messages.clear()
+                    reject_join = True
+                    bad = subprocess.run(base+["--allow-radio","connect"],input=b'Test Network\nbadpass1\n',capture_output=True,timeout=10)
+                    self.assertNotEqual(bad.returncode,0)
+                    self.assertIn(b'REMOVE_NETWORK 4',messages)
+                    self.assertIn(b'ENABLE_NETWORK 1',messages)
+                    self.assertNotIn(b'SAVE_CONFIG',messages)
+                    reject_join = False
+                    messages.clear()
+                    wrong_network = True
+                    bad = subprocess.run(base+["--allow-radio","connect"],input=b'Test Network\nbadpass1\n',capture_output=True,timeout=24)
+                    self.assertNotEqual(bad.returncode,0)
+                    self.assertIn(b'association-failed',bad.stdout)
+                    self.assertIn(b'REMOVE_NETWORK 4',messages)
+                    self.assertNotIn(b'SAVE_CONFIG',messages)
+                    wrong_network = False
                     messages.clear()
                     self.assertNotEqual(subprocess.run(base+["reconnect"],capture_output=True).returncode,0)
                     self.assertEqual(subprocess.run(base+["--allow-radio","disconnect"],capture_output=True).returncode,0)
