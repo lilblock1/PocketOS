@@ -5,6 +5,7 @@ on:
     paths:
       - 'tools/r1_reference_boot.py'
       - 'tools/test_r1_reference_boot.py'
+      - 'apps/pocketos-r1-guard.sh'
       - '.github/workflows/pocketos-reference-boot.yml'
   workflow_dispatch:
 permissions:
@@ -28,7 +29,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Test reference-preserving overlay against fixtures
-        run: python3 -m unittest discover -s tools -p 'test_r1_reference_boot.py' -v
+        run: |
+          python3 -m unittest discover -s tools -p 'test_r1_reference_boot.py' -v
+          sh -n apps/pocketos-r1-guard.sh
       - name: Install R1 offline format and emulator tools
         run: |
           sudo apt-get update
@@ -113,7 +116,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p staging
-          sudo python3 tools/r1_reference_boot.py reference-work/root static-apps staging/reference-root reports/reference-boot-preservation.json
+          sudo python3 tools/r1_reference_boot.py reference-work/root static-apps staging/reference-root reports/reference-boot-preservation.json --boot-guard apps/pocketos-r1-guard.sh
           sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
           timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" staging/reference-root/usr/bin/pocketos-shell --self-test
           # Match the vendor firmware's LZO compressor and block size.
@@ -129,7 +132,11 @@ jobs:
           from r1_reference_boot import manifest,APPLICATIONS,digest
           base=Path("reference-work/root")
           checked=Path("staging/rechecked-root")
-          assert manifest(base)==manifest(checked), "Repacked reference hardware/startup files differ"
+          before,after=manifest(base),manifest(checked)
+          mismatches=[name for name in before if before[name]!=after.get(name)]
+          assert mismatches==["usr/bin/sonix_player.sh"], "Unexpected reference startup changes: "+str(mismatches)
+          assert digest(base/"usr/bin/sonix_player.sh")==digest(checked/"usr/bin/sonix_player.pocketos-fallback.sh"), "Fallback is not original"
+          assert digest(Path("apps/pocketos-r1-guard.sh"))==digest(checked/"usr/bin/sonix_player.sh"), "Guard wrapper changed"
           for name,rel in APPLICATIONS.items():
               assert digest(Path("static-apps")/name)==digest(checked/rel),name
           print("Rootfs roundtrip preserved R1 boot files and every PocketOS binary.")
