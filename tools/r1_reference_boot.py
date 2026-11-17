@@ -111,14 +111,59 @@ def stage(reference, apps, destination):
     }
 
 
+
+def add_guard(root, original_manifest, guard_script, report):
+    """Replace ONLY the vendor GUI wrapper, preserving an executable fallback."""
+    if not guard_script.is_file() or guard_script.is_symlink():
+        raise ValueError("Missing opt-in guard script")
+    wrapper = root/"usr/bin/sonix_player.sh"
+    fallback = root/"usr/bin/sonix_player.pocketos-fallback.sh"
+    if not wrapper.is_file() or wrapper.is_symlink():
+        raise ValueError("Vendor player wrapper is not a regular file")
+    if fallback.exists() or fallback.is_symlink():
+        raise ValueError("Fallback collision")
+    if digest(wrapper) != original_manifest["usr/bin/sonix_player.sh"]:
+        raise ValueError("Original wrapper changed before boot guard install")
+    shutil.copy2(wrapper, fallback)
+    shutil.copy2(guard_script, wrapper)
+    wrapper.chmod(0o755)
+    fallback.chmod(0o755)
+    after=manifest(root)
+    changed=[name for name in original_manifest if original_manifest[name]!=after.get(name)]
+    if changed!=["usr/bin/sonix_player.sh"]:
+        raise ValueError("Unexpected vendor startup modifications: "+str(changed))
+    if digest(fallback) != original_manifest["usr/bin/sonix_player.sh"]:
+        raise ValueError("Fallback copy differs from reference")
+    report.update({
+        "vendor_boot_files_unchanged": False,
+        "vendor_hardware_initialization_unchanged": True,
+        "vendor_player_binary_unchanged": True,
+        "vendor_launcher_backed_up": True,
+        "guarded_boot_opt_in": True,
+        "pocketos_launcher_autostart": False,
+        "sd_marker_required": "/mnt/sd_0/PocketOS-try-new-ui",
+        "sd_marker_content": "POCKETOS-R1-TRY-1",
+        "physical_boot_verified": False,
+        "installation_allowed": False,
+        "flashable": False,
+        "guard_sha256": digest(wrapper),
+        "fallback_sha256": digest(fallback)
+    })
+    return report
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("reference", type=Path)
     p.add_argument("applications", type=Path)
     p.add_argument("destination", type=Path)
     p.add_argument("report", type=Path)
+    p.add_argument("--boot-guard", type=Path, default=None)
     a=p.parse_args()
     result=stage(a.reference,a.applications,a.destination)
+    if a.boot_guard is not None:
+        original = manifest(a.reference)
+        add_guard(a.destination, original, a.boot_guard, result)
     a.report.write_text(json.dumps(result,indent=2)+"\n")
     print("R1 reference startup preserved;",len(result["added_applications"]),"PocketOS apps staged.")
 
