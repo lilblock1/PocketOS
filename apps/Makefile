@@ -42,7 +42,7 @@ $(BUILD_DIR)/pocketos-reader-font.h: generate-reader-font.py
 	/usr/bin/python3 generate-reader-font.py "$@"
 	cp /usr/share/doc/fonts-dejavu-core/copyright "$(BUILD_DIR)/reader-font-LICENSE.txt"
 
-$(BUILD_DIR)/pocketos-shell: pocketos-shell.c pocketos-hardware.h pocketos-touch.h pocketos-keys.h pocketos-audio-formats.h pocketos-volume.h pocketos-bt-audio.h pocketos-files.h pocketos-radio-ui.h pocketos-update-ui.h pocketos-power.h pocketos-suspend.h $(BUILD_DIR)/pocketos-reader-font.h
+$(BUILD_DIR)/pocketos-shell: pocketos-shell.c pocketos-music-tags.h pocketos-hardware.h pocketos-touch.h pocketos-keys.h pocketos-audio-formats.h pocketos-volume.h pocketos-bt-audio.h pocketos-files.h pocketos-radio-ui.h pocketos-update-ui.h pocketos-power.h pocketos-suspend.h $(BUILD_DIR)/pocketos-reader-font.h
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) -I"$(BUILD_DIR)" $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
@@ -90,6 +90,7 @@ check: all
 	sh test-r1-runtime.sh "$(abspath $(BUILD_DIR)/pocketos-r1-runtime)"
 	python3 test-hardware.py "$(abspath $(BUILD_DIR)/pocketos-r1-runtime)" "$(abspath $(BUILD_DIR)/pocketos-shell)"
 	sh test-shell.sh "$(abspath $(BUILD_DIR)/pocketos-shell)"
+	python3 test-metadata.py "$(abspath $(BUILD_DIR)/pocketos-shell)"
 	python3 test-wifi.py "$(abspath $(BUILD_DIR)/pocketos-wifi)"
 	sh -n pocketos-bluetooth.sh
 	python3 test-bluetooth.py "$(abspath $(BUILD_DIR)/pocketos-bluetooth)"

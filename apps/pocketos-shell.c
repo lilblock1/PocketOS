@@ -22,6 +22,7 @@
 #include <dirent.h>
 #include <strings.h>
 #include "pocketos-audio-formats.h"
+#include "pocketos-music-tags.h"
 #include "pocketos-volume.h"
 #include "pocketos-bt-audio.h"
 #include "pocketos-reader-font.h"
@@ -534,6 +535,13 @@ static FILE *regular_file(const char *path){
     if(fstat(fd,&st)!=0||!S_ISREG(st.st_mode)){close(fd);return NULL;}
     FILE *f=fdopen(fd,"rb");if(!f)close(fd);return f;
 }
+static int music_cover(const char *path){
+    FILE *f=regular_file(path);if(!f)return 0;
+    char h[32];const char *magic=fgets(h,sizeof(h),f);
+    int ok=magic&&!strcmp(h,"P6\n")&&fgets(h,sizeof(h),f)&&!strcmp(h,"64 64\n")&&
+        fgets(h,sizeof(h),f)&&!strcmp(h,"255\n")&&fread(cover,1,sizeof(cover),f)==sizeof(cover)&&fgetc(f)==EOF;
+    fclose(f);return ok;
+}
 static void music_details(void){
     track_title[0]=track_artist[0]=track_album[0]=0;cover_ok=0;
     music_pos=music_length=0;
@@ -541,9 +549,13 @@ static void music_details(void){
     const char *base=strrchr(music_files[music_index],'/');
     snprintf(track_title,sizeof(track_title),"%.64s",base?base+1:music_files[music_index]);clean_label(track_title);
     char path[640];
-    int n=snprintf(path,sizeof(path),"%s/%s.tags",music_dir,music_files[music_index]);
+    int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path))return;
     FILE *f=regular_file(path);
+    if(f){meta_read(f,track_title,track_artist,track_album,&music_length);fclose(f);}
+    n=snprintf(path,sizeof(path),"%s/%s.tags",music_dir,music_files[music_index]);
+    if(n<0||(size_t)n>=sizeof(path))return;
+    f=regular_file(path);
     if(f){
         char line[160];
         for(int i=0;i<12&&fgets(line,sizeof(line),f);i++){
@@ -560,11 +572,16 @@ static void music_details(void){
     }
     n=snprintf(path,sizeof(path),"%s/%s.ppm",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path))return;
-    f=regular_file(path);
-    if(f){char h[32];const char *magic=fgets(h,sizeof(h),f);
-        if(magic&&!strcmp(h,"P6\n")&&fgets(h,sizeof(h),f)&&!strcmp(h,"64 64\n")&&
-           fgets(h,sizeof(h),f)&&!strcmp(h,"255\n")&&fread(cover,1,sizeof(cover),f)==sizeof(cover)&&fgetc(f)==EOF)cover_ok=1;
-        fclose(f);
+    cover_ok=music_cover(path);
+    if(!cover_ok){
+        const char *slash=strrchr(music_files[music_index],'/');
+        size_t length=slash?(size_t)(slash-music_files[music_index])+1:0;
+        n=snprintf(path,sizeof(path),"%s/%.*scover.ppm",music_dir,(int)length,music_files[music_index]);
+        if(n>0&&(size_t)n<sizeof(path))cover_ok=music_cover(path);
+        if(!cover_ok){
+            n=snprintf(path,sizeof(path),"%s/%.*sfolder.ppm",music_dir,(int)length,music_files[music_index]);
+            if(n>0&&(size_t)n<sizeof(path))cover_ok=music_cover(path);
+        }
     }
 }
 static void filter_playlist(void){
@@ -2417,6 +2434,12 @@ static int selftest(void) {
     render();return 0;
 }
 int main(int argc,char **argv) {
+    if(argc==3&&!strcmp(argv[1],"--test-metadata")){
+        FILE *f=regular_file(argv[2]);if(!f)return 1;
+        char title[65]="",artist[65]="",album[65]="";uint32_t duration=0;
+        meta_read(f,title,artist,album,&duration);fclose(f);
+        printf("%s\n%s\n%s\n%u\n",title,artist,album,duration);return 0;
+    }
     if(argc==3&&!strcmp(argv[1],"--test-reader-fonts")){
         book_dir=argv[2];
         for(int font=1;font<=2;font++){
