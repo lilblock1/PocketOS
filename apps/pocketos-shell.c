@@ -65,6 +65,9 @@ static int unblank_display=0;
 static int brightness_saved=-1;
 static int internal_pct=-1, sd_pct=-1;
 static int output_busy=0;
+static int media_online=-1;
+static dev_t media_dev;
+static ino_t media_ino;
 static unsigned long long internal_free=0, sd_free=0;
 static char date_label[32]="DATE UNKNOWN";
 static char backlight_dir[1024]="";
@@ -592,6 +595,27 @@ static void music_scan(void){
     if(music_list)filter_playlist();
     music_details();
 }
+static uint32_t library_hash(char files[][256],int count){
+    uint32_t hash=2166136261u;
+    for(int i=0;i<count;i++){
+        for(const unsigned char *p=(const unsigned char*)files[i];*p;p++)hash=(hash^*p)*16777619u;
+        hash=(hash^255u)*16777619u;
+    }
+    return hash;
+}
+static int music_refresh(void){
+    if(music_pid>=0)return 0;
+    char name[256]="";if(music_count&&music_index<music_count)strcpy(name,music_files[music_index]);
+    int old_count=music_count,top=music_top;
+    uint32_t hash=library_hash(music_files,music_count),pos=music_pos,start=music_start_at;
+    int err=music_error;
+    music_scan();
+    for(int i=0;name[0]&&i<music_count;i++)if(!strcmp(name,music_files[i])){
+        music_index=i;music_details();music_pos=pos;music_start_at=start;music_error=err;break;
+    }
+    int max=music_count>4?music_count-4:0;music_top=top>max?max:top;
+    return old_count!=music_count||hash!=library_hash(music_files,music_count);
+}
 static int music_send(unsigned char c){
     if(music_fd<0)return 0;
     return write(music_fd,&c,1)==1;
@@ -808,6 +832,19 @@ static void book_scan(void){
     book_count=book_index=book_top=0;book_status[0]=0;
     int budget=4096;scan_books("",0,&budget);
     qsort(books,(size_t)book_count,sizeof(books[0]),compare_tracks);
+}
+static int book_refresh(void){
+    if(book_file||book_prepare_pid>=0)return 0;
+    char name[256]="";if(book_count&&book_index<book_count)strcpy(name,books[book_index]);
+    int old_count=book_count,top=book_top;
+    uint32_t hash=library_hash(books,book_count);
+    char note[sizeof(book_status)];memcpy(note,book_status,sizeof(note));
+    book_scan();
+    for(int i=0;name[0]&&i<book_count;i++)if(!strcmp(name,books[i])){
+        book_index=i;memcpy(book_status,note,sizeof(note));break;
+    }
+    int max=book_count>4?book_count-4:0;book_top=top>max?max:top;
+    return old_count!=book_count||hash!=library_hash(books,book_count);
 }
 static void book_label(int index,char *out,size_t cap){
     if(!cap)return;
@@ -1065,9 +1102,39 @@ static void fm_note(const char *text){snprintf(fm_message,sizeof(fm_message),"%.
 static void fm_start(void){
     fm_panel=fm_confirm=fm_edit_new=fm_action=0;fm_message[0]=0;
     int pct;unsigned long long space;
-    if(!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
+    if(!hw_sd_mounted("")||!mounted_usage("/mnt/sd_0",&pct,&space)||!fm_attach("/mnt/sd_0")||!fm_scan()){
         fm_close();fm_note("MICROSD NOT AVAILABLE");
     }
+}
+/* Detect loss of the mounted card before using retained handles. No automatic
+ * format, forced unmount or mount during the updater's recovery handoff. */
+static int media_probe(void){
+    struct stat st;
+    int online=hw_sd_mounted("")&&stat("/mnt/sd_0",&st)==0;
+    int changed=online!=media_online||(online&&(media_dev!=st.st_dev||media_ino!=st.st_ino));
+    if(!changed)return 0;
+    int was_online=media_online;
+    media_online=online;
+    if(online){media_dev=st.st_dev;media_ino=st.st_ino;}
+    if(was_online==1){
+        /* The old card may have disappeared. Do not save through stale files. */
+        if(book_file){fclose(book_file);book_file=NULL;book_close();if(page==READER)page=BOOKS;}
+        if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
+        if(music_pid>=0){music_pending=-1;music_manual_stop=1;music_start_at=0;
+            if(music_fd>=0){close(music_fd);music_fd=-1;}(void)kill(music_pid,SIGTERM);}
+        music_count=music_top=music_index=0;music_details();book_count=book_top=book_index=0;
+        fm_close();fm_panel=fm_confirm=0;
+    }
+    if(online){
+        if(music_pid<0)music_scan();
+        if(book_prepare_pid<0)book_scan();
+        if(page==FILES)fm_start();
+    }else{
+        music_count=music_index=music_top=0;music_details();
+        book_count=book_index=book_top=0;strcpy(book_status,"MICROSD NOT AVAILABLE");
+        fm_close();fm_note("MICROSD NOT AVAILABLE");
+    }
+    return 1;
 }
 static void fm_open_media(void){
     if(fm_count<1)return;
@@ -1746,7 +1813,8 @@ static void update_choose(int i){
     if(update_pid>=0)return;
     if(i<0||i>2)return;
     if(!update_allow){update_message("Update actions locked");return;}
-    if(music_pid>=0){update_message("Stop music before updating");return;}
+    if(music_pid>=0||book_prepare_pid>=0||fm_worker>=0||book_file){update_message("Close active media before updating");return;}
+    fm_close();
     (void)update_spawn(i==0?U_SD:i==1?U_CHECK_TEST:U_CHECK_STABLE);
 }
 static void tap(int x,int y) {
@@ -2090,6 +2158,7 @@ static int native(const char *input) {
     }
     render();present(&b);
     long long last_input=mono_ms(),next_sample=last_input+60000;
+    long long next_media=last_input,next_library=last_input+45000;
     int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
@@ -2106,6 +2175,18 @@ static int native(const char *input) {
         int reaped=music_reap();
         int book_changed=smart_asleep?0:book_prepare_reap(),fm_changed=fm_poll_transfer();
         int radio_changed=smart_asleep?0:radio_poll(),update_changed=smart_asleep?0:update_poll(),sample_changed=0;
+        int media_changed=0;
+        if(!smart_asleep&&update_pid<0&&fm_worker<0&&now>=0&&now>=next_media){
+            media_changed=media_probe();
+            next_media=now+((page==MUSIC||page==BOOKS||page==FILES||page==READER||music_pid>=0)?5000:30000);
+        }
+        /* Only refresh a visible idle library, never invalidate the live queue
+           or repeatedly traverse the card while the screen is dimmed. */
+        if(!smart_asleep&&!power_stage&&!busy&&!down&&!pending&&media_online==1&&now>=0&&now>=next_library){
+            if(page==MUSIC&&music_pid<0)media_changed|=music_refresh();
+            if(page==BOOKS&&book_prepare_pid<0)media_changed|=book_refresh();
+            next_library=now+45000;
+        }
         if(!smart_asleep&&now>=0&&now>=next_sample){
             int n=sample_battery(),oldwifi=wifi_present,oldbt=bt_present,oldaudio=audio_present;
             int oldip=internal_pct,oldsp=sd_pct,oldbr=brightness_pct;
@@ -2121,7 +2202,7 @@ static int native(const char *input) {
         if(power_stage)timeout=saver?60000:30000;
         if(!power_stage&&((book_changed&&(page==BOOKS||page==READER))||(radio_changed&&(page==WIFIUI||page==BTUI))||
               (update_changed&&page==UPDATES)||(fm_changed&&page==FILES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
-              (page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
+              media_changed||(page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(radio_wifi_wait&&timeout>250)timeout=250;
         if(update_pid>=0&&timeout>500)timeout=500;
@@ -2129,6 +2210,9 @@ static int native(const char *input) {
         if(((music_pid>=0&&!music_pause)||volume_extended)&&timeout>500)timeout=500;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
+        if(!smart_asleep&&update_pid<0&&fm_worker<0)timeout=limit_wait(timeout,now,next_media);
+        if(!smart_asleep&&!power_stage&&!busy&&media_online==1&&(page==MUSIC||page==BOOKS))
+            timeout=limit_wait(timeout,now,next_library);
         if(power_allow&&!power_failed&&allow_backlight&&!busy&&now>=0&&last_input>=0&&backlight_dir[0]){
             long dim=page==READER?(saver?90:180):(saver?25:60);
             long blank=page==READER?(saver?180:300):(saver?60:120);
@@ -2158,7 +2242,7 @@ static int native(const char *input) {
                 if(smart_asleep){
                     if(!power_wake()){fputs("Smart Sleep backlight restore failed\n",stderr);continue;}
                     smart_asleep=0;
-                    last_input=mono_ms();next_sample=last_input;
+                    last_input=mono_ms();next_sample=next_media=next_library=last_input;
                     down=pending=have_x=have_y=0;start_y=-1;wake_gesture=0;
                     struct input_event discarded[16];
                     for(int j=0;j<16;j++)if(read(fd,discarded,sizeof(discarded))<=0)break;
@@ -2322,6 +2406,9 @@ static int selftest(void) {
     fm_count=20;fm_top=0;fm_index=0;fm_scroll(99);if(fm_top!=15||fm_index!=15)return 1;
     fm_scroll(-99);if(fm_top!=0||fm_index!=4)return 1;
     fm_count=fm_index=fm_top=0;
+    char files[2][256]={"a","b"};uint32_t fh=library_hash(files,2);
+    if(fh==library_hash(files,1))return 1;
+    strcpy(files[1],"c");if(fh==library_hash(files,2))return 1;
     page=MUSIC;tap(100,305);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
     render();return 0;
 }
