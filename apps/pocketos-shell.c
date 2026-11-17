@@ -1655,7 +1655,7 @@ static void render(void) {
         reader_print(14,239,cpu_changed?"Adaptive CPU requested":power_cpu_allow?"CPU policy unchanged":"CPU writes locked",12,muted,bg,0,0,228);
         reader_print(14,259,"Suspend remains disabled",11,muted,bg,0,0,228);text_at(12,301,"BACK",2,mint);
     } else if(page==UPDATES){
-        char version[64];snprintf(version,sizeof(version),"Selected: %u   Previous: %u",update_current,update_previous);
+        char version[64];snprintf(version,sizeof(version),"Installed: %u   Staged: %u",update_installed,update_current>update_installed?update_current:0);
         reader_print(12,62,version,12,muted,bg,0,0,228);
         if(update_pid>=0||update_handoff){
             int checking=update_active==U_CHECK_STABLE||update_active==U_CHECK_TEST||update_active==U_STATUS;
@@ -2526,6 +2526,8 @@ int main(int argc,char **argv) {
         return 0;
     }
     if(argc==2&&!strcmp(argv[1],"--test-update-ui")){
+        update_parse("POCKETOS INSTALLED 6");
+        if(update_installed!=6)return 1;
         update_parse("POCKETOS SELECTION 8 7");
         update_parse("POCKETOS PROGRESS 60");
         update_parse("POCKETOS PROGRESS 1000");
@@ -2657,7 +2659,7 @@ int main(int argc,char **argv) {
         format_clock(&sample,clock_label);
         strcpy(date_label,"2026-11-15");
         if(page==POWER){battery=78;ram_total=65536;ram_available=32768;shell_rss=1024;}
-        if(page==UPDATES){update_current=12;update_previous=11;update_allow=1;}
+        if(page==UPDATES){update_installed=11;update_current=12;update_previous=11;update_allow=1;}
         if(page==WIFIUI||page==BTUI){radio_mode=page==BTUI;radio_count=2;strcpy(radio_items[0].name,radio_mode?"Wireless Headphones":"Home Wi-Fi");strcpy(radio_items[1].name,radio_mode?"Portable Speaker":"Guest Network");strcpy(radio_items[0].address,"00:11:22:33:44:55");strcpy(radio_items[1].address,"00:11:22:33:44:56");radio_items[0].security=1;radio_items[0].signal=-48;radio_items[1].signal=-67;radio_message(radio_mode?"Choose a device":"Choose a network");}
         if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}

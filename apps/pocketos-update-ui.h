@@ -14,7 +14,7 @@ static enum update_job update_active,update_confirm;
 static int update_allow,update_percent,update_fd=-1,update_len,update_drop;
 static pid_t update_pid=-1;
 static char update_line[192],update_note[80]="Select an update source";
-static unsigned update_current,update_previous,update_bytes,update_total,update_offer;
+static unsigned update_installed,update_current,update_previous,update_bytes,update_total,update_offer;
 static int update_error,update_auto,update_handoff;
 static unsigned update_auto_seq;
 static char update_auto_channel[7];
@@ -24,6 +24,9 @@ static struct timespec update_deadline;
 static void update_message(const char *msg){snprintf(update_note,sizeof(update_note),"%.79s",msg);}
 static void update_parse(const char *line){
     unsigned a,b;char extra;
+    if(sscanf(line,"POCKETOS INSTALLED %u %c",&a,&extra)==1&&a<=999999999){
+        update_installed=a;return;
+    }
     if(sscanf(line,"POCKETOS SELECTION %u %u %c",&a,&b,&extra)==2&&a<=999999999&&b<=999999999){
         update_current=a;update_previous=b;return;
     }
@@ -87,6 +90,7 @@ static int update_drain(void){
     return changed;
 }
 static int update_display_percent(void){
+    if(update_handoff&&update_active==U_NONE)return 99;
     if(update_active==U_INSTALL)return 70+update_percent*29/100;
     if(update_active==U_GITHUB||update_active==U_STABLE||update_active==U_SD)
         return update_percent*70/100;
@@ -190,9 +194,11 @@ static int update_poll(void){
     enum update_job job=update_active;update_active=U_NONE;
     if(p<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0){
         update_ready_seq=0;update_ready_channel[0]=0;update_clear_auto();
-        if(!update_error)
-            update_message("Update failed; selection not confirmed");
-    }else if(job==U_STATUS)update_message(update_current?"Staged version selected":"No staged update");
+        if(!update_error){
+            update_error=1;
+            update_message(update_handoff?"Recovery interrupted; keep device powered":"Update failed; retry source");
+        }
+    }else if(job==U_STATUS)update_message(update_current>update_installed?"Newer package staged":update_installed?"Installed firmware detected":"No staged update");
     else if(update_ready_seq&&update_ready_seq==update_current&&
             (job==U_SD||job==U_STABLE||job==U_GITHUB||job==U_CHECK_STABLE||job==U_CHECK_TEST)){
         if((job==U_GITHUB||job==U_STABLE)&&update_auto_matches()){
@@ -204,7 +210,7 @@ static int update_poll(void){
     }
     else if(job==U_CHECK_STABLE||job==U_CHECK_TEST){
         if(update_offer){update_confirm=job==U_CHECK_STABLE?U_STABLE:U_GITHUB;update_message("Signed release available");}
-        else update_message("No newer release than staged history");
+        else update_message(update_current>update_installed?"No newer release than staged package":"No newer firmware available");
     }
     else{update_percent=100;update_message(job==U_ROLLBACK?"Previous package selected":"Verified package staged; not installed");}
     return 1;

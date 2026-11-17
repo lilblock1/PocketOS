@@ -23,6 +23,13 @@ fi
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
 [ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | check-github TAG | github TAG [SEQUENCE] | install SEQUENCE CHANNEL | rollback"
 mode=$1;shift
+valid_seq(){ case "$1" in ''|*[!0-9]*|0*) return 1;; esac; [ "${#1}" -le 9 ]; }
+installed=0
+if [ "$fixture" -eq 0 ]; then
+    installed=$(sed -n 's/^UPDATE_SEQUENCE=//p' /etc/pocketos-release)
+    valid_seq "$installed" || die "Installed firmware sequence unavailable"
+    if [ "$ui" -eq 1 ]; then printf 'POCKETOS INSTALLED %s\n' "$installed"; fi
+fi
 # A RAM lock spans the complete handoff, including SD unmount. The SD lock
 # remains useful for interrupted downloads across a reboot.
 runtime_lock=""
@@ -85,12 +92,7 @@ cleanup_all(){ cleanup; unlock_runtime; }
 trap cleanup_all EXIT
 trap 'exit 1' HUP INT TERM
 work=$(mktemp -d "$store/.stage.XXXXXX")
-valid_seq(){ case "$1" in ''|*[!0-9]*|0*) return 1;; esac; [ "${#1}" -le 9 ]; }
-current=0 previous=0 high=0 installed=0
-if [ "$fixture" -eq 0 ]; then
-    installed=$(sed -n 's/^UPDATE_SEQUENCE=//p' /etc/pocketos-release)
-    valid_seq "$installed" || die "Installed firmware sequence unavailable"
-fi
+current=0 previous=0 high=0
 if [ -e "$store/selection" ] || [ -L "$store/selection" ]; then
     [ -f "$store/selection" ] && [ ! -L "$store/selection" ] || die "Invalid selection"
     [ "$(wc -c < "$store/selection")" -le 40 ] || die "Invalid selection"
@@ -141,6 +143,11 @@ verify_payload(){
         actual=$(sha256sum "$dir/$name"); [ "${actual%% *}" = "$hash" ] || die "Package checksum mismatch"
     done
 }
+battery_ok(){
+    level=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null) || return 1
+    case "$level" in ''|*[!0-9]*) return 1;; esac
+    [ "$level" -ge 50 ] && [ "$level" -le 100 ]
+}
 phase MANIFEST
 progress 2
 if [ "$mode" = install ]; then
@@ -158,11 +165,6 @@ if [ "$mode" = install ]; then
     for entry in 'mtd1: 00500000 00020000 "kernel"' 'mtd2: 02d00000 00020000 "rootfs"' 'mtd3: 00500000 00020000 "kernel2"' 'mtd4: 01800000 00020000 "rootfs2"' 'mtd5: 00080000 00020000 "ota"'; do
         grep -Fxq "$entry" /proc/mtd || die "Unexpected partition layout"
     done
-    battery_ok(){
-        level=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null) || return 1
-        case "$level" in ''|*[!0-9]*) return 1;; esac
-        [ "$level" -ge 50 ] && [ "$level" -le 100 ]
-    }
     phase PREFLIGHT
     progress 7
     battery_ok || die "Charge battery to at least 50%"
@@ -368,6 +370,9 @@ if [ "$check_only" -eq 1 ]; then
     exit 0
 fi
 [ "$seq" -gt "$floor" ] || die "Update is not newer than installed or staged firmware"
+if [ "$fixture" -eq 0 ] && [ "$magic" = POCKETOS-R1-FW-1 ]; then
+    battery_ok || die "Charge battery to at least 50%"
+fi
 [ ! -e "$store/versions/$seq" ] && [ ! -L "$store/versions/$seq" ] || die "Version already exists (inspect interrupted run)"
 required=$(awk 'NR>1 {sum+=$2} END {printf "%.0f\n", int((sum+1023)/1024)+16384}' "$work/manifest")
 free=$(df -Pk "$store" | awk 'NR==2 {print $4}')
