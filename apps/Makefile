@@ -2,7 +2,7 @@ CC ?= cc
 BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
-all: $(BUILD_DIR)/pocketos-info $(BUILD_DIR)/pocketos-r1-runtime $(BUILD_DIR)/pocketos-shell $(BUILD_DIR)/pocketos-wifi $(BUILD_DIR)/pocketos-bluetooth $(BUILD_DIR)/pocketos-update $(BUILD_DIR)/pocketos-decoder $(BUILD_DIR)/pocketos-music $(BUILD_DIR)/pocketos-audio-monitor $(BUILD_DIR)/pocketos-start $(BUILD_DIR)/S95pocketos
+all: $(BUILD_DIR)/pocketos-info $(BUILD_DIR)/pocketos-r1-runtime $(BUILD_DIR)/pocketos-shell $(BUILD_DIR)/pocketos-wifi $(BUILD_DIR)/pocketos-bluetooth $(BUILD_DIR)/pocketos-radio-observe $(BUILD_DIR)/pocketos-update $(BUILD_DIR)/pocketos-decoder $(BUILD_DIR)/pocketos-music $(BUILD_DIR)/pocketos-audio-monitor $(BUILD_DIR)/pocketos-start $(BUILD_DIR)/S95pocketos
 
 $(BUILD_DIR)/pocketos-info: pocketos-info.c
 	mkdir -p "$(BUILD_DIR)"
@@ -26,6 +26,11 @@ $(BUILD_DIR)/pocketos-wifi: pocketos-wifi.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
 $(BUILD_DIR)/pocketos-bluetooth: pocketos-bluetooth.sh
+	mkdir -p "$(BUILD_DIR)"
+	cp "$<" "$@"
+	chmod 755 "$@"
+
+$(BUILD_DIR)/pocketos-radio-observe: pocketos-radio-observe.sh
 	mkdir -p "$(BUILD_DIR)"
 	cp "$<" "$@"
 	chmod 755 "$@"
@@ -70,6 +75,7 @@ check: all
 	sh test-shell.sh "$(abspath $(BUILD_DIR)/pocketos-shell)"
 	python3 test-wifi.py "$(abspath $(BUILD_DIR)/pocketos-wifi)"
 	sh -n pocketos-bluetooth.sh
+	sh test-radio-observe.sh "$(abspath $(BUILD_DIR)/pocketos-radio-observe)"
 	sh test-update.sh "$(abspath $(BUILD_DIR)/pocketos-update)" pack-update.py
 	python3 test-music.py "$(abspath $(BUILD_DIR)/pocketos-music)"
 	python3 test-audio-monitor.py "$(abspath $(BUILD_DIR)/pocketos-audio-monitor)"
