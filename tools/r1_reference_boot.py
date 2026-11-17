@@ -250,8 +250,6 @@ INTERNAL_GUI_APPS = {
     "pocketos-wifi": "usr/bin/pocketos-wifi",
     "pocketos-bluetooth": "usr/bin/pocketos-bluetooth",
     "pocketos-radio-observe": "usr/bin/pocketos-radio-observe",
-    "pocketos-audio-monitor": "usr/bin/pocketos-audio-monitor",
-    "pocketos-transfer": "usr/bin/pocketos-transfer",
 }
 
 
