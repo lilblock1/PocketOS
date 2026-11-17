@@ -697,6 +697,7 @@ static void music_start(void){
     if(!allow_audio){music_error=2;return;}
     if(!music_keep_audio(output,smart_jack())){music_error=12;return;}
     if(music_count<1||access("/usr/bin/pocketos-music",X_OK)!=0){music_error=1;return;}
+    if(!hw_sd_mounted("")){music_error=15;return;}
     char path[512],v[16],seek[16];int n=snprintf(path,sizeof(path),"%s/%s",music_dir,music_files[music_index]);
     if(n<0||(size_t)n>=sizeof(path)){music_error=1;return;}
     snprintf(v,sizeof(v),"%d",vol_clamp(volume,0));
@@ -785,6 +786,7 @@ static const char *music_error_text(int error){
     case 12:return output==2?"BLUETOOTH NOT CONNECTED":output==1?"USB OUTPUT UNAVAILABLE":"CONNECT HEADPHONES";
     case 13:return "AUDIO ROUTE FAILED";
     case 14:return "ALSA OUTPUT FAILED";
+    case 15:return "MICROSD NOT AVAILABLE";
     default:return "PLAYBACK UNAVAILABLE";
     }
 }
@@ -1031,6 +1033,7 @@ static int book_prepare_start(const char *path){
 static int book_open(void){
     book_close();
     if(!book_count)return 0;
+    if(!strcmp(book_dir,"/mnt/sd_0/Books")&&!hw_sd_mounted("")){strcpy(book_status,"MICROSD NOT AVAILABLE");return 0;}
     int kind=book_kind(books[book_index]);char path[600];
     if(kind==3){strcpy(book_status,"DRM PROVIDER NOT INSTALLED");return 0;}
     int n=snprintf(path,sizeof(path),"%s/%s%s",book_dir,books[book_index],kind==2?".pocket.txt":"");
@@ -1126,8 +1129,9 @@ static int media_probe(void){
         fm_close();fm_panel=fm_confirm=0;
     }
     if(online){
-        if(music_pid<0)music_scan();
-        if(book_prepare_pid<0)book_scan();
+        /* No SD library traversal on the initial HOME boot. Scan on entry. */
+        if((page==MUSIC||page==NOWPLAYING)&&music_pid<0)music_scan();
+        if(page==BOOKS&&book_prepare_pid<0)book_scan();
         if(page==FILES)fm_start();
     }else{
         music_count=music_index=music_top=0;music_details();

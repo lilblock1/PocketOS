@@ -23,6 +23,19 @@ fi
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
 [ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | check-github TAG | github TAG [SEQUENCE] | install SEQUENCE CHANNEL | rollback"
 mode=$1;shift
+# A RAM lock spans the complete handoff, including SD unmount. The SD lock
+# remains useful for interrupted downloads across a reboot.
+runtime_lock=""
+unlock_runtime(){ if [ -n "$runtime_lock" ]; then rmdir "$runtime_lock" 2>/dev/null || :; fi; }
+if [ "$fixture" -eq 0 ]; then
+    awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts || die "Trusted runtime unavailable"
+    [ "$(id -u)" -eq 0 ] || die "Trusted update service requires root"
+    umask 077
+    mkdir /run/pocketos-update.lock 2>/dev/null || die "Update or recovery already active"
+    runtime_lock=/run/pocketos-update.lock
+    trap unlock_runtime EXIT
+    trap 'exit 1' HUP INT TERM
+fi
 [ -d "$root" ] && [ ! -L "$root" ] || die "Unsafe SD root"
 cd "$root" || die "Cannot enter SD root"
 store="./PocketOS-updates"
@@ -68,7 +81,8 @@ cleanup(){
     [ -z "$work" ] || rm -rf "$work"
     rmdir "$store/.lock" 2>/dev/null || :
 }
-trap cleanup EXIT
+cleanup_all(){ cleanup; unlock_runtime; }
+trap cleanup_all EXIT
 trap 'exit 1' HUP INT TERM
 work=$(mktemp -d "$store/.stage.XXXXXX")
 valid_seq(){ case "$1" in ''|*[!0-9]*|0*) return 1;; esac; [ "${#1}" -le 9 ]; }
@@ -205,13 +219,15 @@ if [ "$mode" = install ]; then
     # Release the staging directory and working directory before the clean unmount.
     cleanup
     work=""
-    trap - EXIT HUP INT TERM
+    trap unlock_runtime EXIT
     cd /
     umount /mnt/sd_0 || die "microSD busy; close playback/files and retry"
+    # No second updater can start after the SD lock is removed. After arming
+    # begins, any failure retains the RAM lock until service/recovery diagnosis.
+    trap - EXIT
+    trap '' HUP INT TERM
     phase RECOVERY
     progress 95
-    # Do not allow the UI to kill the child during the erase/write/readback.
-    trap '' HUP INT TERM
     if ! /usr/sbin/pocketos-recovery-arm --arm; then
         die "Recovery selection failed; do not reboot"
     fi

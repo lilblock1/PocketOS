@@ -135,8 +135,17 @@ static void update_close(void){
         if(update_active==U_INSTALL)return;
         /* Interrupt helper and its downloader; interrupted staging remains locked if cleanup fails. */
         (void)kill(-update_pid,SIGTERM);(void)kill(update_pid,SIGTERM);
-        (void)kill(-update_pid,SIGKILL);(void)kill(update_pid,SIGKILL);
-        (void)waitpid(update_pid,NULL,0);
+        /* Allow shell EXIT traps to remove the staging and runtime locks. */
+        int status;pid_t got=0;
+        for(int i=0;i<30&&got==0;i++){
+            got=waitpid(update_pid,&status,WNOHANG);
+            if(got<0&&errno==EINTR)got=0;
+            if(got==0){struct timespec delay={.tv_nsec=100000000L};(void)nanosleep(&delay,NULL);}
+        }
+        if(got==0){
+            (void)kill(-update_pid,SIGKILL);(void)kill(update_pid,SIGKILL);
+            while(waitpid(update_pid,NULL,0)<0&&errno==EINTR){}
+        }
     }
     if(update_fd>=0)close(update_fd);
     update_pid=-1;update_fd=-1;update_active=U_NONE;
