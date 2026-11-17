@@ -1,8 +1,8 @@
 name: PocketOS - Applications (no Linux rebuild)
 on:
   push:
-    branches: [main]
-    paths: ['apps/**', 'third_party/sonix-epub/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', '.github/workflows/pocketos-apps.yml']
+    branches: [main, phase5-r1-updater]
+    paths: ['apps/**', 'third_party/sonix-epub/**', 'tools/select_sdk.py', 'tools/verify_sdk.py', 'tools/pack-r1-firmware-update.py', 'tools/build-r1-upt.py', '.github/workflows/pocketos-apps.yml']
   workflow_dispatch:
     inputs:
       foundation_run_id:
@@ -13,7 +13,7 @@ permissions:
   contents: read
   actions: read
 concurrency:
-  group: pocketos-apps
+  group: pocketos-apps-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   applications:
@@ -26,7 +26,10 @@ jobs:
       - name: Install host-only compressed audio test decoder
         run: sudo apt-get update && sudo apt-get install -y ffmpeg python3-pil fonts-dejavu-core zlib1g-dev
       - name: Compile and test application code on host
-        run: make -C apps BUILD_DIR="$PWD/host-app-output" check
+        run: |
+          make -C apps BUILD_DIR="$PWD/host-app-output" check
+          host-app-output/pocketos-shell --test-update-ui
+          python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews
@@ -100,6 +103,7 @@ jobs:
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-r1-runtime --root "$PWD/fixture" --status | grep -Fx 'battery_percent=18'
           readelf -h target-app-output/pocketos-shell | grep -q MIPS
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-update-ui
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview HOME target-app-output/HOME.ppm
           cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview READER target-app-output/READER.ppm
