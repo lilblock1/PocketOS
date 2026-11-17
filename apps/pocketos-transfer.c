@@ -192,6 +192,28 @@ static int content_length(const char *header,unsigned long long *length){
     }
     return 0;
 }
+/* Drain bounded rejected uploads before replying. On Linux, closing a socket
+ * with unread request bytes causes TCP RST and loses our HTTP error response.
+ * Never spend unbounded time or memory draining hostile upload bodies. */
+static void reject_request(int fd,const char *header,const char *method,
+                           int code,const char *reason,const char *detail){
+    if(method&&!strcmp(method,"PUT")){
+        unsigned long long remaining=0;
+        if(content_length(header,&remaining)&&remaining<=65536ULL){
+            char scratch[1024];
+            while(remaining){
+                struct pollfd p={.fd=fd,.events=POLLIN};
+                if(poll(&p,1,100)<=0)break;
+                size_t want=remaining<sizeof(scratch)?(size_t)remaining:sizeof(scratch);
+                ssize_t n=recv(fd,scratch,want,MSG_DONTWAIT);
+                if(n<0&&errno==EINTR)continue;
+                if(n<=0)break;
+                remaining-=(unsigned long long)n;
+            }
+        }
+    }
+    message(fd,code,reason,detail);
+}
 static int route_parts(const char *uri,const char *prefix,char folder[32],char name[128]){
     size_t n=strlen(prefix);
     if(strncmp(uri,prefix,n))return 0;
@@ -251,14 +273,14 @@ static void upload_file(int fd,const char *header,const char *folder,const char 
     unsigned long long bytes;
     if(!content_length(header,&bytes)){message(fd,411,"Length Required","Valid Content-Length required (max 512 MiB)");return;}
     int d=folder_open(folder);
-    if(d<0){message(fd,409,"Conflict","microSD folder unavailable");return;}
+    if(d<0){reject_request(fd,header,"PUT",409,"Conflict","microSD folder unavailable");return;}
     struct statvfs st;
     if(fstatvfs(d,&st)!=0||st.f_frsize==0||
        (unsigned long long)st.f_bavail*(unsigned long long)st.f_frsize<bytes+RESERVE_BYTES){
-        close(d);message(fd,507,"Insufficient Storage","Not enough SD space");return;
+        close(d);reject_request(fd,header,"PUT",507,"Insufficient Storage","Not enough SD space");return;
     }
     int file=openat(d,name,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
-    if(file<0){close(d);message(fd,409,"Conflict","File already exists or invalid filename");return;}
+    if(file<0){close(d);reject_request(fd,header,"PUT",409,"Conflict","File already exists or invalid filename");return;}
     int ok=1;
     char buf[IO_BUFFER];
     while(bytes&&running){
@@ -325,7 +347,7 @@ static void serve(int fd){
     if(!header_read(fd,headers)){message(fd,400,"Bad Request","Invalid headers");return;}
     if(sscanf(headers,"%7s %419s %15s",method,uri,protocol)!=3||
        strncmp(protocol,"HTTP/1.",7)){message(fd,400,"Bad Request","Invalid request");return;}
-    if(!valid_host(headers)){message(fd,403,"Forbidden","Invalid request host");return;}
+    if(!valid_host(headers)){reject_request(fd,headers,method,403,"Forbidden","Invalid request host");return;}
     if(!strcmp(method,"GET")&&!strcmp(uri,"/")){
         head(fd,200,"OK","text/html; charset=utf-8",sizeof(html)-1,1);
         (void)send_all(fd,html,sizeof(html)-1);return;
@@ -335,7 +357,7 @@ static void serve(int fd){
     }
     if(!authorized(headers)){
         unauthorized++;
-        message(fd,403,"Forbidden","Invalid pairing code");
+        reject_request(fd,headers,method,403,"Forbidden","Invalid pairing code");
         if(unauthorized>=5)running=0;
         return;
     }
@@ -346,7 +368,7 @@ static void serve(int fd){
         if(!strcmp(method,"GET"))download_file(fd,folder,name);
         else if(!strcmp(method,"PUT"))upload_file(fd,headers,folder,name);
         else message(fd,405,"Method Not Allowed","GET or PUT only");
-    }else message(fd,404,"Not Found","Unknown transfer path");
+    }else reject_request(fd,headers,method,404,"Not Found","Unknown transfer path");
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS Transfer v1");return 0;}
