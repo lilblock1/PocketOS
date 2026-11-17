@@ -10,13 +10,17 @@ from pathlib import Path
 p=argparse.ArgumentParser()
 p.add_argument("--sequence",type=int,required=True)
 p.add_argument("--channel",choices=("stable","test"),default="test")
+p.add_argument("--firmware",action="store_true",help="Use the R1 firmware manifest schema")
 p.add_argument("--key",type=Path,required=True)
 p.add_argument("--output",type=Path,required=True)
 p.add_argument("files",type=Path,nargs="+")
 a=p.parse_args()
 if not 1<=a.sequence<=999999999 or not 1<=len(a.files)<=64:
     p.error("Invalid sequence or file count")
-rows=[f"POCKETOS-SD-1 {a.channel} r1-mipsel {a.sequence}"]
+if a.firmware and (len(a.files)!=2 or {f.name for f in a.files}!={"pocketos-r1.upt","data-r1-report.json"}):
+    p.error("Firmware requires the reviewed UPT and report")
+magic="POCKETOS-R1-FW-1" if a.firmware else "POCKETOS-SD-1"
+rows=[f"{magic} {a.channel} r1-mipsel {a.sequence}"]
 total=0
 names=set()
 for f in a.files:
@@ -24,6 +28,8 @@ for f in a.files:
         p.error(f"Invalid or duplicate package: {f}")
     names.add(f.name)
     size=f.stat().st_size
+    if a.firmware and ((f.name=="pocketos-r1.upt" and (size>50331648 or size%2048)) or (f.name=="data-r1-report.json" and size>32768)):
+        p.error("Invalid firmware asset size")
     total+=size
     if not 0<size<=268435456 or total>536870912:
         p.error("Package size limit exceeded")

@@ -71,7 +71,11 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 work=$(mktemp -d "$store/.stage.XXXXXX")
 valid_seq(){ case "$1" in ''|*[!0-9]*|0*) return 1;; esac; [ "${#1}" -le 9 ]; }
-current=0 previous=0 high=0
+current=0 previous=0 high=0 installed=0
+if [ "$fixture" -eq 0 ]; then
+    installed=$(sed -n 's/^UPDATE_SEQUENCE=//p' /etc/pocketos-release)
+    valid_seq "$installed" || die "Installed firmware sequence unavailable"
+fi
 if [ -e "$store/selection" ] || [ -L "$store/selection" ]; then
     [ -f "$store/selection" ] && [ ! -L "$store/selection" ] || die "Invalid selection"
     [ "$(wc -c < "$store/selection")" -le 40 ] || die "Invalid selection"
@@ -81,6 +85,8 @@ if [ -e "$store/selection" ] || [ -L "$store/selection" ]; then
     [ "$previous" = 0 ] || valid_seq "$previous" || die "Invalid previous sequence"
     [ "$current" -le "$high" ] && [ "$previous" -le "$high" ] || die "Invalid high-water mark"
 fi
+floor=$high
+[ "$installed" -le "$floor" ] || floor=$installed
 select_version(){
     printf '%s %s %s\n' "$1" "$2" "$3" > "$work/selection"
     sync
@@ -91,18 +97,24 @@ verify_manifest(){
     [ -f "$1" ] && [ ! -L "$1" ] && [ -f "$2" ] && [ ! -L "$2" ] || die "Missing manifest"
     [ "$(wc -c < "$1")" -le 32768 ] && [ "$(wc -c < "$2")" -le 8192 ] || die "Manifest too large"
     openssl dgst -sha256 -verify "$key" -signature "$2" "$1" >/dev/null 2>&1 || die "Signature invalid"
-    awk '
+    awk -v fixture="$fixture" '
       NR==1 {
-        if(NF!=4||$1!="POCKETOS-SD-1"||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
+        if(NF!=4||($1!="POCKETOS-R1-FW-1"&&(fixture!=1||$1!="POCKETOS-SD-1"))||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
+        firmware=($1=="POCKETOS-R1-FW-1");
         next
       }
       {
         if(NF!=3||length($1)!=64||$1!~/^[0-9a-f]+$/||$2!~/^[1-9][0-9]*$/||length($2)>9||$2>268435456||
            $3!~/^(pocketos-|data-)[a-zA-Z0-9][a-zA-Z0-9._-]*$/||length($3)>80||seen[$3]++) exit 1;
+        if(firmware){
+            if($3=="pocketos-r1.upt"){if($2>50331648||$2%2048!=0)exit 1; upt=1}
+            else if($3=="data-r1-report.json"){if($2>32768)exit 1; report=1}
+            else exit 1
+        }
         total+=$2;
         if(total>536870912||NR>65) exit 1
       }
-      END {if(NR<2)exit 1}
+      END {if(NR<2||(firmware&&(NR!=3||!upt||!report)))exit 1}
     ' "$1" || die "Invalid signed manifest format"
 }
 verify_payload(){
@@ -203,12 +215,12 @@ read -r magic channel target seq < "$work/manifest"
 [ -z "$expected_channel" ] || [ "$channel" = "$expected_channel" ] || die "Signed manifest channel mismatch"
 [ -z "$expected_seq" ] || [ "$seq" = "$expected_seq" ] || die "Release changed; check again"
 if [ "$check_only" -eq 1 ]; then
-    if [ "$seq" -le "$high" ]; then seq=0; fi
+    if [ "$seq" -le "$floor" ]; then seq=0; fi
     if [ "$ui" -eq 1 ]; then printf 'POCKETOS AVAILABLE %s\n' "$seq"; else printf '%s\n' "$seq"; fi
     progress 100
     exit 0
 fi
-[ "$seq" -gt "$high" ] || die "Update is not newer than the highest staged version"
+[ "$seq" -gt "$floor" ] || die "Update is not newer than installed or staged firmware"
 [ ! -e "$store/versions/$seq" ] && [ ! -L "$store/versions/$seq" ] || die "Version already exists (inspect interrupted run)"
 required=$(awk 'NR>1 {sum+=$2} END {printf "%.0f\n", int((sum+1023)/1024)+16384}' "$work/manifest")
 free=$(df -Pk "$store" | awk 'NR==2 {print $4}')

@@ -106,3 +106,11 @@ grep -Fx 'POCKETOS SELECTION 7 5' "$tmp/stable.log"
 test "$(run status)" = '7 5 7'
 POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/old.log"
 grep -Fx 'POCKETOS AVAILABLE 0' "$tmp/old.log"
+
+# Dedicated firmware schema accepts only the two expected assets.
+dd if=/dev/zero of="$tmp/pocketos-r1.upt" bs=2048 count=1 2>/dev/null
+printf '{}\n' > "$tmp/data-r1-report.json"
+python3 "$packer" --firmware --channel test --sequence 8 --key "$tmp/private.pem" --output "$tmp/fw8" "$tmp/pocketos-r1.upt" "$tmp/data-r1-report.json"
+run sd "$tmp/fw8"
+test "$(run status)" = '8 7 8'
+if python3 "$packer" --firmware --sequence 9 --key "$tmp/private.pem" --output "$tmp/invalid" "$tmp/data-test"; then exit 1; fi
