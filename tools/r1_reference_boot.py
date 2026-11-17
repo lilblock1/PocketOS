@@ -152,6 +152,95 @@ def add_guard(root, original_manifest, guard_script, report):
     return report
 
 
+
+def stage_sd_guard(reference, destination, guard_script, shell_binary, version):
+    """Build a minimal test boot overlay that leaves all PocketOS executables on SD.
+
+    The original vendor init, kernel/drivers, and Sonix player remain untouched.
+    Only its launcher wrapper and system-info version are updated. The
+    original launcher is copied verbatim as a fallback and the PocketOS binary
+    digest is pinned in the read-only rootfs.
+    """
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("Refuse to overwrite staging directory")
+    if not reference.is_dir() or reference.is_symlink():
+        raise ValueError("Unsafe reference")
+    if not guard_script.is_file() or guard_script.is_symlink():
+        raise ValueError("Unsafe guard script")
+    if not shell_binary.is_file() or shell_binary.is_symlink():
+        raise ValueError("Missing pinned executable")
+    if shell_binary.stat().st_size > 4194304:
+        raise ValueError("PocketOS shell exceeds SD boot guard limit")
+    before = manifest(reference)
+    shutil.copytree(reference, destination, symlinks=True, copy_function=shutil.copy2)
+    wrapper = destination / "usr/bin/sonix_player.sh"
+    fallback = destination / "usr/bin/sonix_player.pocketos-fallback.sh"
+    if not wrapper.is_file() or wrapper.is_symlink() or fallback.exists() or fallback.is_symlink():
+        raise ValueError("Missing original player wrapper or fallback collision")
+    shutil.copy2(wrapper, fallback)
+    shutil.copy2(guard_script, wrapper)
+    fallback.chmod(0o755)
+    wrapper.chmod(0o755)
+    if digest(fallback) != before["usr/bin/sonix_player.sh"]:
+        raise ValueError("Stock player fallback differs")
+    directory = destination / "etc/pocketos"
+    if directory.exists() or directory.is_symlink():
+        raise ValueError("PocketOS boot settings collision")
+    directory.mkdir(mode=0o755)
+    (directory / "boot-shell.sha256").write_text(digest(shell_binary) + "\n", encoding="ascii")
+    info_path = destination / "usr/resource/sonix/components/system-info.json"
+    if not info_path.is_file() or info_path.is_symlink():
+        raise ValueError("Missing stock system-info")
+    info = json.loads(info_path.read_text())
+    if info.get("device-name") != "HiBy R1":
+        raise ValueError("Wrong device")
+    old = info.get("OS_version", "")
+    if not old or old != "0.3.0.99":
+        raise ValueError("Reference version mismatch: " + old)
+    if version != "0.3.0.100":
+        raise ValueError("Only pinned R1 test version allowed")
+    info["OS_version"] = version
+    # Keep the original Sonix Books OTA channel for the next firmware release.
+    if info.get("ota-repo") != "lilblock1/Sonix-Books":
+        raise ValueError("Unexpected configured OTA repository")
+    info_path.write_text(json.dumps(info, indent=4) + "\n")
+    after = manifest(destination)
+    differences = [p for p in before if before[p] != after.get(p)]
+    if differences != ["usr/bin/sonix_player.sh"]:
+        raise ValueError("Unexpected vendor boot modifications " + str(differences))
+    for p in CRITICAL_DIRS:
+        for name in before:
+            if name.startswith(p + "/") and before[name] != after[name]:
+                raise ValueError("Vendor hardware init changed")
+    return {
+        "mode": "opt-in R1 microSD PocketOS boot candidate",
+        "device": "HiBy R1",
+        "version": version,
+        "original_version": old,
+        "stock_player_preserved": True,
+        "stock_hardware_init_preserved": True,
+        "vendor_kernel_preserved": True,
+        "fallback_sha256": digest(fallback),
+        "guard_sha256": digest(wrapper),
+        "expected_sd_path": "/mnt/sd_0/PocketOS/bin/pocketos-shell",
+        "expected_sd_shell_sha256": digest(shell_binary),
+        "requires_sd_marker": "/mnt/sd_0/PocketOS-try-new-ui",
+        "default_boot": "original Sonix player (no marker)",
+        "new_boot": "PocketOS screen (only with marker and matching SD binary)",
+        "expected_modified_reference_files": [
+            "usr/bin/sonix_player.sh",
+            "usr/resource/sonix/components/system-info.json"
+        ],
+        "new_files": [
+            "usr/bin/sonix_player.pocketos-fallback.sh",
+            "etc/pocketos/boot-shell.sha256"
+        ],
+        "bootable_verified": False,
+        "recovery_partition_write_targets_verified": False,
+        "safe_to_install": False,
+    }
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("reference", type=Path)
