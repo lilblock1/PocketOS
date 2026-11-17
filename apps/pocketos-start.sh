@@ -80,6 +80,16 @@ if [ -e "$audio_marker" ] || [ -L "$audio_marker" ]; then
     fi
     case " $feature_args " in *' --allow-audio '*) ;; *) feature_args="$feature_args --allow-audio";; esac
 fi
+# Book preparation/resume can be enabled without unrelated development actions.
+books_marker="$root/etc/pocketos/books-enable"
+if [ -e "$books_marker" ] || [ -L "$books_marker" ]; then
+    [ -f "$books_marker" ] && [ ! -L "$books_marker" ] || die "Unsafe books marker"
+    [ "$(wc -c < "$books_marker")" -eq 20 ] && grep -Fxq POCKETOS-R1-BOOKS-1 "$books_marker" || die "Invalid books marker"
+    if [ "$fixture" -eq 0 ]; then
+        case "$("$stat_cmd" -c '%u:%a' "$books_marker")" in 0:400|0:600) ;; *) die "Untrusted books marker";; esac
+    fi
+    feature_args="$feature_args --allow-bookmarks --allow-book-preparation"
+fi
 # Radio controls can be enabled independently of broad development features.
 radio_marker="$root/etc/pocketos/radio-enable"
 if [ -e "$radio_marker" ] || [ -L "$radio_marker" ]; then

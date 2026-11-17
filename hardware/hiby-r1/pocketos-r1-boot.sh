@@ -56,8 +56,13 @@ if [ -f /etc/pocketos/state-enable ] && [ -x /usr/sbin/pocketos-state-service ];
 fi
 while [ ! -b /dev/mmcblk0p1 ] && [ "$i" -lt 10 ]; do i=$((i+1)); sleep 1; done
 if [ -b /dev/mmcblk0p1 ] && [ "$(cat /sys/class/block/mmcblk0p1/partition)" = 1 ]; then
-    # First boot reads media only; no fsck, formatting, userdata mount or auto-updater.
-    mount -t vfat -o ro,noatime,nosuid,nodev,noexec /dev/mmcblk0p1 /mnt/sd_0 || echo 'SD mount failed; continuing without media'
+    # Explicit media-write marker permits book preparation/resume. No formatting,
+    # fsck, executable SD mounts or automatic updater is introduced.
+    sd_mode=ro
+    if [ -f /etc/pocketos/sd-write-enable ] && [ ! -L /etc/pocketos/sd-write-enable ] &&
+       [ "$(/usr/bin/pocketos-stat -c '%u:%a' /etc/pocketos/sd-write-enable)" = 0:400 ] &&
+       grep -Fxq POCKETOS-R1-SD-WRITE-1 /etc/pocketos/sd-write-enable; then sd_mode=rw; fi
+    mount -t vfat -o "$sd_mode",noatime,nosuid,nodev,noexec /dev/mmcblk0p1 /mnt/sd_0 || echo 'SD mount failed; continuing without media'
 fi
 if [ -r /sys/class/backlight/backlight_pwm0/max_brightness ]; then
     maximum=$(cat /sys/class/backlight/backlight_pwm0/max_brightness)
