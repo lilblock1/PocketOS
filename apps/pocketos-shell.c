@@ -1682,6 +1682,33 @@ static int native(const char *input) {
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
     transfer_cleanup();(void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
 }
+/* Choose the real touch-input node from kernel-reported ABS axes.  The
+ * HiBy R1 event number is not constant across firmware/driver revisions. */
+static int native_auto(void) {
+    char selected[64]="";
+    int matches=0;
+    for(int i=0;i<32;i++) {
+        char path[64];
+        if(snprintf(path,sizeof(path),"/dev/input/event%d",i)>=(int)sizeof(path))continue;
+        int fd=open(path,O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+        if(fd<0)continue;
+        struct input_absinfo ax={0},ay={0};
+        int mt=ioctl(fd,EVIOCGABS(ABS_MT_POSITION_X),&ax)==0 &&
+               ioctl(fd,EVIOCGABS(ABS_MT_POSITION_Y),&ay)==0;
+        int xy=mt||(ioctl(fd,EVIOCGABS(ABS_X),&ax)==0 &&
+                    ioctl(fd,EVIOCGABS(ABS_Y),&ay)==0);
+        close(fd);
+        if(!xy||ax.maximum<=ax.minimum||ay.maximum<=ay.minimum)continue;
+        matches++;
+        if(matches==1)snprintf(selected,sizeof(selected),"%s",path);
+    }
+    if(matches!=1){
+        fprintf(stderr,"PocketOS input discovery: expected one touch device, found %d\n",matches);
+        return 1;
+    }
+    return native(selected);
+}
+
 static int selftest(void) {
     char label[16];
     struct tm test={.tm_hour=0,.tm_min=5};
@@ -1827,6 +1854,7 @@ int main(int argc,char **argv) {
         argc--;argv++;
     }
     const char *tz=getenv("TZ");if(tz)original_tz=strdup(tz);
+    if(argc==2&&!strcmp(argv[1],"--auto-input"))return native_auto();
     if(argc==3&&!strcmp(argv[1],"--fb")&&!strncmp(argv[2],"/dev/input/event",16)) {
         const char *n=argv[2]+16;
         if(*n&&strspn(n,"0123456789")==strlen(n))return native(argv[2]);
