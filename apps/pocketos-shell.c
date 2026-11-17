@@ -97,6 +97,8 @@ static int music_pending=-1, music_manual_stop=0,music_route=-1,music_switch=0,m
 #define BOOK_CAP 128
 #define BOOK_ROWS 18
 #define BOOK_HISTORY 256
+#define BOOK_THEME_COUNT 5
+#define BOOK_THEME_CLASSIC 4
 static char books[BOOK_CAP][256],book_text[BOOK_ROWS][65],book_status[38];
 static int book_indent[BOOK_ROWS],book_bold[BOOK_ROWS],book_y[BOOK_ROWS],book_render_rows,book_reflow;
 static int book_count=0,book_index=0,book_top=0,book_size=1,book_wide=0,book_eof=0,book_depth=0;
@@ -982,7 +984,7 @@ static void book_resume(void){
             else saved[i]=(off_t)offset;
         }
     }
-    if(valid&&fscanf(f," %c",&extra)==EOF&&size>=1&&size<=4&&wide>=0&&wide<=1&&paper>=0&&paper<=3&&font>=0&&font<=2){
+    if(valid&&fscanf(f," %c",&extra)==EOF&&size>=1&&size<=4&&wide>=0&&wide<=1&&paper>=0&&paper<BOOK_THEME_COUNT&&font>=0&&font<=2){
         book_size=size;book_wide=wide;book_theme=paper;book_font=font;
         if(bytes==(long long)book_bytes&&mtime==book_mtime&&pos>=0&&pos<bytes){
             book_pos=(off_t)pos;book_depth=depth;
@@ -1517,7 +1519,20 @@ static void record_placeholder(int x,int y){
         if(r<=49*49)rect(x+64+i,y+64+j,1,1,r<=9*9?bg:r<=21*21?mint:RGB(39,48,63));
     }
 }
+static const char *book_theme_label(void){
+    switch(book_theme){
+    case 0:return "Theme: Paper";case 1:return "Theme: White";
+    case 2:return "Theme: Night";case 3:return "Theme: Olive";
+    case BOOK_THEME_CLASSIC:return "Theme: iPod Classic";
+    default:return "Theme: Olive";
+    }
+}
+static void reader_classic_band(int y,int height){
+    for(int i=0;i<height;i++)rect(0,y+i,W,1,blend565(RGB(253,254,255),RGB(204,213,225),(unsigned)i*255/(height-1)));
+}
+#include "pocketos-classic-ui.h"
 static void render(void) {
+    if(classic_page()){classic_render();return;}
     palette();
     rect(0,0,W,H,bg);statusbar();
     centered_label(37,page==HOME?"PocketOS":page_label(page),2,fg);
@@ -1618,17 +1633,19 @@ static void render(void) {
         list_scrollbar(83,168,book_top,book_count,4);
         text_at(14,272,"Swipe to browse, tap to read",1,muted);
     } else if(page==READER){
-        uint16_t paper=book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
-        uint16_t ink=book_theme>=2?RGB(244,240,222):RGB(38,35,32);
-        uint16_t soft=book_theme==3?RGB(188,191,171):book_theme==2?RGB(145,153,153):RGB(112,103,89);
+        int classic=book_theme==BOOK_THEME_CLASSIC;
+        uint16_t paper=classic?RGB(250,251,253):book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
+        uint16_t ink=classic?RGB(24,32,45):(book_theme==2||book_theme==3)?RGB(244,240,222):RGB(38,35,32);
+        uint16_t soft=classic?RGB(87,103,124):book_theme==3?RGB(188,191,171):book_theme==2?RGB(145,153,153):RGB(112,103,89);
         rect(0,0,W,H,paper);
         if(book_menu){
-            reader_print(14,12,"Reading settings",20,ink,paper,0,1,228);
+            if(classic)reader_classic_band(0,32);
+            reader_draw(14,12,"Reading settings",20,ink,paper,0,1,228,classic);
             char label[40];
             snprintf(label,sizeof(label),"Text size: %s",book_size_label());
             reader_print(16,67,label,17,ink,paper,0,0,228);
             reader_print(16,105,book_wide?"Spacing: Airy":"Spacing: Normal",17,ink,paper,0,0,228);
-            reader_print(16,143,book_theme==3?"Theme: Olive":book_theme==0?"Theme: Paper":book_theme==1?"Theme: White":"Theme: Night",17,ink,paper,0,0,228);
+            reader_print(16,143,book_theme_label(),17,ink,paper,0,0,228);
             reader_print(16,181,book_font==0?"Font: Smooth sans":book_font==1?"Font: Serif":"Font: Dyslexic",17,ink,paper,0,0,228);
             if(book_font&&!book_font_ok)reader_print(16,203,"Font file not installed",12,soft,paper,0,0,228);
             reader_print(16,239,book_save_error?"Resume save failed":book_allow_save?"Resume saving enabled":"Resume saving off",13,soft,paper,0,0,228);
@@ -1637,9 +1654,10 @@ static void render(void) {
             reader_print(174,288,"Done",16,ink,paper,0,1,228);
         }else{
             layout_depth++;
+            if(classic){reader_classic_band(0,28);reader_classic_band(H-27,27);rect(0,27,W,1,RGB(167,181,200));}
             char heading[65];snprintf(heading,sizeof(heading),"%s",book_title[0]?book_title:"Reading");
             int title_width=reader_measure(heading,11,0,0);
-            reader_print(title_width<W-32?(W-title_width)/2:16,8,heading,11,soft,paper,0,0,W-16);
+            reader_draw(title_width<W-32?(W-title_width)/2:16,8,heading,11,soft,paper,0,0,W-16,classic);
             int rows=book_render_rows;
             if(!rows&&book_text[0][0])rows=book_rows();
             for(int r=0;r<rows;r++){
@@ -1654,11 +1672,12 @@ static void render(void) {
             char progress[24],bat[16];snprintf(progress,sizeof(progress),"%u.%u%%",permille/10,permille%10);
             if(battery>=0)snprintf(bat,sizeof(bat),"%d%%",battery);else strcpy(bat,"--%");
             rect(16,H-23,W-32,1,soft);
-            reader_print(16,H-17,progress,10,soft,paper,0,0,80);
+            if(classic)rect(16,H-23,(int)((W-32)*permille/1000),1,RGB(34,91,177));
+            reader_draw(16,H-17,progress,10,classic?RGB(34,91,177):soft,paper,0,0,80,classic);
             int clock_width=reader_measure(clock_label,10,0,0);
-            reader_print((W-clock_width)/2,H-17,clock_label,10,soft,paper,0,0,W-60);
+            reader_draw((W-clock_width)/2,H-17,clock_label,10,soft,paper,0,0,W-60,classic);
             int bat_width=reader_measure(bat,10,0,0);
-            reader_print(W-16-bat_width,H-17,bat,10,soft,paper,0,0,W-16);
+            reader_draw(W-16-bat_width,H-17,bat,10,soft,paper,0,0,W-16,classic);
             layout_depth--;
         }
     } else if(page==NOWPLAYING){
@@ -1981,7 +2000,78 @@ static void update_choose(int i){
     fm_close();
     (void)update_spawn(i==0?U_SD:i==1?U_CHECK_TEST:U_CHECK_STABLE);
 }
+static void classic_step(int step){
+    if(page==HOME||page==SETTINGS){
+        int count=7;selected+=step;if(selected<0)selected=0;if(selected>=count)selected=count-1;
+    }else if(page==MUSIC){
+        classic_music_cursor=classic_window(classic_music_cursor+step,music_count,&classic_music_top);
+    }else if(page==BOOKS){
+        book_index=classic_window(book_index+step,book_count,&classic_books_top);
+    }else if(page==NOWPLAYING){
+        if(classic_seek_mode&&music_length){
+            int percent=(int)(100*(uint64_t)music_pos/music_length)+step*5;
+            music_seek(percent<0?0:percent>100?100:percent);
+        }else set_volume_target(volume+step*5);
+    }
+}
+static void classic_select(void){
+    if(page==HOME){
+        if(selected==6){page=NOWPLAYING;return;}
+        int destination=selected;activate(destination);
+        if(page==MUSIC){classic_music_cursor=music_index;classic_music_top=0;}
+    }else if(page==SETTINGS)activate(selected);
+    else if(page==BOOKS){book_status[0]=0;(void)book_open();}
+    else if(page==MUSIC&&music_count){
+        if(music_pid>=0&&classic_music_cursor==music_index){if(music_pause)music_action(1);}
+        else music_choose_track(classic_music_cursor,1);
+        classic_seek_mode=0;page=NOWPLAYING;
+    }else if(page==NOWPLAYING)classic_seek_mode=!classic_seek_mode;
+}
+static void classic_play_pause(void){
+    if(music_pid<0&&page==MUSIC){classic_select();return;}
+    music_action(1);
+}
+static int classic_key(unsigned code){
+    if(code==KEY_MENU||code==KEY_ESC||code==KEY_BACK){if(page!=HOME)back();return 1;}
+    if(code==KEY_ENTER||code==KEY_OK||code==KEY_SELECT){classic_select();return 1;}
+    if(code==KEY_UP||code==KEY_DOWN){classic_step(code==KEY_UP?-1:1);return 1;}
+    if(code==KEY_PLAYPAUSE){classic_play_pause();return 1;}
+    if(code==KEY_LEFT||code==KEY_RIGHT){
+        if(music_pid>=0||page==NOWPLAYING)music_action(code==KEY_LEFT?0:3);
+        else classic_step(code==KEY_LEFT?-1:1);
+        return 1;
+    }
+    if(code==KEY_STOPCD){music_action(2);return 1;}
+    return 0;
+}
+/* Coordinates use the same 240x320 touch space as the existing controls. */
+static void classic_tap(int x,int y){
+    int nx=x*2,ny=y*CH/LAYOUT_H,dx=nx-240,dy=ny-661,r=dx*dx+dy*dy;
+    if(ny>=532){
+        if(r<43*43)classic_select();
+        else if(r<=126*126){
+            if(abs(dy)>abs(dx)){if(dy<0){if(page!=HOME)back();}else classic_play_pause();}
+            else (void)classic_key(dx<0?KEY_LEFT:KEY_RIGHT);
+        }
+        return;
+    }
+    if(nx<20||nx>=460||ny<78||ny>=518)return;
+    if(page==HOME){
+        int item=ny>=478?6:(ny-104)/56;
+        if(ny<104&&ny<478)return;
+        if(item<0||item>6||(ny<478&&(ny>=440||nx>=276)))return;
+        if(selected==item)classic_select();else selected=item;
+    }else if(page==SETTINGS||page==MUSIC||page==BOOKS){
+        int pitch=page==SETTINGS?56:54;
+        if(ny<91||ny>=91+7*pitch)return;
+        int item=(ny-91)/pitch;
+        if(page==SETTINGS){if(selected==item)classic_select();else selected=item;}
+        else if(page==MUSIC){item+=classic_music_top;if(item<music_count){if(classic_music_cursor==item)classic_select();else classic_music_cursor=item;}}
+        else{item+=classic_books_top;if(item<book_count){if(book_index==item)classic_select();else book_index=item;}}
+    }else if(page==NOWPLAYING&&ny>=365&&ny<=409){music_seek((nx-40)*100/400);}
+}
 static void tap(int x,int y) {
+    if(classic_page()){classic_tap(x,y);return;}
     if(navigation_available()&&y>=294){
         if(page==MUSIC||page==BTUI){if(x>=12&&x<78)back();else if(x>=84&&x<152){if(page==MUSIC)page=NOWPLAYING;else radio_disconnect_audio();}else if(x>=158&&x<228)go_home();}
         else if(x>=12&&x<116)back();else if(x>=124&&x<228)go_home();
@@ -2034,7 +2124,7 @@ static void tap(int x,int y) {
             if(y>=275){if(x<115){book_menu=0;back();}else{book_menu=0;book_page();}return;}
             if(y>=56&&y<94)book_size=book_size%4+1;
             else if(y>=94&&y<132)book_wide=!book_wide;
-            else if(y>=132&&y<170){book_theme=(book_theme+1)%4;book_dirty++;return;}
+            else if(y>=132&&y<170){book_theme=(book_theme+1)%BOOK_THEME_COUNT;book_dirty++;return;}
             else if(y>=170&&y<218){book_font=(book_font+1)%3;book_load_font();}
             else return;
             book_dirty++;book_depth=0;book_page_span=0;book_page();return;
@@ -2099,6 +2189,8 @@ static int key(unsigned code) {
         return 0; /* repeated physical volume-up cannot confirm */
     }
     if(code==KEY_VOLUMEUP||code==KEY_VOLUMEDOWN||(page==SOUND&&(code==KEY_LEFT||code==KEY_RIGHT))){set_volume_target(volume+((code==KEY_VOLUMEUP||code==KEY_RIGHT)?5:-5));return 1;}
+    if(classic_page())return classic_key(code);
+    if(classic_ui&&code==KEY_MENU){back();return 1;}
     if(page==POWER&&(code==KEY_ENTER||code==KEY_OK)){saver=!saver;save_error=!save_preferences();return 1;}
     if(page==UPDATES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
@@ -2166,6 +2258,46 @@ static int key(unsigned code) {
 }
 static int sample_battery(void) {
     return (int)hw_battery_read("").percent;
+}
+static int test_classic_navigation(void){
+    classic_ui=1;page=HOME;selected=0;
+    key(KEY_DOWN);if(selected!=1)return 1;
+    classic_tap(120,264);if(page!=BOOKS)return 2;
+    classic_tap(120,223);if(page!=HOME||selected!=1)return 3;
+    selected=0;classic_reset_gesture();
+    int clockwise[][2]={{360,661},{350,708},{324,745},{287,771},{240,781}};
+    for(unsigned i=0;i<sizeof(clockwise)/sizeof(clockwise[0]);i++)classic_motion(clockwise[i][0],clockwise[i][1]);
+    if(selected!=4||!classic_moved)return 4;
+    for(int i=3;i>=0;i--)classic_motion(clockwise[i][0],clockwise[i][1]);
+    if(selected!=0)return 5;
+    classic_reset_gesture();classic_motion(350,616);classic_motion(350,706);
+    if(selected!=1)return 6;
+    classic_motion(350,616);if(selected!=0)return 7;
+    classic_step(-100);if(selected)return 8;classic_step(100);if(selected!=6)return 9;
+    classic_select();if(page!=NOWPLAYING)return 10;
+    classic_select();if(!classic_seek_mode)return 11;
+    classic_select();if(classic_seek_mode)return 12;
+    key(KEY_MENU);if(page!=MUSIC)return 13;
+    key(KEY_MENU);if(page!=HOME||selected)return 14;
+    selected=3;classic_select();if(page!=SETTINGS)return 15;
+    selected=3;classic_select();if(page!=POWER)return 16;
+    key(KEY_MENU);if(page!=SETTINGS||selected!=3)return 17;
+    page=MUSIC;music_count=10;classic_music_cursor=0;music_index=4;classic_music_top=0;
+    int f[2];if(pipe(f))return 18;
+    music_pid=getpid();music_fd=f[1];music_pause=0;music_pending=-1;
+    classic_step(3);if(classic_music_cursor!=3||music_index!=4||music_pending>=0)return 19;
+    classic_select();unsigned char command;
+    if(page!=NOWPLAYING||music_index!=4||music_pending!=3||read(f[0],&command,1)!=1||command!=202)return 20;
+    close(f[0]);music_pid=-1;music_fd=-1;music_pending=-1;
+    if(pipe(f))return 21;
+    music_pid=getpid();music_fd=f[1];music_pause=0;
+    classic_tap(120,300);
+    if(!music_pause||read(f[0],&command,1)!=1||command!=200)return 22;
+    close(f[0]);close(f[1]);music_pid=-1;music_fd=-1;music_pause=0;
+    page=BOOKS;book_count=10;book_index=0;classic_step(8);
+    if(book_index!=8||classic_books_top!=2)return 23;
+    render();if(canvas[661*CW+240]==0)return 24;
+    classic_ui=0;return 0;
 }
 static void sample_quick(void) {
     wifi_present=access("/sys/class/net/wlan0",F_OK)==0;
@@ -2302,6 +2434,13 @@ static int native(const char *input) {
     int corrected=touch?touch_calibrate("",input_name,&ax,&ay,b.v.xres,b.v.yres):0;
     struct volume_input volume_inputs[VOLUME_INPUTS]={0};
     int volume_count=volume_input_open(volume_inputs,input);
+    if(exclusive_input){
+        for(int k=0;k<volume_count;k++)if(ioctl(volume_inputs[k].fd,EVIOCGRAB,1)<0){
+            perror("exclusive volume input");
+            for(int j=0;j<volume_count;j++)close(volume_inputs[j].fd);
+            close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return 1;
+        }
+    }
     smart_allow=smart_ready();
     int power_fd=smart_allow?suspend_input_open():-1;struct suspend_key power_key={0};
     if(power_fd<0)smart_allow=0;
@@ -2480,19 +2619,24 @@ static int native(const char *input) {
                 if((v.type==EV_KEY&&v.value==0)||(v.type==EV_ABS&&v.code==ABS_MT_TRACKING_ID&&v.value<0))wake_gesture=0;
                 continue;
             }
-            if(v.type==EV_SYN&&v.code==SYN_DROPPED){dropped=1;pending=down=have_x=have_y=0;start_y=-1;continue;}
+            if(v.type==EV_SYN&&v.code==SYN_DROPPED){classic_reset_gesture();dropped=1;pending=down=have_x=have_y=0;start_y=-1;continue;}
             if(dropped){if(v.type==EV_SYN&&v.code==SYN_REPORT)dropped=0;continue;}
             if(v.type==EV_ABS&&v.code==ABS_MT_SLOT){slot=v.value;continue;}
             if(touch&&v.type==EV_ABS&&(!mt||slot==0)){
                 if(v.code==(mt?ABS_MT_POSITION_X:ABS_X)){rx=v.value;have_x=1;}
                 else if(v.code==(mt?ABS_MT_POSITION_Y:ABS_Y)){ry=v.value;have_y=1;}
-                else if(mt&&v.code==ABS_MT_TRACKING_ID){if(v.value>=0){down=1;have_x=have_y=0;start_y=-1;}else if(down){pending=1;down=0;}}
+                else if(mt&&v.code==ABS_MT_TRACKING_ID){if(v.value>=0){if(!down){down=1;have_x=have_y=0;start_y=-1;classic_reset_gesture();}}else if(down){pending=1;down=0;}}
             }
             /* R1 hyn_ts uses type-A MT and BTN_TOUCH release, not MT slots. */
-            if(touch&&v.type==EV_KEY&&v.code==BTN_TOUCH){if(v.value==1){if(!down){down=1;start_y=-1;}}else if(!v.value&&down){pending=1;down=0;}}
+            if(touch&&v.type==EV_KEY&&v.code==BTN_TOUCH){if(v.value==1){if(!down){down=1;start_y=-1;classic_reset_gesture();}}else if(!v.value&&down){pending=1;down=0;}}
             if(v.type==EV_KEY&&v.value==1&&v.code!=BTN_TOUCH)changed|=key(v.code);
             if(v.type==EV_SYN&&v.code==SYN_REPORT&&down&&have_y&&start_y<0){
                 start_y=touch_canvas(ry,ay.minimum,ay.maximum,b.v.yres,b.oy,b.vh,LAYOUT_H);
+            }
+            if(v.type==EV_SYN&&v.code==SYN_REPORT&&down&&have_x&&have_y&&classic_page()){
+                int wx=touch_canvas(rx,ax.minimum,ax.maximum,b.v.xres,b.ox,b.vw,CW);
+                int wy=touch_canvas(ry,ay.minimum,ay.maximum,b.v.yres,b.oy,b.vh,CH);
+                if(wx>=0&&wy>=0)changed|=classic_motion(wx,wy);
             }
             if(v.type==EV_SYN&&v.code==SYN_REPORT&&pending){
                 if(have_x&&have_y){
@@ -2500,7 +2644,9 @@ static int native(const char *input) {
                     int y=touch_canvas(ry,ay.minimum,ay.maximum,b.v.yres,b.oy,b.vh,LAYOUT_H);
                     if(trace_touch){fprintf(stderr,"touch raw=%d,%d canvas=%d,%d page=%d\n",rx,ry,x,y,(int)page);fflush(stderr);}
                     if(x>=0&&y>=0){
-                        if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL&&page!=UPDATES)open_control();
+                        if(classic_page()){
+                            if(!classic_moved)classic_tap(x,y);
+                        }else if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL&&page!=UPDATES)open_control();
                         else if(page==CONTROL&&start_y>=0&&start_y-y>=40)back();
                         else if(page==FILES&&fm_worker<0&&!fm_panel&&!fm_confirm&&start_y>=84&&start_y<239&&
                                 (start_y-y>=25||y-start_y>=25)){
@@ -2647,6 +2793,7 @@ int main(int argc,char **argv) {
     }
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
+    if(argc==2&&!strcmp(argv[1],"--test-classic-navigation"))return test_classic_navigation();
     if(argc==4&&!strcmp(argv[1],"--boot-preview")){
         if(strlen(argv[2])!=1||argv[2][0]<'0'||argv[2][0]>'3')return 2;
         boot_frame(argv[2][0]-'0');return ppm(argv[3]);
@@ -2756,7 +2903,12 @@ int main(int argc,char **argv) {
         FILE *fixture=fopen(bookmark,"w");if(!fixture)return 1;
         fprintf(fixture,"POCKETBOOK1 %lld %lld %lld 0 1 0 3 0\n",(long long)book_bytes,book_mtime,(long long)positions[1]);
         if(fclose(fixture)||!book_open()||book_pos!=positions[1]||book_depth!=1)return 1;
-        tap(120,120);tap(120,150);if(book_depth!=1||book_theme!=0)return 1;
+        off_t theme_position=book_pos;
+        tap(120,120);tap(120,150);if(book_depth!=1||book_theme!=BOOK_THEME_CLASSIC)return 1;
+        tap(200,300);render();if(canvas[100*CW+4]!=RGB(250,251,253))return 1;
+        book_allow_save=1;book_close();if(!book_open()||book_theme!=BOOK_THEME_CLASSIC||book_pos!=theme_position)return 1;
+        tap(120,120);tap(120,150);if(book_theme!=0||book_pos!=theme_position)return 1;
+        book_allow_save=0;
         book_close();
         fixture=fopen(bookmark,"w");if(!fixture)return 1;
         fprintf(fixture,"POCKETBOOK2 %lld %lld %lld 1 0 3 0 2\n0\n0\n",(long long)book_bytes,book_mtime,(long long)positions[2]);
@@ -2797,7 +2949,9 @@ int main(int argc,char **argv) {
     }
     if(argc==2&&!strcmp(argv[1],"--test-smart-sleep")){int rc=suspend_key_test();return rc?rc:smart_audio_test();}
     if(argc==4&&!strcmp(argv[1],"--preview")){
-        int found=0;for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++)if(!strcmp(argv[2],titles[i])){page=(enum page)i;found=1;}
+        const char *preview=argv[2];if(!strncmp(preview,"CLASSIC-",8)){classic_ui=1;preview+=8;}
+        int found=0;for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++)if(!strcmp(preview,titles[i])){page=(enum page)i;found=1;}
+        if(!strcmp(argv[2],"READER-CLASSIC")||!strcmp(argv[2],"READING-CLASSIC-SETTINGS")){page=READER;book_theme=BOOK_THEME_CLASSIC;book_menu=!strcmp(argv[2],"READING-CLASSIC-SETTINGS");found=1;}
         if(!found)return 2;
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
@@ -2815,7 +2969,8 @@ int main(int argc,char **argv) {
     }
     if(argc>=5&&!strcmp(argv[1],"--config")&&argv[2][0]=='/') {config_path=argv[2];argc-=2;argv+=2;}
     while(argc>=4){
-        if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
+        if(!strcmp(argv[1],"--classic-ui"))classic_ui=1;
+        else if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
         else if(!strcmp(argv[1],"--allow-book-preparation"))book_allow_prepare=1;

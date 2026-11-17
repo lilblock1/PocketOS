@@ -29,6 +29,9 @@ jobs:
         run: |
           make -C apps BUILD_DIR="$PWD/host-app-output" check
           host-app-output/pocketos-shell --test-update-ui
+          host-app-output/pocketos-shell --test-classic-navigation
+          cc -Os -Wall -Wextra -Werror tools/r1-design-preview.c -o /tmp/pocketos-design-preview
+          sh -n tools/r1-design-session.sh
           python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py tools/test-r1-recovery-monitor.py
       - name: Render host-only Classic visual concepts
         run: |
@@ -51,6 +54,9 @@ jobs:
             host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
           done
           host-app-output/pocketos-shell --preview 'NOW PLAYING' ui-previews/NOW-PLAYING.ppm
+          for screen in CLASSIC-HOME CLASSIC-MUSIC CLASSIC-BOOKS CLASSIC-SETTINGS 'CLASSIC-NOW PLAYING' READER-CLASSIC READING-CLASSIC-SETTINGS; do
+            host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
+          done
           for frame in 0 1 2 3; do host-app-output/pocketos-shell --boot-preview "$frame" "ui-previews/BOOT-$frame.ppm"; done
       - uses: actions/upload-artifact@v4
         with:
@@ -125,6 +131,11 @@ jobs:
           readelf -h target-app-output/pocketos-shell | grep -q MIPS
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-update-ui
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-classic-navigation
+          for screen in CLASSIC-HOME CLASSIC-MUSIC CLASSIC-BOOKS CLASSIC-SETTINGS 'CLASSIC-NOW PLAYING' READER-CLASSIC READING-CLASSIC-SETTINGS; do
+            timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview "$screen" "target-app-output/$screen.ppm"
+            cmp "ui-previews/$screen.ppm" "target-app-output/$screen.ppm"
+          done
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview HOME target-app-output/HOME.ppm
           cmp ui-previews/HOME.ppm target-app-output/HOME.ppm
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview READER target-app-output/READER.ppm

@@ -5,6 +5,11 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 test "$("$bin" --version)" = 'PocketOS shell v1'
 "$bin" --self-test
+"$bin" --test-classic-navigation
+for screen in CLASSIC-HOME CLASSIC-MUSIC CLASSIC-BOOKS CLASSIC-SETTINGS 'CLASSIC-NOW PLAYING' READER-CLASSIC READING-CLASSIC-SETTINGS; do
+    "$bin" --preview "$screen" "$tmp/$screen.ppm"
+    test "$(wc -c < "$tmp/$screen.ppm")" -eq 1152015
+done
 for page in HOME SETTINGS SYSTEM BATTERY MUSIC CONTROL PREFERENCES DISPLAY STORAGE RADIOS SOUND UPDATES; do
     "$bin" --preview "$page" "$tmp/$page.ppm"
     test "$(wc -c < "$tmp/$page.ppm")" -eq 1152015
