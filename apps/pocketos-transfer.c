@@ -113,6 +113,8 @@ static void head(int fd,int code,const char *reason,const char *type,unsigned lo
     int n=snprintf(b,sizeof(b),"HTTP/1.0 %d %s\r\nContent-Type: %s\r\n"
       "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
       "Referrer-Policy: no-referrer\r\nX-Frame-Options: DENY\r\n"
+      "Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; "
+      "style-src 'unsafe-inline'; connect-src 'self'\r\n"
       "Connection: close\r\n"
       "%s",code,reason,type,known?"":"");
     if(n>0&&(size_t)n<sizeof(b))(void)send_all(fd,b,(size_t)n);
@@ -134,6 +136,27 @@ static int header_read(int fd,char buf[4096]){
         if(z!=1)return 0;
         len++;
         if(len>=4&&!memcmp(buf+len-4,"\r\n\r\n",4)){buf[len]=0;return 1;}
+    }
+    return 0;
+}
+/* Reject DNS-rebinding hostnames; the UI is reachable only by the wlan0 IP. */
+static int valid_host(const char *header){
+    char expected[64];
+    int n=snprintf(expected,sizeof(expected),"%s:%d",address,TRANSFER_PORT);
+    if(n<=0||(size_t)n>=sizeof(expected))return 0;
+    const char *p=strstr(header,"\r\n");
+    if(!p)return 0;
+    p+=2;
+    while(*p&&strncmp(p,"\r\n",2)){
+        const char *e=strstr(p,"\r\n");
+        if(!e)return 0;
+        if(e-p>=5&&!strncasecmp(p,"Host:",5)){
+            const char *value=p+5;
+            while(value<e&&*value==' ')value++;
+            return (size_t)(e-value)==strlen(expected)&&
+                   !memcmp(value,expected,strlen(expected));
+        }
+        p=e+2;
     }
     return 0;
 }
@@ -301,6 +324,7 @@ static void serve(int fd){
     if(!header_read(fd,headers)){message(fd,400,"Bad Request","Invalid headers");return;}
     if(sscanf(headers,"%7s %419s %15s",method,uri,protocol)!=3||
        strncmp(protocol,"HTTP/1.",7)){message(fd,400,"Bad Request","Invalid request");return;}
+    if(!valid_host(headers)){message(fd,403,"Forbidden","Invalid request host");return;}
     if(!strcmp(method,"GET")&&!strcmp(uri,"/")){
         head(fd,200,"OK","text/html; charset=utf-8",sizeof(html)-1,1);
         (void)send_all(fd,html,sizeof(html)-1);return;
