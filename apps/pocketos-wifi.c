@@ -131,7 +131,10 @@ static int join_network(void){
     }
     snprintf(cmd,sizeof(cmd),"SELECT_NETWORK %d",id);
     if(!ok(cmd))goto done;
-    puts("Association requested; check status. No credentials saved by PocketOS.");
+    /* Saving is permitted only by the supplicant's protected update_config.
+     * RAM-only test configurations deliberately reject this command. */
+    (void)ok("SAVE_CONFIG");
+    puts("Association requested.");
     result=0;
 done:
     if(result&&id>=0){snprintf(cmd,sizeof(cmd),"REMOVE_NETWORK %d",id);(void)ok(cmd);}

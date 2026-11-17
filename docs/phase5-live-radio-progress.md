@@ -66,6 +66,13 @@ Timeout and userdata helpers are now included in offline application assembly.
 Host/MIPS compilation and native `--check` passed. The radio audio build recipe
 also reproduced its SBC, BlueALSA and audio-enabled BlueZ components successfully.
 
+The existing userdata volume subsequently attached and mounted successfully,
+without formatting or creating a volume. Saved Wi-Fi configuration, Bluetooth
+storage/address and UI preferences are now being wired to a private PocketOS
+subdirectory. Reopening saved radio settings across service restart and cold boot
+is still pending. Existing live services continue using their earlier RAM state
+until deliberately migrated; source configuration alone is not persistence proof.
+
 After Bluetooth is fixed, the requested next feature is on-device online and
 microSD updates, with recovery/bootloader preserved. Then measure and optimize
 memory, CPU/display idle work, startup and battery use. Do not enable kernel sleep.

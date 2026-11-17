@@ -39,6 +39,12 @@ alive(){
     case "$pid" in ''|*[!0-9]*) return 1;; esac
     [ -r "/proc/$pid/comm" ] && grep -Fxq "$2" "/proc/$pid/comm"
 }
+persistent=
+if awk '$2=="/run/pocketos-data" && $3=="ubifs" {ok=1} END {exit !ok}' /proc/mounts &&
+   [ -d /run/pocketos-data/PocketOS ] && [ ! -L /run/pocketos-data/PocketOS ] &&
+   [ "$(/usr/bin/pocketos-stat -c '%u:%a' /run/pocketos-data/PocketOS)" = 0:700 ]; then
+    persistent=/run/pocketos-data/PocketOS
+fi
 wifi_start(){
     wifi=/run/pocketos-wifi
     mkdir -p "$wifi"
@@ -56,8 +62,16 @@ wifi_start(){
         [ -d /sys/class/net/wlan0 ]
         ip link set wlan0 up
         [ ! -e "$wifi/wlan0" ] && [ ! -L "$wifi/wlan0" ]
-        printf 'ctrl_interface=%s\nupdate_config=0\n' "$wifi" > "$wifi/wpa.conf"
-        wpa_supplicant -B -P "$wifi/pid" -i wlan0 -D nl80211 -c "$wifi/wpa.conf" -f "$wifi/wpa.log"
+        config="$wifi/wpa.conf"
+        if [ -n "$persistent" ]; then
+            config="$persistent/wpa.conf"
+            if [ ! -e "$config" ] && [ ! -L "$config" ]; then
+                printf 'ctrl_interface=%s\nupdate_config=1\n' "$wifi" > "$config"
+                chmod 600 "$config"
+            fi
+            trusted "$config"
+        else printf 'ctrl_interface=%s\nupdate_config=0\n' "$wifi" > "$config"; fi
+        wpa_supplicant -B -P "$wifi/pid" -i wlan0 -D nl80211 -c "$config" -f "$wifi/wpa.log"
     fi
     if ! alive "$wifi/monitor.pid" wpa_cli; then
         wpa_cli -B -P "$wifi/monitor.pid" -p "$wifi" -i wlan0 -a /usr/sbin/pocketos-network-event
@@ -82,6 +96,11 @@ bluetooth_start(){
         identity=$(sha256sum /proc/jz/efuse/efuse_chip_id); identity=${identity%% *}
         suffix=$(printf '%.6s' "$identity" | sed 's/../&:/g;s/:$//')
         address=02:50:4f:$suffix
+        if [ -n "$persistent" ] && [ -e "$persistent/bt-address" ]; then
+            trusted "$persistent/bt-address"
+            read -r address < "$persistent/bt-address"
+            printf '%s\n' "$address" | grep -Eq '^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$'
+        fi
         nohup setsid "$package/bin/brcm_patchram_plus" --enable_hci --baudrate 3000000 --no2bytes \
             --patchram "$package/firmware/bt/BCM4343A1_001.002.009.0122.0538.hcd" /dev/ttyS0 \
             --tosleep=50000 --use_baudrate_for_download --enable_lpm --bd_addr "$address" > "$bt/transport.log" 2>&1 </dev/null &
@@ -90,8 +109,14 @@ bluetooth_start(){
         while [ ! -d /sys/class/bluetooth/hci0 ] && [ "$n" -lt 150 ]; do n=$((n+1)); sleep 0.1; done
         [ -d /sys/class/bluetooth/hci0 ] || return 1
     fi
+    if [ -n "$persistent" ] && [ ! -e "$persistent/bt-address" ]; then
+        cat /sys/class/bluetooth/hci0/address > "$persistent/bt-address"
+        chmod 600 "$persistent/bt-address"
+    fi
+    storage="$bt/storage"
+    if [ -n "$persistent" ]; then storage="$persistent/bluetooth"; [ ! -L "$storage" ]; mkdir -p "$storage"; chmod 700 "$storage"; fi
     if ! awk '$2=="/var/lib/bluetooth" {ok=1} END {exit !ok}' /proc/mounts; then
-        mount --bind "$bt/storage" /var/lib/bluetooth
+        mount --bind "$storage" /var/lib/bluetooth
     fi
     mkdir -p /tmp/dbus /run/dbus
     dbus-uuidgen --ensure=/var/lib/dbus/machine-id

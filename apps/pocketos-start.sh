@@ -144,6 +144,13 @@ while ! ready; do
     sleep 1
 done
 event=$resolved
+config_args=
+if [ "$fixture" -eq 0 ] &&
+   awk '$2=="/run/pocketos-data" && $3=="ubifs" {ok=1} END {exit !ok}' /proc/mounts &&
+   [ ! -L /run/pocketos-data/PocketOS ] &&
+   [ "$("$stat_cmd" -c '%u:%a' /run/pocketos-data/PocketOS)" = 0:700 ]; then
+    config_args='--config /run/pocketos-data/PocketOS/preferences'
+fi
 printf '%s\n' "$event" > "$state/input"
 # Provisioned digest is independent of the writable SD card. Decoder failure
 # does not prevent native WAV playback or the shell from launching.
@@ -155,9 +162,9 @@ attempt=1
 while [ "$attempt" -le 3 ]; do
     status "starting-$attempt"
     if [ "$attempt" -eq 1 ]; then
-        "$shell" --boot-splash --unblank-display $feature_args --fb "/dev/input/$event" </dev/null >"$state/shell.log" 2>&1 &
+        "$shell" $config_args --boot-splash --unblank-display $feature_args --fb "/dev/input/$event" </dev/null >"$state/shell.log" 2>&1 &
     else
-        "$shell" --unblank-display $feature_args --fb "/dev/input/$event" </dev/null >"$state/shell.log" 2>&1 &
+        "$shell" $config_args --unblank-display $feature_args --fb "/dev/input/$event" </dev/null >"$state/shell.log" 2>&1 &
     fi
     child=$!
     status "shell-launched-$attempt"

@@ -51,6 +51,9 @@ if [ "$adb_started" -eq 0 ] && ! /usr/sbin/pocketos-usb-adb start; then
 fi
 /sbin/mdev -s
 i=0
+if [ -f /etc/pocketos/state-enable ] && [ -x /usr/sbin/pocketos-state-service ]; then
+    /usr/sbin/pocketos-state-service start || echo 'Saved settings unavailable; retaining RAM-only operation'
+fi
 while [ ! -b /dev/mmcblk0p1 ] && [ "$i" -lt 10 ]; do i=$((i+1)); sleep 1; done
 if [ -b /dev/mmcblk0p1 ] && [ "$(cat /sys/class/block/mmcblk0p1/partition)" = 1 ]; then
     # First boot reads media only; no fsck, formatting, userdata mount or auto-updater.
