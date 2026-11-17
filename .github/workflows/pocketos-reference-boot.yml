@@ -165,6 +165,43 @@ jobs:
           test -s reports/reference-upt-format.json
           # The installer files are a disposable format test and are never uploaded.
           sudo rm -rf staging reference-work reference.upt
+      - name: Prepare no-flash static R1 hardware smoke-test files
+        if: success()
+        run: |
+          set -euo pipefail
+          mkdir -p hardware-smoke
+          cp static-apps/pocketos-shell static-apps/pocketos-transfer static-apps/pocketos-r1-runtime hardware-smoke/
+          cp hardware/hiby-r1/boot-probe.sh hardware-smoke/boot-probe.sh
+          (cd hardware-smoke && sha256sum pocketos-shell pocketos-transfer pocketos-r1-runtime boot-probe.sh > SHA256SUMS)
+          cat > hardware-smoke/README-NOT-FIRMWARE.txt <<'EOF'
+          PocketOS HiBy R1 static application hardware smoke-test files.
+          NOT A FIRMWARE UPDATE. Do not flash, rename to .upt, or install as an OTA.
+          These are standalone MIPS binaries and a read-only boot probe.
+
+          If ADB was ALREADY enabled on a working R1, low-risk version test:
+            adb push pocketos-shell /tmp/pocketos-shell
+            adb shell chmod 755 /tmp/pocketos-shell
+            adb shell /tmp/pocketos-shell --version
+            adb shell /tmp/pocketos-shell --self-test
+          These commands do not write to firmware storage. /tmp is temporary.
+          They do not prove framebuffer, touch, audio, or firmware bootability.
+
+          The read-only R1 probe can be run from Windows cmd if ADB already works:
+            adb shell sh < boot-probe.sh > r1-boot-baseline.txt
+          It reads /proc/mtd, mount names, and UBI capacity; it writes nothing.
+          Share that text to help verify partition capacity. Do not enable ADB
+          by flashing another firmware just to get this report.
+
+          Do not take over a running player's framebuffer without a recovery plan.
+          The original signed test-latest update is not changed by this build.
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: PocketOS-R1-static-smoke-NOT-FIRMWARE
+          path: hardware-smoke/
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload findings (no firmware image)
         if: always()
         uses: actions/upload-artifact@v4
