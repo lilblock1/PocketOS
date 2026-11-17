@@ -1,0 +1,88 @@
+name: PocketOS Modern UI development pre-release (NOT FIRMWARE)
+on:
+  push:
+    branches: [phase6-audio-routing]
+    paths:
+      - '.github/workflows/pocketos-modern-ui-prerelease.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: pocketos-modern-ui-dev-prerelease
+  cancel-in-progress: false
+jobs:
+  publish-development-bundle:
+    if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/phase6-audio-routing'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SOURCE_RUN: '44011886334'
+      SOURCE_SHA: '9f1f2387adefc51a670f5ab5d6d23fb998e2babb'
+      APP_ID: '14297395584'
+      APP_SHA256: '767d0d6967c8e7dc6ea33cf9e7a2bfba59e606e2a8b37e9798f8d83873e41196'
+      UI_ID: '14296323556'
+      UI_SHA256: 'a0295a2b3af43ad92b17c67a10649137a3c4a7959a3036a4cdefe96760a977c7'
+      TAG: 'dev-ui-9f1f2387'
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate pinned successful application build
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > run.json
+          jq -e --arg sha "$SOURCE_SHA" '
+            .head_sha==$sha and .status=="completed" and .conclusion=="success" and
+            .head_branch=="phase6-audio-routing" and
+            .path==".github/workflows/pocketos-apps.yml" and
+            .head_repository.full_name=="lilblock1/PocketOS"
+          ' run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts?per_page=100" > artifacts.json
+          jq -e --argjson id "$APP_ID" --arg sha "sha256:$APP_SHA256" '
+            [.artifacts[] | select(.id==$id and .name=="PocketOS-applications-NOT-FIRMWARE" and .digest==$sha and .expired==false)] | length==1
+          ' artifacts.json
+          jq -e --argjson id "$UI_ID" --arg sha "sha256:$UI_SHA256" '
+            [.artifacts[] | select(.id==$id and .name=="PocketOS-shell-previews" and .digest==$sha and .expired==false)] | length==1
+          ' artifacts.json
+      - name: Download and verify both exact artifact ZIPs
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          curl --fail --silent --show-error --location --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$APP_ID/zip" \
+            -o PocketOS-applications-NOT-FIRMWARE.zip
+          curl --fail --silent --show-error --location --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$UI_ID/zip" \
+            -o PocketOS-ui-previews.zip
+          printf '%s  PocketOS-applications-NOT-FIRMWARE.zip\n' "$APP_SHA256" | sha256sum -c -
+          printf '%s  PocketOS-ui-previews.zip\n' "$UI_SHA256" | sha256sum -c -
+          unzip -tq PocketOS-applications-NOT-FIRMWARE.zip
+          unzip -tq PocketOS-ui-previews.zip
+      - name: Create separate non-flashable pre-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Immutable development pre-release exists; refusing to replace."
+            exit 1
+          fi
+          cat > README-NOT-FIRMWARE.txt <<'EOF'
+          PocketOS Modern UI development preview, based on application CI run 44011886334.
+          NOT FIRMWARE. NOT FLASHABLE. NOT AN OTA UPDATE.
+          Do NOT rename, flash, feed to the PocketOS updater, or use as a recovery image.
+          These archives contain tested development application binaries and UI previews.
+          R1 hardware validation and a compatible signed rootfs update are still required.
+          The signed test-latest OTA channel is intentionally NOT modified.
+          EOF
+          sha256sum PocketOS-applications-NOT-FIRMWARE.zip PocketOS-ui-previews.zip > SHA256SUMS.txt
+          gh release create "$TAG" \
+            PocketOS-applications-NOT-FIRMWARE.zip PocketOS-ui-previews.zip \
+            README-NOT-FIRMWARE.txt SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease \
+            --title "PocketOS Modern UI — Development Preview (NOT FIRMWARE)" \
+            --notes "Verified host tests and MIPS application build from run $SOURCE_RUN. Contains the lightweight modern UI, Wireless File Transfer, and Phase 6 application work. NOT an installable HiBy R1 firmware update; no flash or OTA packages are included. Physical hardware validation, memory benchmarks, and signed firmware packaging remain pending."
