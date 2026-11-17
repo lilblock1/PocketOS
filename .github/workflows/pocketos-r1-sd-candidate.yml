@@ -125,8 +125,8 @@ jobs:
           Path('reports/reference-boot-preservation.json').write_text(json.dumps(data,indent=2)+'\n')
           PY
           sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
-          sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
-          timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" staging/reference-root/usr/bin/pocketos-shell --self-test
+          timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" static-apps/pocketos-shell --self-test
+          test ! -e staging/reference-root/usr/bin/pocketos-shell
           # Match the vendor firmware's LZO compressor and block size.
           # XZ may be unsupported by the R1's legacy kernel: never substitute.
           grep -Eiq 'Compression[[:space:]]+lzo' reports-reference-compression.txt
@@ -134,10 +134,10 @@ jobs:
           sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs -noappend -comp lzo -Xalgorithm lzo1x_999 -Xcompression-level 9 -b 131072 -processors 2 -no-progress >/dev/null
           sudo unsquashfs -no-progress -d staging/rechecked-root staging/reference-compatible.squashfs >/dev/null
           sudo python3 - <<'PY'
-          import sys
+          import sys,json
           from pathlib import Path
           sys.path.insert(0,"tools")
-          from r1_reference_boot import manifest,APPLICATIONS,digest
+          from r1_reference_boot import manifest,digest
           base=Path("reference-work/root")
           checked=Path("staging/rechecked-root")
           before,after=manifest(base),manifest(checked)
