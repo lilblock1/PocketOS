@@ -1,19 +1,20 @@
 # Next UI review: accessible navigation within the current RAM budget
 
-Owner direction: after verifying the recovery completion fix, combine larger
-Home buttons/a simple icon grid, clear list views and labels, and simpler
-consistent Back/Home navigation. Retain the approved fonts and native display
-proportions. Use the existing lightweight native renderer.
+Owner direction: an entirely new classic music-player interface, with clean
+list-based menus and a strong selection bar. Use the selected classic iPod-style
+direction rather than extending the prior card grid. Retain the approved fonts,
+native display proportions and lightweight renderer, and redesign navigation,
+status information and Now Playing as one visual system.
 
 Show the proposed UI and its memory comparison, and obtain the owner's approval
 before applying the new UI to the device. Firmware installation also requires
 review/approval. Preparing source, host previews and tests is permitted; a
 published or staged file is not permission to install it.
 
-Current device observation while sequence 1 is running: PocketOS shell RSS
-2,524 KiB (2.46 MiB), process high-water mark 2,768 KiB (2.70 MiB). This is the
-UI process, not whole-system memory. The page/state was not reset for this
-observation, so it is a baseline reference rather than a controlled benchmark.
+The verified sequence-2 UI was observed at 2,312 KiB RSS and a 2,704 KiB process
+high-water mark. This is the UI process, not whole-system memory. Page/state was
+not normalized for a benchmark; the proposal still needs an approved temporary
+device test for a matching-state RAM comparison.
 
 The redesign target is the same or lower memory. Compare identical Home,
 Settings, library and reader states on the same hardware, fonts and content.

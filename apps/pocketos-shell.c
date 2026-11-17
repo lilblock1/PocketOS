@@ -143,11 +143,11 @@ static const unsigned char glyph[][7]={
  {14,17,17,15,1,1,14}
 };
 static void palette(void) {
-    bg=RGB(13,19,24); card=RGB(25,35,43); edge=RGB(47,62,70);
-    fg=RGB(239,246,246); muted=RGB(151,171,179); mint=RGB(109,226,182);
+    bg=RGB(250,251,253); card=RGB(232,236,242); edge=RGB(198,207,219);
+    fg=RGB(24,32,45); muted=RGB(91,105,125); mint=RGB(34,91,177);
     if(theme==1) {
-        bg=RGB(234,243,245);card=RGB(250,253,253);edge=RGB(200,220,224);
-        fg=RGB(13,29,34);muted=RGB(50,78,85);mint=RGB(0,100,80);
+        bg=RGB(18,24,34);card=RGB(32,42,57);edge=RGB(67,82,104);
+        fg=RGB(243,246,251);muted=RGB(166,181,202);mint=RGB(58,112,194);
     } else if(theme==2) {
         bg=RGB(0,0,0);card=RGB(20,20,20);edge=RGB(68,68,68);
         fg=RGB(255,255,255);muted=RGB(220,220,220);mint=RGB(240,224,80);
@@ -207,11 +207,7 @@ static void rect(int x,int y,int w,int h,uint16_t col) {
     for(int j=y0*PIXEL_SCALE;j<y1*PIXEL_SCALE;j++) for(int i=x0*PIXEL_SCALE;i<x1*PIXEL_SCALE;i++) canvas[j*CW+i]=col;
 }
 static void rounded(int x,int y,int w,int h,uint16_t col) {
-    if(!layout_depth){int bottom=layout_y(y+h);y=layout_y(y);h=bottom-y;}
-    layout_depth++;
-    rect(x+3,y,w-6,h,col); rect(x,y+3,w,h-6,col);
-    rect(x+1,y+1,w-2,2,col); rect(x+1,y+h-3,w-2,2,col);
-    layout_depth--;
+    rect(x,y,w,h,col);
 }
 static void text_at(int x,int y,const char *s,int scale,uint16_t col);
 /* Original, small mixed-case bitmap glyphs for the reader. */
@@ -327,13 +323,13 @@ static void reader_draw(int x,int y,const char *text,int height,uint16_t ink,uin
 static void reader_print(int x,int y,const char *text,int height,uint16_t ink,uint16_t paper,int custom,int bold,int limit){
     reader_draw(x,y,text,height,ink,paper,custom,bold,limit,0);
 }
-static void text_at(int x,int y,const char *s,int scale,uint16_t col){
+static void text_at_limit(int x,int y,const char *s,int scale,uint16_t col,int limit){
 #ifdef UI_ATLAS_WIDTH
     if(!layout_depth)y=layout_y(y);
     int style=scale<=1?0:scale==2?1:2,px=x*PIXEL_SCALE,py=y*PIXEL_SCALE;
     for(;*s;s++){
         unsigned char c=(unsigned char)*s;if(c<32||c>126)c='?';
-        int advance=ui_advance[style][c-32];if(px+advance>CW)break;
+        int advance=ui_advance[style][c-32];if(px+advance>limit*PIXEL_SCALE)break;
 #ifdef UI_ATLAS_SPARSE
         unsigned glyph=(unsigned)style*95+c-32,at=ui_offsets[glyph],end=ui_offsets[glyph+1],pos=0;
         while(at<end){
@@ -359,22 +355,11 @@ static void text_at(int x,int y,const char *s,int scale,uint16_t col){
     }
 #else
     int height=scale<=1?12:scale==2?18:26;
-    reader_draw(x,y,s,height,col,bg,0,scale>1,W,1);
+    reader_draw(x,y,s,height,col,bg,0,scale>1,limit,1);
 #endif
 }
-static void icon(int x,int y,enum page item) {
-    if(!layout_depth)y=layout_y(y);
-    layout_depth++;
-    uint16_t col=mint;
-    switch(item) {
-    case MUSIC: rect(x+15,y,3,21,col);rect(x+3,y+19,15,8,col);rect(x+15,y,13,3,col);break;
-    case BOOKS: rect(x,y+3,12,22,col);rect(x+15,y+3,12,22,col);rect(x+12,y+5,3,22,col);break;
-    case GAMES: rounded(x,y+5,32,22,col);rect(x+5,y+10,3,12,bg);rect(x+1,y+14,11,3,bg);rect(x+22,y+12,4,4,bg);rect(x+26,y+18,4,4,bg);break;
-    case FILES: rounded(x,y+7,30,20,col);rect(x+3,y+3,12,7,col);break;
-    case CONTROL: case SETTINGS: for(int i=0;i<3;i++){rect(x,y+4+i*9,29,2,col);rect(x+5+(i%2)*12,y+1+i*9,5,8,col);}break;
-    default: rect(x,y+14,5,12,col);rect(x+10,y+8,5,18,col);rect(x+20,y,5,26,col);break;
-    }
-    layout_depth--;
+static void text_at(int x,int y,const char *s,int scale,uint16_t col){
+    text_at_limit(x,y,s,scale,col,W);
 }
 /* The preview clock is deterministic; native mode uses the system's local time. */
 static void format_clock(const struct tm *t,char out[16]) {
@@ -406,19 +391,23 @@ static int update_clock(int *changed) {
     return saver?60000:30000;
 }
 static void statusbar(void) {
-    text_at(12,10,"POCKETOS",1,muted);
-    text_at((W-(int)strlen(clock_label)*6)/2,10,clock_label,1,fg);
+    rect(0,0,W,26,card);
+    text_at(12,7,clock_label,1,fg);
     char b[16]; if(battery>=0) snprintf(b,sizeof(b),"%d%%",battery); else snprintf(b,sizeof(b),"--%%");
-    text_at(191,10,b,1,mint);
+    text_at(183,7,b,1,fg);
     rect(220,9,12,8,edge);rect(232,11,2,4,edge);
     if(battery>=0) rect(222,11,battery*8/100,4,mint);
-    rect(12,25,216,1,edge);
+    rect(0,25,W,1,edge);
+}
+static uint16_t selection_ink(void){return theme==2?bg:RGB(255,255,255);}
+static void classic_row(int y,int height,const char *label,int active){
+    uint16_t ink=active?selection_ink():fg;
+    rect(12,y,216,height,active?mint:bg);
+    if(!active)rect(12,y+height-1,216,1,edge);
+    text_at_limit(21,y+7,label,2,ink,205);text_at(214,y+7,">",2,active?ink:muted);
 }
 static void row(int i,const char *label) {
-    int y=80+i*29;
-    rounded(12,y,216,26,i==selected?edge:card);
-    if(i==selected)rect(12,y+5,2,18,mint);
-    text_at(21,y+7,label,2,fg);text_at(214,y+7,">",2,mint);
+    classic_row(80+i*29,28,label,i==selected);
 }
 static int attr_path(char path[1200],const char *dir,const char *name) {
     int n=snprintf(path,1200,"%s/%s",dir,name);
@@ -1452,11 +1441,9 @@ static void radio_tap(int x,int y){
     }
 }
 static void quick_tile(int i,const char *label,const char *value,int active) {
-    int x=12+(i%2)*110,y=82+(i/2)*61;
-    rounded(x,y,106,55,i==selected?edge:card);
-    if(i==selected)rect(x,y+5,2,45,mint);
-    text_at(x+8,y+9,label,1,fg);
-    text_at(x+8,y+30,value,1,active?mint:muted);
+    int y=82+i*31;
+    classic_row(y,30,label,i==selected);
+    text_at_limit(143,y+9,value,1,i==selected?selection_ink():active?mint:muted,208);
 }
 static void read_build_id(char out[17]){
     strcpy(out,"unknown");
@@ -1499,34 +1486,55 @@ static int navigation_available(void){
 }
 static void navigation_bar(void){
     if(!navigation_available())return;
-    rect(0,293,W,27,bg);
+    rect(0,293,W,27,card);rect(0,293,W,1,edge);
     if(page==MUSIC||page==BTUI){
-        rounded(12,294,66,25,card);rounded(84,294,68,25,card);rounded(158,294,70,25,card);
+        rect(81,298,1,16,edge);rect(155,298,1,16,edge);
         text_at(20,298,"Back",2,fg);text_at(169,298,"Home",2,mint);
         if(page==MUSIC)text_at(89,299,"Playing",1,mint);
         else reader_print(87,300,"Disconnect",10,mint,card,0,0,151);
     }else{
-        rounded(12,294,104,25,card);rounded(124,294,104,25,card);
+        rect(120,298,1,16,edge);
         text_at(24,298,"< Back",2,fg);text_at(153,298,"Home",2,mint);
+    }
+}
+static int ui_text_width(const char *text,int scale){
+#ifdef UI_ATLAS_WIDTH
+    unsigned width=0;int style=scale<=1?0:scale==2?1:2;
+    for(;*text;text++){unsigned c=(unsigned char)*text;if(c<32||c>126)c='?';width+=ui_advance[style][c-32];}
+    return (int)(width+PIXEL_SCALE-1)/PIXEL_SCALE;
+#else
+    return reader_measure(text,scale<=1?12:scale==2?18:26,0,scale>1);
+#endif
+}
+static void centered_label(int y,const char *text,int scale,uint16_t ink){
+    int x=(W-ui_text_width(text,scale))/2;
+    text_at_limit(x<12?12:x,y,text,scale,ink,228);
+}
+static void record_placeholder(int x,int y){
+    rect(x,y,128,128,card);
+    for(int j=-49;j<=49;j++)for(int i=-49;i<=49;i++){
+        int r=i*i+j*j;
+        if(r<=49*49)rect(x+64+i,y+64+j,1,1,r<=9*9?bg:r<=21*21?mint:RGB(39,48,63));
     }
 }
 static void render(void) {
     palette();
     rect(0,0,W,H,bg);statusbar();
-    text_at(12,37,page_label(page),page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
+    centered_label(37,page==HOME?"PocketOS":page_label(page),2,fg);
+    rect(12,59,216,1,edge);
     if(page==CONTROL) {
         char v[16];
-        text_at(12,64,"SWIPE UP OR TAP CLOSE",1,muted);
-        quick_tile(0,"WI-FI",radio_wifi_state()==2?"CONNECTED":radio_wifi_state()==1?"CONNECTING":"NOT CONNECTED",radio_wifi_state()==2);
-        quick_tile(1,"BLUETOOTH",bt_present?"DETECTED":"UNAVAILABLE",bt_present);
+        text_at(12,64,"Quick settings",1,muted);
+        quick_tile(0,"Wi-Fi",radio_wifi_state()==2?"Connected":radio_wifi_state()==1?"Joining":"Offline",radio_wifi_state()==2);
+        quick_tile(1,"Bluetooth",bt_present?"Available":"Off",bt_present);
         if(brightness_pct>=0)snprintf(v,sizeof(v),"%d%%",brightness_pct);
         else snprintf(v,sizeof(v),"UNAVAILABLE");
-        quick_tile(2,"BRIGHTNESS",v,brightness_pct>=0);
-        snprintf(v,sizeof(v),"%d%% TARGET",volume);quick_tile(3,"VOLUME",v,0);
-        quick_tile(4,"BATTERY SAVER",saver?"PREFERRED":"STANDARD",saver);
-        quick_tile(5,"SETTINGS","OPEN",1);
-        text_at(12,270,radio_allow?"RADIO CONTROLS ENABLED":"RADIO CHANGES LOCKED",1,muted);
-        text_at(12,301,"CLOSE",2,mint);
+        quick_tile(2,"Brightness",v,brightness_pct>=0);
+        snprintf(v,sizeof(v),"%d%%",volume);quick_tile(3,"Volume",v,0);
+        quick_tile(4,"Battery saver",saver?"On":"Off",saver);
+        quick_tile(5,"Settings","Open",1);
+
+        text_at(12,301,"< Back",2,mint);
     } else if(page==FILES){
         if(fm_worker>=0){
             reader_print(12,95,fm_message,18,fg,bg,0,1,228);
@@ -1552,20 +1560,20 @@ static void render(void) {
             text_at(14,301,"CANCEL",2,mint);
         }else if(fm_panel==1){
             const char *const labels[]={"Copy","Move","Paste here","Delete","Rename","New folder"};
-            for(int i=0;i<6;i++){int y=78+33*i;uint16_t tile=fm_action==i?edge:card;rounded(12,y,216,30,tile);reader_print(22,y+7,labels[i],15,fg,tile,0,0,220);}
+            for(int i=0;i<6;i++){int y=78+33*i;uint16_t tile=fm_action==i?mint:bg;rect(12,y,216,30,tile);reader_print(22,y+7,labels[i],15,fm_action==i?selection_ink():fg,tile,0,0,220);}
             text_at(12,301,"CANCEL",2,mint);
         }else{
             char location[40],info[40];snprintf(location,sizeof(location),"SD / %.33s",fm_dir);
             reader_print(12,63,location,13,muted,bg,0,0,228);
             for(int j=0;j<5&&fm_top+j<fm_count;j++){
-                int i=fm_top+j,y=84+31*j;uint16_t tile=i==fm_index?edge:card;
+                int i=fm_top+j,y=84+31*j;uint16_t tile=i==fm_index?mint:bg,ink=i==fm_index?selection_ink():fg;
                 rounded(12,y,216,28,tile);
-                if(fm_items[i].dir){rect(20,y+9,18,13,mint);rect(20,y+5,9,6,mint);}
+                if(fm_items[i].dir){rect(20,y+9,18,13,i==fm_index?ink:mint);rect(20,y+5,9,6,i==fm_index?ink:mint);}
                 else{rect(23,y+5,12,18,muted);rect(25,y+10,8,1,tile);rect(25,y+13,8,1,tile);}
-                reader_print(45,y+3,fm_items[i].name,13,fg,tile,0,0,223);
+                reader_print(45,y+3,fm_items[i].name,13,ink,tile,0,0,223);
                 if(fm_items[i].dir)strcpy(info,"Folder");
                 else snprintf(info,sizeof(info),"%llu KiB",fm_items[i].bytes/1024ULL);
-                reader_print(45,y+17,info,9,muted,tile,0,0,215);
+                reader_print(45,y+17,info,9,i==fm_index?ink:muted,tile,0,0,215);
             }
             if(!fm_count)text_at(12,112,fm_root<0&&!fm_preview?"NO MICROSD":"EMPTY FOLDER",1,muted);
             if(fm_message[0])text_at(12,245,fm_message,1,muted);
@@ -1581,7 +1589,7 @@ static void render(void) {
         }
     } else if(page==BOOKS){
         rect(0,27,W,293,bg);
-        text_at(12,37,"Books",3,fg);
+        centered_label(37,"Books",2,fg);rect(12,59,216,1,edge);
         char count[32];snprintf(count,sizeof(count),"%d books on microSD",book_count);
         text_at(12,64,count,1,muted);
         for(int i=0;i<4&&book_top+i<book_count;i++){
@@ -1589,7 +1597,7 @@ static void render(void) {
             const char *base=strrchr(books[idx],'/');base=base?base+1:books[idx];
             char name[100];book_label(idx,name,sizeof(name));
             const char *extension=strrchr(base,'.');
-            uint16_t tile=idx==book_index?edge:card;
+            uint16_t tile=idx==book_index?mint:bg,ink=idx==book_index?selection_ink():fg;
             rounded(12,y,216,39,tile);
             uint16_t covercolor=idx%2?RGB(137,93,69):RGB(44,104,99);
             rounded(18,y+5,24,29,covercolor);rect(22,y+7,1,24,RGB(236,217,170));
@@ -1600,9 +1608,9 @@ static void render(void) {
                 size_t space=cut;while(space&&first[space-1]!=' ')space--;
                 if(space>cut/2){cut=space-1;first[cut]=0;}
             }
-            reader_print(50,y+5,first,13,fg,tile,0,0,224);
+            reader_print(50,y+5,first,13,ink,tile,0,0,224);
             const char *second=name+cut;while(*second==' ')second++;
-            reader_print(50,y+23,*second?second:extension?extension+1:"TEXT",10,muted,tile,0,0,224);
+            reader_print(50,y+23,*second?second:extension?extension+1:"TEXT",10,idx==book_index?ink:muted,tile,0,0,224);
             if(idx==book_index)rect(12,y+8,2,23,mint);
         }
         if(!book_count)book_print(14,112,"Add books to SD / Books",8,12,muted,bg,0);
@@ -1654,26 +1662,26 @@ static void render(void) {
             layout_depth--;
         }
     } else if(page==NOWPLAYING){
-        int artwork_y=layout_y(66);layout_depth++;
+        char position[32];snprintf(position,sizeof(position),"%d of %d",music_count?music_index+1:0,music_count);
+        centered_label(64,position,1,muted);
+        int artwork_y=layout_y(77);layout_depth++;
         if(cover_ok){
             for(int j=0;j<64;j++)for(int i=0;i<64;i++){
                 size_t k=(size_t)(j*64+i)*3;
                 rect(56+i*2,artwork_y+j*2,2,2,RGB(cover[k],cover[k+1],cover[k+2]));
             }
-        }else{rounded(56,artwork_y,128,128,card);icon(106,artwork_y+49,MUSIC);}
+        }else record_placeholder(56,artwork_y);
         layout_depth--;
-        text_at(12,201,track_title[0]?track_title:"NO TRACK SELECTED",1,fg);
-        text_at(12,212,track_artist[0]?track_artist:"UNKNOWN ARTIST",1,muted);
-        text_at(12,223,music_error?music_error_text(music_error):track_album[0]?track_album:"UNKNOWN ALBUM",1,music_error?mint:muted);
-        rect(12,238,216,7,edge);
-        if(music_length){unsigned pct=music_pos>=music_length?100:(unsigned)((uint64_t)music_pos*100/music_length);rect(12,238,(int)(216*pct/100),7,mint);}
-        char times[40];
-        if(music_length)snprintf(times,sizeof(times),"%u:%02u / %u:%02u",music_pos/60,music_pos%60,music_length/60,music_length%60);
-        else snprintf(times,sizeof(times),"%u:%02u / --:--",music_pos/60,music_pos%60);
-        text_at(12,252,times,1,muted);
-        const char *controls[]={"PREV",music_pid>=0?(music_pause?"GO":"PAUSE"):"PLAY","STOP","NEXT"};
-        for(int i=0;i<4;i++){int x=12+i*55;rounded(x,266,51,22,card);text_at(x+5,273,controls[i],1,fg);}
-        text_at(12,301,"BACK",2,mint);
+        centered_label(199,track_title[0]?track_title:"Choose a track",2,fg);
+        centered_label(214,track_artist[0]?track_artist:"Music library",1,muted);
+        centered_label(227,music_error?music_error_text(music_error):track_album[0]?track_album:"Open Music to get started",1,muted);
+        rect(12,243,216,3,edge);
+        if(music_length){unsigned pct=music_pos>=music_length?100:(unsigned)((uint64_t)music_pos*100/music_length);rect(12,243,(int)(216*pct/100),3,mint);}
+        char elapsed[20],duration[20];snprintf(elapsed,sizeof(elapsed),"%u:%02u",music_pos/60,music_pos%60);
+        if(music_length)snprintf(duration,sizeof(duration),"%u:%02u",music_length/60,music_length%60);else strcpy(duration,"--:--");
+        text_at(12,251,elapsed,1,muted);text_at(W-12-ui_text_width(duration,1),251,duration,1,muted);
+        const char *controls[]={"Prev",music_pid>=0?(music_pause?"Play":"Pause"):"Play","Stop","Next"};
+        for(int i=0;i<4;i++){int x=12+i*55;rect(x,266,51,22,i==1?mint:card);text_at(x+5,272,controls[i],1,i==1?selection_ink():fg);}
     } else if(page==MUSIC){
         char count[32];
         snprintf(count,sizeof(count),"%d TRACKS / %s",music_count,music_list?"PLAYLIST":"SD MUSIC");
@@ -1683,8 +1691,7 @@ static void render(void) {
             int idx=music_top+i,y=82+i*30;
             const char *base=strrchr(music_files[idx],'/');
             char name[33];snprintf(name,sizeof(name),"%.32s",base?base+1:music_files[idx]);
-            rounded(12,y,216,26,idx==music_index?edge:card);
-            text_at(21,y+9,name,1,fg);
+            classic_row(y,29,name,idx==music_index);
         }
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
         text_at(12,213,music_pid>=0?(music_switch?"SWITCHING OUTPUT":music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?audio_active_label():"PLAYBACK LOCKED",1,mint);
@@ -1698,7 +1705,7 @@ static void render(void) {
         text_at(12,301,"BACK",2,mint);text_at(76,301,"NOW",2,mint);text_at(154,301,"LIST",2,mint);
     } else if(page==PREFERENCES) {
         text_at(12,64,"TAP TO CHANGE",1,muted);
-        row(0,theme==0?"THEME: DARK":theme==1?"THEME: LIGHT":"HIGH CONTRAST");
+        row(0,theme==0?"Theme: Classic":theme==1?"Theme: Night":"High contrast");
         row(1,clock24?"CLOCK: 24H":"CLOCK: 12H");
         row(2,readable?"TEXT: CONTRAST":"TEXT: NORMAL");
         row(3,saver?"POWER: SAVER":"POWER: NORMAL");
@@ -1707,18 +1714,10 @@ static void render(void) {
         text_at(12,251,save_error?"SAVE FAILED":config_path?"SETTINGS SAVED ON CHANGE":"SESSION ONLY",1,muted);
         text_at(12,301,"BACK",2,mint);
     } else if(page==HOME) {
-        text_at(12,64,"What would you like to do?",1,muted);
-        static const char *const hints[]={"Your music","Keep reading","Browse card","Make it yours"};
-        for(int i=0;i<4;i++) {
-            int x=12+(i%2)*110,y=80+(i/2)*86;
-            rounded(x,y,106,78,i==selected?edge:card);
-            if(i==selected)rect(x,y+8,3,62,mint);
-            icon(x+12,y+10,home_items[i]);text_at(x+12,y+45,page_label(home_items[i]),2,fg);
-            text_at(x+12,y+63,hints[i],1,muted);
-        }
-        rounded(12,260,106,26,selected==4?edge:card);rounded(122,260,106,26,selected==5?edge:card);
-        text_at(21,267,"Quick controls",1,selected==4?mint:fg);text_at(136,267,"Device info",1,selected==5?mint:fg);
-        text_at(12,302,"Swipe down for quick controls",1,muted);
+        text_at(12,64,"Main menu",1,muted);
+        for(int i=0;i<6;i++)classic_row(80+i*34,33,page_label(home_items[i]),i==selected);
+        rect(0,293,W,27,card);rect(0,293,W,1,edge);
+        centered_label(298,"Now playing  >",1,mint);
     } else if(page==SETTINGS) {
         static const char *const labels[]={"Screen & brightness","Sound & volume","Wi-Fi & Bluetooth","Battery","Storage","Updates","Appearance & time"};
         text_at(12,64,"Choose a setting",1,muted);
@@ -1853,12 +1852,12 @@ static void render(void) {
         }else{
             reader_print(12,65,radio_note,12,muted,bg,0,0,228);
             for(int j=0;j<4&&radio_top+j<radio_count;j++){
-                int i=radio_top+j,y=83+j*34;uint16_t tile=i==radio_index?edge:card;rounded(12,y,216,31,tile);
-                reader_print(20,y+4,radio_items[i].name,14,fg,tile,0,0,222);
+                int i=radio_top+j,y=83+j*34;uint16_t tile=i==radio_index?mint:bg,ink=i==radio_index?selection_ink():fg;rect(12,y,216,31,tile);
+                reader_print(20,y+4,radio_items[i].name,14,ink,tile,0,0,222);
                 char info[40];
                 if(radio_mode)snprintf(info,sizeof(info),"%s",radio_items[i].address);
                 else snprintf(info,sizeof(info),"%s  %d dBm",radio_items[i].security==0?"Open":radio_items[i].security==1?"WPA-PSK":"Unsupported",radio_items[i].signal);
-                reader_print(20,y+18,info,10,muted,tile,0,0,222);
+                reader_print(20,y+18,info,10,i==radio_index?ink:muted,tile,0,0,222);
             }
             if(radio_mode){
                 const char *labels[]={"UP","PAIR","DOWN","SCAN","STATUS","CONNECT"};
@@ -2082,13 +2081,13 @@ static void tap(int x,int y) {
     if(page==SOUND&&x>=12&&x<228&&y>=265&&y<288){if(volume_extended)volume_revoke();else volume_warning=1;return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
     if(x<12||x>=228||y<80)return;
-    if(page==HOME&&y>=260&&y<286){if(x<118)activate(4);else if(x>=122)activate(5);}
-    else if(page==HOME&&y<252) {
-        int a=x-12,b=y-80;
-        if(a%110<106&&b%86<78)activate((b/86)*2+a/110);
-    } else if(page==CONTROL&&y>=82&&y<265) {
-        int a=x-12,b=y-82;
-        if(a%110<106&&b%61<55)activate((b/61)*2+a/110);
+    if(page==HOME&&y>=294){page=NOWPLAYING;return;}
+    if(page==HOME&&y<284) {
+        int b=y-80;
+        if(b%34<33)activate(b/34);
+    } else if(page==CONTROL&&y>=82&&y<268) {
+        int b=y-82;
+        if(b%31<30)activate(b/31);
     } else if((page==SETTINGS||page==PREFERENCES)&&y<283&&(y-80)%29<26) activate((y-80)/29);
 }
 static int key(unsigned code) {
@@ -2157,7 +2156,7 @@ static int key(unsigned code) {
     else if(page==DISPLAY&&allow_backlight&&brightness_pct>=0&&(code==KEY_LEFT||code==KEY_RIGHT)) {change_brightness(brightness_pct+(code==KEY_RIGHT?10:-10));return 1;}
     else if(page==HOME||page==SETTINGS||page==CONTROL||page==PREFERENCES) {
         int count=page==SETTINGS?7:page==PREFERENCES?5:6;
-        int step=(page==HOME||page==CONTROL)?2:1;
+        int step=1;
         if(code==KEY_DOWN)selected=(selected+step)%count;
         else if(code==KEY_UP)selected=(selected+count-step)%count;
         else if(code==KEY_RIGHT)selected=(selected+1)%count;
@@ -2544,15 +2543,15 @@ static int selftest(void) {
     test.tm_hour=23;test.tm_min=59;format_clock(&test,label);if(strcmp(label,"11:59 PM"))return 1;
     format_clock(NULL,label);if(strcmp(label,"--:--"))return 1;
     page=HOME;selected=0;tap(20,80);if(page!=MUSIC)return 1;back();
-    tap(140,215);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
+    tap(140,190);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
     if(page!=SETTINGS)return 1;
     back();
     if(page!=HOME||selected!=3)return 1;
-    selected=0;key(KEY_DOWN);if(selected!=2)return 1;key(KEY_ENTER);if(page!=FILES)return 1;
+    selected=0;key(KEY_DOWN);if(selected!=1)return 1;key(KEY_ENTER);if(page!=BOOKS)return 1;
     back();tap(100,10);if(page!=CONTROL)return 1;
     tap(20,210);if(!saver||page!=CONTROL)return 1;
     tap(20,300);if(page!=HOME)return 1;
-    tap(140,215);if(page!=SETTINGS)return 1;
+    tap(140,190);if(page!=SETTINGS)return 1;
     tap(20,260);if(page!=PREFERENCES)return 1;
     tap(20,110);if(!clock24)return 1;
     format_clock(&test,label);if(strcmp(label,"23:59"))return 1;
@@ -2598,7 +2597,7 @@ static int friendly_navigation_test(void){
     page=SETTINGS;selected=0;tap(200,305);if(page!=HOME)return 1;
     tap(140,120);if(page!=BOOKS)return 1;
     tap(200,305);if(page!=HOME)return 1;
-    tap(30,270);if(page!=CONTROL)return 1;
+    tap(30,230);if(page!=CONTROL)return 1;
     back();if(page!=HOME)return 1;
     tap(150,270);if(page!=DIAGNOSTICS)return 1;
     tap(30,305);if(page!=HOME||selected!=5)return 1;
@@ -2810,7 +2809,7 @@ int main(int argc,char **argv) {
         if(page==FILES){fm_preview=1;fm_count=4;strcpy(fm_items[0].name,"Books");fm_items[0].dir=1;strcpy(fm_items[1].name,"Music");fm_items[1].dir=1;strcpy(fm_items[2].name,"Documents");fm_items[2].dir=1;strcpy(fm_items[3].name,"Read me.txt");fm_items[3].bytes=2048;}
         if(page==BOOKS){book_count=3;strcpy(books[0],"Demo.epub");strcpy(books[1],"Notes.txt");strcpy(books[2],"Loan.lcpl");}
         if(page==READER){strcpy(book_title,"The Quiet Woods");const char *demo[]={"Chapter One","The town appeared just after","dusk, a scatter of warm lights","against the hillside. After a","long day on the road, it felt","almost unreal, quiet and","strangely familiar.","","He paused at the edge of the","square, listening to a distant","bell. Beyond the rooftops,","a train sighed into the night."};for(unsigned i=0;i<sizeof(demo)/sizeof(demo[0]);i++)snprintf(book_text[i],65,"%s",demo[i]);book_bytes=99000;book_pos=11500;book_next=12000;book_page_span=500;battery=78;strcpy(clock_label,"22:08");}
-        if(page==MUSIC||page==NOWPLAYING){music_count=3;strcpy(music_files[0],"Track 01.flac");strcpy(music_files[1],"Track 02.mp3");strcpy(music_files[2],"Track 03.wav");strcpy(track_title,"Track 01");strcpy(track_artist,"Demo Artist");strcpy(track_album,"Demo Album");music_pos=45;music_length=210;}
+        if(page==MUSIC||page==NOWPLAYING){music_pid=getpid();music_pause=1;music_count=3;strcpy(music_files[0],"Track 01.flac");strcpy(music_files[1],"Track 02.mp3");strcpy(music_files[2],"Track 03.wav");strcpy(track_title,"Track 01");strcpy(track_artist,"Demo Artist");strcpy(track_album,"Demo Album");music_pos=45;music_length=210;}
         render();
         return ppm(argv[3]);
     }

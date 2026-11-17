@@ -1,6 +1,6 @@
 {
-  "baseline": "system update 2 UI",
-  "proposed": "uninstalled UI review",
+  "baseline": "installed system update 2 UI",
+  "proposed": "uninstalled classic player UI",
   "before": {
     "text_and_readonly_bytes": 564340,
     "data_bytes": 1928,
@@ -16,21 +16,21 @@
     ]
   },
   "after": {
-    "text_and_readonly_bytes": 342020,
-    "data_bytes": 1964,
+    "text_and_readonly_bytes": 340732,
+    "data_bytes": 1948,
     "bss_bytes": 1244176,
-    "total_static_bytes": 1588160,
-    "elf_file_bytes": 432656,
+    "total_static_bytes": 1586856,
+    "elf_file_bytes": 432828,
     "writable_loads": [
       {
-        "file_bytes": 1976,
-        "memory_bytes": 1246164,
+        "file_bytes": 1960,
+        "memory_bytes": 1246148,
         "pages_4k": 306
       }
     ]
   },
-  "static_reduction_bytes": 222284,
+  "static_reduction_bytes": 223588,
   "device_ram_comparison_verified": false,
-  "font_pixel_parity_verified_on_six_screens": true,
-  "host_target_pixel_parity_screens": 9
+  "host_target_pixel_parity_screens": 12,
+  "font_pixel_parity_verified_on_six_baseline_screens": true
 }
