@@ -146,14 +146,16 @@ def add_guard(root, original_manifest, guard_script, report):
         "physical_boot_verified": False,
         "installation_allowed": False,
         "flashable": False,
-        "guard_sha256": digest(wrapper),
+        "guard_sha256": digest(guard_script),
+        "loader_sha256": digest(wrapper),
+        "expected_sd_guard_path": "/mnt/sd_0/PocketOS/boot-guard.sh",
         "fallback_sha256": digest(fallback)
     })
     return report
 
 
 
-def stage_sd_guard(reference, destination, guard_script, shell_binary, version):
+def stage_sd_guard(reference, destination, loader_script, guard_script, shell_binary, version):
     """Build a minimal test boot overlay that leaves all PocketOS executables on SD.
 
     The original vendor init, kernel/drivers, and Sonix player remain untouched.
@@ -165,6 +167,8 @@ def stage_sd_guard(reference, destination, guard_script, shell_binary, version):
         raise ValueError("Refuse to overwrite staging directory")
     if not reference.is_dir() or reference.is_symlink():
         raise ValueError("Unsafe reference")
+    if not loader_script.is_file() or loader_script.is_symlink():
+        raise ValueError("Unsafe loader script")
     if not guard_script.is_file() or guard_script.is_symlink():
         raise ValueError("Unsafe guard script")
     if not shell_binary.is_file() or shell_binary.is_symlink():
@@ -178,16 +182,17 @@ def stage_sd_guard(reference, destination, guard_script, shell_binary, version):
     if not wrapper.is_file() or wrapper.is_symlink() or fallback.exists() or fallback.is_symlink():
         raise ValueError("Missing original player wrapper or fallback collision")
     shutil.copy2(wrapper, fallback)
-    shutil.copy2(guard_script, wrapper)
+    template = loader_script.read_text(encoding="utf-8")
+    if template.count("@SHELL_SHA256@") != 1 or template.count("@GUARD_SHA256@") != 1:
+        raise ValueError("Boot loader hash placeholders are invalid")
+    wrapper.write_text(template.replace("@SHELL_SHA256@", digest(shell_binary))
+                       .replace("@GUARD_SHA256@", digest(guard_script)), encoding="utf-8")
     fallback.chmod(0o755)
     wrapper.chmod(0o755)
     if digest(fallback) != before["usr/bin/sonix_player.sh"]:
         raise ValueError("Stock player fallback differs")
-    directory = destination / "etc/pocketos"
-    if directory.exists() or directory.is_symlink():
-        raise ValueError("PocketOS boot settings collision")
-    directory.mkdir(mode=0o755)
-    (directory / "boot-shell.sha256").write_text(digest(shell_binary) + "\n", encoding="ascii")
+    if digest(shell_binary) not in wrapper.read_text() or digest(guard_script) not in wrapper.read_text():
+        raise ValueError("Boot loader did not pin both SD hashes")
     info_path = destination / "usr/resource/sonix/components/system-info.json"
     if not info_path.is_file() or info_path.is_symlink():
         raise ValueError("Missing stock system-info")
@@ -231,10 +236,7 @@ def stage_sd_guard(reference, destination, guard_script, shell_binary, version):
             "usr/bin/sonix_player.sh",
             "usr/resource/sonix/components/system-info.json"
         ],
-        "new_files": [
-            "usr/bin/sonix_player.pocketos-fallback.sh",
-            "etc/pocketos/boot-shell.sha256"
-        ],
+        "new_files": ["usr/bin/sonix_player.pocketos-fallback.sh"],
         "bootable_verified": False,
         "recovery_partition_write_targets_verified": False,
         "safe_to_install": False,
