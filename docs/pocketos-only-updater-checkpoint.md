@@ -1,5 +1,11 @@
 # Independent PocketOS updater bootstrap
 
+**Superseded update layout:** bootstrap 1 physically booted, but its rootfs-only
+package leaves the stock recovery monitor waiting for a kernel-complete flag.
+See [the reproduced cause and same-kernel system fix](r1-recovery-monitor-fix.md).
+The current schema is SYSTEM-1 and rewrites the byte-identical primary kernel
+plus PocketOS rootfs. The rootfs-only statements below describe bootstrap 1.
+
 This branch continues `phase5-r1-updater` and the independently booted Phase 5
 preview. The newer reference-based `main`/Phase 6 firmware retains the original
 player as fallback and is not the base of this release.

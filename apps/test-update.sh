@@ -79,7 +79,12 @@ done
 [ -n "$out" ] && [ -n "$url" ] || exit 1
 # Never follow the repository's hybrid/reference test-latest or generic latest.
 case "$url" in
-    https://github.com/lilblock1/PocketOS/releases/download/pocketos-test-*/*|https://github.com/lilblock1/PocketOS/releases/download/pocketos-stable-latest/*) ;;
+    https://raw.githubusercontent.com/lilblock1/PocketOS/phase5-pocketos-only-updater/channels/test|https://raw.githubusercontent.com/lilblock1/PocketOS/phase5-pocketos-only-updater/channels/stable)
+        seq=$(head -1 "$POCKETOS_TEST_RELEASE/manifest" | awk '{print $4}')
+        if [ -n "${POCKETOS_TEST_POINTER:-}" ]; then printf '%s\n' "$POCKETOS_TEST_POINTER" > "$out"
+        else printf 'pocketos-%s-%s\n' "${url##*/}" "$seq" > "$out"; fi
+        exit 0 ;;
+    https://github.com/lilblock1/PocketOS/releases/download/pocketos-test-*/*|https://github.com/lilblock1/PocketOS/releases/download/pocketos-stable-*/*) ;;
     *) exit 73 ;;
 esac
 cp "$POCKETOS_TEST_RELEASE/${url##*/}" "$out"
@@ -111,6 +116,10 @@ mkdir "$tmp/checkonly"
 cp "$tmp/stable7/manifest" "$tmp/stable7/manifest.sig" "$tmp/checkonly/"
 POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/check.log"
 grep -Fx 'POCKETOS AVAILABLE 7' "$tmp/check.log"
+if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" POCKETOS_TEST_POINTER=pocketos-stable-8 PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/wrong-sequence.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Signed release sequence mismatch' "$tmp/wrong-sequence.log"
+if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/checkonly" POCKETOS_TEST_POINTER=https://example.invalid/firmware PATH="$tmp/shims:$PATH" run --ui check-github stable-latest > "$tmp/bad-pointer.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Invalid channel pointer' "$tmp/bad-pointer.log"
 test "$(run status)" = '5 4 5'
 test ! -e "$tmp/sd/PocketOS-system-updates/versions/7"
 if POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/stable7" PATH="$tmp/shims:$PATH" run --ui check-github test-latest > "$tmp/wrong-channel.log"; then exit 1; fi
@@ -129,11 +138,15 @@ printf '{}\n' > "$tmp/data-r1-report.json"
 python3 "$packer" --firmware --channel test --sequence 8 --key "$tmp/private.pem" --output "$tmp/fw8" "$tmp/pocketos-r1.upt" "$tmp/data-r1-report.json"
 # Even an authentic signature on the legacy hybrid firmware schema is rejected.
 mkdir "$tmp/legacy"
-sed '1s/POCKETOS-R1-ROOTFS-1/POCKETOS-R1-FW-1/' "$tmp/fw8/manifest" > "$tmp/legacy/manifest"
+sed '1s/POCKETOS-R1-SYSTEM-1/POCKETOS-R1-FW-1/' "$tmp/fw8/manifest" > "$tmp/legacy/manifest"
 openssl dgst -sha256 -sign "$tmp/private.pem" -out "$tmp/legacy/manifest.sig" "$tmp/legacy/manifest"
 if run --ui sd "$tmp/legacy" > "$tmp/legacy.log"; then exit 1; fi
 grep -Fx 'POCKETOS ERROR Invalid signed manifest format' "$tmp/legacy.log"
 test "$(run status)" = '7 5 7'
+sed '1s/POCKETOS-R1-SYSTEM-1/POCKETOS-R1-ROOTFS-1/' "$tmp/fw8/manifest" > "$tmp/legacy/manifest"
+openssl dgst -sha256 -sign "$tmp/private.pem" -out "$tmp/legacy/manifest.sig" "$tmp/legacy/manifest"
+if run --ui sd "$tmp/legacy" > "$tmp/legacy-rootfs.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Invalid signed manifest format' "$tmp/legacy-rootfs.log"
 run sd "$tmp/fw8"
 test "$(run status)" = '8 7 8'
 if python3 "$packer" --firmware --sequence 9 --key "$tmp/private.pem" --output "$tmp/invalid" "$tmp/data-test"; then exit 1; fi

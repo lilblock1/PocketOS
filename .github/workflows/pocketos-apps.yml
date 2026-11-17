@@ -29,7 +29,7 @@ jobs:
         run: |
           make -C apps BUILD_DIR="$PWD/host-app-output" check
           host-app-output/pocketos-shell --test-update-ui
-          python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py
+          python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py tools/test-r1-recovery-monitor.py
       - name: Render native shell previews (host)
         run: |
           mkdir -p ui-previews
@@ -90,6 +90,7 @@ jobs:
           done
           test -n "$compiler"
           make -C apps CC="$compiler" BUILD_DIR="$PWD/target-app-output" all
+          "$compiler" -shared -fPIC -Os -Wall -Wextra -Werror tools/test-r1-recovery-monitor.c -o /tmp/pocketos-monitor-host-fixture.so
           # Stock userspace has an older libc than the PocketOS SDK. The
           # read-only bootstrap helper must also run before PocketOS boots.
           "$compiler" -static -Os -Wall -Wextra -Werror apps/pocketos-recovery-arm.c -o target-app-output/pocketos-recovery-preflight-helper

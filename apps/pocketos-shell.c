@@ -1726,6 +1726,8 @@ static void render(void) {
                 reader_print(12,94,ready,18,fg,bg,0,1,228);
                 reader_print(12,130,"Keep card inserted; charge 50%+.",12,muted,bg,0,0,228);
                 reader_print(12,152,"Reboots into recovery.",12,muted,bg,0,0,228);
+                reader_print(12,174,"Rewrites same kernel + system.",11,muted,bg,0,0,228);
+                reader_print(12,196,"Bootloader / recovery kept.",11,muted,bg,0,0,228);
             }else if(update_confirm==U_ROLLBACK){
                 reader_print(12,94,"Select previous version?",18,fg,bg,0,1,228);
                 reader_print(12,130,"Rollback rechecks signatures.",12,muted,bg,0,0,228);
@@ -1735,6 +1737,7 @@ static void render(void) {
                 reader_print(12,130,"Download and install update?",13,fg,bg,0,0,228);
                 reader_print(12,154,"Restarts automatically in recovery.",11,muted,bg,0,0,228);
                 reader_print(12,176,"Keep card inserted; charge 50%+.",11,muted,bg,0,0,228);
+                reader_print(12,198,"Rewrites same kernel + system.",11,muted,bg,0,0,228);
             }
             if(update_confirm==U_ROLLBACK)reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
             rounded(12,240,104,36,card);rounded(124,240,104,36,mint);

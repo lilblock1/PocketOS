@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and sign R1 primary-rootfs-only UPT assets; never install or publish."""
+"""Sign R1 PocketOS system + byte-identical proven kernel; never install/publish."""
 import argparse
 import importlib.util
 import json
@@ -14,6 +14,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rootfs", type=Path, required=True)
     p.add_argument("--candidate", type=Path, required=True)
+    p.add_argument("--kernel", type=Path, required=True, help="Exact proven running kernel; no replacement kernel accepted")
     p.add_argument("--key", type=Path, required=True)
     p.add_argument("--sequence", type=int, required=True)
     p.add_argument("--channel", choices=("stable", "test"), default="test")
@@ -64,10 +65,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix=".pocketos-release-", dir=a.output.parent) as temp:
         work = Path(temp)
         upt = work / "pocketos-r1.upt"
-        report = module.package(a.rootfs, candidate, work / "iso", upt)
+        report = module.package(a.rootfs, candidate, work / "iso", upt, a.kernel)
         if not all(report[name] is False for name in
-                   ("kernel_payload", "bootloader_payload", "recovery_payload", "userdata_payload")):
+                   ("bootloader_payload", "recovery_payload", "userdata_payload")):
             raise ValueError("Unexpected protected partition payload")
+        if not (report["kernel_payload"] and report["kernel_unchanged"] and
+                report["stock_recovery_monitor_compatible"] and
+                report["kernel_target_when_in_software_recovery"] == "/dev/mtd1" and
+                report["kernel_sha256"] == module.KERNEL_SHA):
+            raise ValueError("Unverified kernel or legacy recovery monitor plan")
         if report["rootfs_target_when_in_software_recovery"] != "/dev/mtd2":
             raise ValueError("Unexpected recovery target")
         report_file = work / "data-r1-report.json"

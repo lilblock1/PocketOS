@@ -2,11 +2,12 @@
 # Run from an extracted trusted kit under Debian WSL. Builds only; never flashes.
 set -euo pipefail
 umask 077
-test "$#" -eq 2 || test "$#" -eq 3 || { echo "Usage: bash finalize-r1-bootstrap.sh PREFLIGHT_LOG PINNED_PREVIEW_UPT [SEQUENCE]"; exit 2; }
-seq=${3:-1}
+test "$#" -eq 3 || test "$#" -eq 4 || { echo "Usage: bash finalize-r1-bootstrap.sh PREFLIGHT_LOG PINNED_PREVIEW_UPT PROVEN_KERNEL [SEQUENCE]"; exit 2; }
+seq=${4:-1}
 [[ "$seq" =~ ^[1-9][0-9]{0,8}$ ]] || { echo "Invalid sequence"; exit 2; }
 preflight=$(realpath -e "$1")
 preview=$(realpath -e "$2")
+kernel=$(realpath -e "$3")
 cd "$(dirname "$0")"
 test "$EUID" -ne 0 || { echo "Run as normal user (sudo is used for the candidate tree)"; exit 1; }
 command -v openssl >/dev/null
@@ -49,7 +50,7 @@ if not 0 < image.stat().st_size <= 16*1024*1024:
     raise SystemExit("Bootstrap exceeds conservative 16 MiB rootfs budget")
 report.write_text(json.dumps({"image":{"sha256":hashlib.sha256(image.read_bytes()).hexdigest()},"primary_target":"/dev/mtd2 (rootfs)","kernel_reused":True,"build_id":sys.argv[3]}))
 PY
-python3 tools/pack-r1-firmware-update.py --rootfs "$work/rootfs.squashfs" --candidate "$work/candidate.json" --key "$key" --channel test --sequence "$seq" --output "$work/signed"
+python3 tools/pack-r1-firmware-update.py --rootfs "$work/rootfs.squashfs" --candidate "$work/candidate.json" --kernel "$kernel" --key "$key" --channel test --sequence "$seq" --output "$work/signed"
 cp "$work/signed/pocketos-r1.upt" "$work/r1.upt"
 sha256sum "$work/r1.upt"
 echo "Candidate: $work/r1.upt"

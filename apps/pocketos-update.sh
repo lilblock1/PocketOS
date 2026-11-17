@@ -116,8 +116,8 @@ verify_manifest(){
     openssl dgst -sha256 -verify "$key" -signature "$2" "$1" >/dev/null 2>&1 || die "Signature invalid"
     awk -v fixture="$fixture" '
       NR==1 {
-        if(NF!=4||($1!="POCKETOS-R1-ROOTFS-1"&&(fixture!=1||$1!="POCKETOS-SD-1"))||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
-        firmware=($1=="POCKETOS-R1-ROOTFS-1");
+        if(NF!=4||($1!="POCKETOS-R1-SYSTEM-1"&&(fixture!=1||$1!="POCKETOS-SD-1"))||($2!="test"&&$2!="stable")||$3!="r1-mipsel"||$4!~/^[1-9][0-9]*$/||length($4)>9) exit 1;
+        firmware=($1=="POCKETOS-R1-SYSTEM-1");
         next
       }
       {
@@ -173,9 +173,15 @@ if [ "$mode" = install ]; then
     [ -d "$version_dir" ] && [ ! -L "$version_dir" ] || die "Selected firmware unavailable"
     phase VERIFY
     verify_payload "$version_dir"
+    # The old rootfs-only package leaves the stock recovery UI waiting forever
+    # for xImage.ok. SYSTEM-1 is produced only with the pinned, byte-identical
+    # primary kernel and independent PocketOS rootfs; no recovery payload.
+    for field in '  "kernel_payload": true,' '  "kernel_unchanged": true,' '  "stock_recovery_monitor_compatible": true,' '  "kernel_target_when_in_software_recovery": "/dev/mtd1",' '  "kernel_sha256": "9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6",' '  "bootloader_payload": false,' '  "recovery_payload": false,' '  "userdata_payload": false,'; do
+        grep -Fxq "$field" "$version_dir/data-r1-report.json" || die "Incompatible recovery update plan"
+    done
     progress 35
     read -r magic channel target seq < "$version_dir/manifest"
-    [ "$magic" = POCKETOS-R1-ROOTFS-1 ] && [ "$seq" = "$current" ] &&
+    [ "$magic" = POCKETOS-R1-SYSTEM-1 ] && [ "$seq" = "$current" ] &&
         [ "$seq" = "$install_seq" ] && [ "$channel" = "$install_channel" ] ||
         die "Selected firmware changed; check again"
     # Match the preserved physical recovery backups, not just partition labels.
@@ -269,7 +275,7 @@ if [ "$mode" = sd-inbox ]; then
 fi
 check_only=0
 if [ "$mode" = check-github ]; then check_only=1; mode=github; fi
-expected_channel="" expected_seq=""
+expected_channel="" expected_seq="" discovery="" source_seq=""
 if [ "$mode" = github ] && [ "$check_only" -eq 0 ] && [ "$#" -eq 2 ]; then
     expected_seq=$2
     valid_seq "$expected_seq" || die "Invalid confirmed sequence"
@@ -284,9 +290,15 @@ case "$mode" in
         case "$tag" in
             stable-latest)
                 expected_channel=stable
-                source="https://github.com/lilblock1/PocketOS/releases/download/pocketos-stable-latest" ;;
-            test-latest|test-[0-9]*)
-                case "$tag" in *[!a-zA-Z0-9._-]*) die "Invalid tag";; esac
+                discovery=stable
+                source="https://raw.githubusercontent.com/lilblock1/PocketOS/phase5-pocketos-only-updater/channels" ;;
+            test-latest)
+                expected_channel=test
+                discovery=test
+                source="https://raw.githubusercontent.com/lilblock1/PocketOS/phase5-pocketos-only-updater/channels" ;;
+            test-[0-9]*)
+                source_seq=${tag#test-}
+                valid_seq "$source_seq" || die "Invalid tag"
                 expected_channel=test
                 source="https://github.com/lilblock1/PocketOS/releases/download/pocketos-$tag" ;;
             *) die "Invalid update channel" ;;
@@ -342,16 +354,30 @@ fetch(){
     [ "$(wc -c < "$work/$transfer_name")" -le "$transfer_limit" ] || die "Downloaded file exceeds limit"
     if [ "${3:-}" = payload ] && [ "$ui" -eq 1 ]; then report_transfer; fi
 }
+if [ -n "$discovery" ]; then
+    # This small pointer only discovers an immutable release. It grants no
+    # trust: the signed manifest, exact sequence/channel and payloads below are
+    # independently verified. No generic GitHub latest or hybrid tag is used.
+    fetch "$discovery" 64
+    release_tag=$(cat "$work/$discovery")
+    prefix="pocketos-$discovery-"
+    case "$release_tag" in "$prefix"*) source_seq=${release_tag#"$prefix"};; *) die "Invalid channel pointer";; esac
+    valid_seq "$source_seq" || die "Invalid channel sequence"
+    printf '%s\n' "$release_tag" > "$work/pointer.expected"
+    cmp -s "$work/pointer.expected" "$work/$discovery" || die "Invalid channel pointer"
+    source="https://github.com/lilblock1/PocketOS/releases/download/$release_tag"
+fi
 fetch manifest 32768
 fetch manifest.sig 8192
 verify_manifest "$work/manifest" "$work/manifest.sig"
 progress 15
 read -r magic channel target seq < "$work/manifest"
+[ -z "$source_seq" ] || [ "$seq" = "$source_seq" ] || die "Signed release sequence mismatch"
 [ -z "$expected_channel" ] || [ "$channel" = "$expected_channel" ] || die "Signed manifest channel mismatch"
 [ -z "$expected_seq" ] || [ "$seq" = "$expected_seq" ] || die "Release changed; check again"
 # Offer a retry of the same already-staged firmware, without accepting a
 # changed manifest, a rollback, or a stale installed sequence.
-if [ "$magic" = POCKETOS-R1-ROOTFS-1 ] && [ "$seq" -eq "$current" ] &&
+if [ "$magic" = POCKETOS-R1-SYSTEM-1 ] && [ "$seq" -eq "$current" ] &&
    [ "$seq" -eq "$high" ] && [ "$seq" -gt "$installed" ]; then
     staged="$store/versions/$seq"
     [ -d "$staged" ] && [ ! -L "$staged" ] || die "Selected firmware unavailable"
@@ -370,7 +396,7 @@ if [ "$check_only" -eq 1 ]; then
     exit 0
 fi
 [ "$seq" -gt "$floor" ] || die "Update is not newer than installed or staged firmware"
-if [ "$fixture" -eq 0 ] && [ "$magic" = POCKETOS-R1-ROOTFS-1 ]; then
+if [ "$fixture" -eq 0 ] && [ "$magic" = POCKETOS-R1-SYSTEM-1 ]; then
     battery_ok || die "Charge battery to at least 50%"
 fi
 [ ! -e "$store/versions/$seq" ] && [ ! -L "$store/versions/$seq" ] || die "Version already exists (inspect interrupted run)"
@@ -404,7 +430,7 @@ sync
 mv "$work/payload" "$store/versions/$seq"
 select_version "$seq" "$current" "$seq"
 selection "$seq" "$current"
-if [ "$magic" = POCKETOS-R1-ROOTFS-1 ]; then ready "$seq" "$channel"; fi
+if [ "$magic" = POCKETOS-R1-SYSTEM-1 ]; then ready "$seq" "$channel"; fi
 phase DONE
 progress 100
 echo "Signed SD update staged and selected: $seq. Installation requires separate confirmation."
