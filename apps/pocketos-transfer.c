@@ -305,6 +305,9 @@ static void serve(int fd){
         head(fd,200,"OK","text/html; charset=utf-8",sizeof(html)-1,1);
         (void)send_all(fd,html,sizeof(html)-1);return;
     }
+    if(!strcmp(method,"GET")&&!strcmp(uri,"/favicon.ico")){
+        message(fd,404,"Not Found","No icon");return;
+    }
     if(!authorized(headers)){
         unauthorized++;
         message(fd,403,"Forbidden","Invalid pairing code");
