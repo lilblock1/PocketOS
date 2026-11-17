@@ -9,7 +9,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-enum update_job {U_NONE,U_STATUS,U_SD,U_GITHUB,U_ROLLBACK,U_STABLE,U_CHECK_STABLE,U_CHECK_TEST};
+enum update_job {U_NONE,U_STATUS,U_SD,U_GITHUB,U_ROLLBACK,U_STABLE,U_CHECK_STABLE,U_CHECK_TEST,U_INSTALL};
 static enum update_job update_active,update_confirm;
 static int update_allow,update_percent,update_fd=-1,update_len,update_drop;
 static pid_t update_pid=-1;
@@ -39,6 +39,7 @@ static void update_parse(const char *line){
         else if(!strcmp(p,"COPY"))update_message("Copying to microSD");
         else if(!strcmp(p,"VERIFY"))update_message("Verifying package checksums");
         else if(!strcmp(p,"SAVE"))update_message("Saving verified selection");
+        else if(!strcmp(p,"RECOVERY"))update_message("Entering recovery; do not power off");
         else if(!strcmp(p,"DONE"))update_message("Staging finished; not installed");
         return;
     }
@@ -92,6 +93,7 @@ static int update_spawn(enum update_job job){
             char seq[16];snprintf(seq,sizeof(seq),"%u",update_offer);
             execl(program,program,"--ui","github",job==U_STABLE?"stable-latest":"test-latest",seq,(char*)NULL);
         }
+        else if(job==U_INSTALL)execl(program,program,"--ui","install",(char*)NULL);
         else if(job==U_ROLLBACK)execl(program,program,"--ui","rollback",(char*)NULL);
         else execl(program,program,"--ui","status",(char*)NULL);
         _exit(127);
@@ -108,6 +110,8 @@ static int update_spawn(enum update_job job){
 }
 static void update_close(void){
     if(update_pid>=0){
+        /* An install child must not be killed while the boot flag is being written. */
+        if(update_active==U_INSTALL)return;
         /* Interrupt helper and its downloader; interrupted staging remains locked if cleanup fails. */
         (void)kill(-update_pid,SIGTERM);(void)kill(update_pid,SIGTERM);
         (void)kill(-update_pid,SIGKILL);(void)kill(update_pid,SIGKILL);
@@ -121,6 +125,7 @@ static int update_poll(void){
     int changed=update_drain(),status=0;
     pid_t p=waitpid(update_pid,&status,WNOHANG);
     if(p==0){
+        if(update_active==U_INSTALL)return changed;
         struct timespec now;
         if(clock_gettime(CLOCK_MONOTONIC,&now)==0&&now.tv_sec<update_deadline.tv_sec)return changed;
         update_close();update_message("Timed out; inspect staged files");return 1;

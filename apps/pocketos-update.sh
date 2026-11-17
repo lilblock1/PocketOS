@@ -128,6 +128,77 @@ verify_payload(){
 }
 phase MANIFEST
 progress 2
+if [ "$mode" = install ]; then
+    [ "$#" -eq 0 ] || die "Unexpected install arguments"
+    [ "$fixture" -eq 0 ] || die "Recovery writes are disabled in fixtures"
+    marker=/etc/pocketos/recovery-enable
+    [ -f "$marker" ] && [ ! -L "$marker" ] &&
+        [ "$("$stat_cmd" -c '%u:%a' "$marker")" = 0:400 ] &&
+        grep -Fxq POCKETOS-R1-RECOVERY-1 "$marker" || die "Recovery installation not provisioned"
+    [ "$(uname -r)" = 4.4.94-sonix ] || die "Wrong kernel"
+    grep -Eq '(^| )root=/dev/mtdblock_bbt_ro2( |$)' /proc/cmdline || die "Not primary system"
+    for entry in 'mtd1: 00500000 00020000 "kernel"' 'mtd2: 02d00000 00020000 "rootfs"' 'mtd3: 00500000 00020000 "kernel2"' 'mtd4: 01800000 00020000 "rootfs2"' 'mtd5: 00080000 00020000 "ota"'; do
+        grep -Fxq "$entry" /proc/mtd || die "Unexpected partition layout"
+    done
+    battery_ok(){
+        level=$(cat /sys/class/power_supply/battery/capacity 2>/dev/null) || return 1
+        case "$level" in ''|*[!0-9]*) return 1;; esac
+        [ "$level" -ge 50 ] && [ "$level" -le 100 ]
+    }
+    battery_ok || die "Charge battery to at least 50%"
+    [ "$current" -gt "$installed" ] && [ "$current" -eq "$high" ] || die "No newer selected firmware"
+    version_dir="$store/versions/$current"
+    [ -d "$version_dir" ] && [ ! -L "$version_dir" ] || die "Selected firmware unavailable"
+    phase VERIFY
+    verify_payload "$version_dir"
+    read -r magic channel target seq < "$version_dir/manifest"
+    [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" = "$current" ] || die "Selected firmware identity mismatch"
+    # Match the preserved physical recovery backups, not just partition labels.
+    for spec in '8604858bd975e272f5e238e1721656adbcd9e67eace049d096d049eff578a364 /dev/mtd1ro' 'ebcb4491fd67c5d479d4a7efccf0a7d5871f140634890b33ca1aeb83418aa297 /dev/mtd3ro' 'd4059f7cade350bfe0f53221ba2e886b8e45d6d625f7042bdd8cd4c39c149358 /dev/mtd4ro'; do
+        set -- $spec
+        [ -c "$2" ] || die "Recovery identity unavailable"
+        actual=$(sha256sum "$2") || die "Recovery readback failed"
+        [ "${actual%% *}" = "$1" ] || die "Recovery identity differs"
+    done
+    /usr/sbin/pocketos-recovery-arm --check || die "Boot-selection preflight failed"
+    expected=$(awk '$3=="pocketos-r1.upt" {print $1}' "$version_dir/manifest")
+    # Never replace an unrelated user-supplied recovery file.
+    if [ -e ./r1.upt ] || [ -L ./r1.upt ]; then
+        [ -f ./r1.upt ] && [ ! -L ./r1.upt ] || die "Unsafe existing recovery file"
+        actual=$(sha256sum ./r1.upt)
+        [ "${actual%% *}" = "$expected" ] || die "Existing r1.upt differs; move it first"
+    else
+        needed=$(awk '$3=="pocketos-r1.upt" {printf "%d",int(($2+1023)/1024)+16384}' "$version_dir/manifest")
+        free=$(df -Pk . | awk 'NR==2 {print $4}')
+        case "$free" in ''|*[!0-9]*) die "Cannot determine SD free space";; esac
+        [ "$free" -ge "$needed" ] || die "Not enough SD space for recovery copy"
+        phase COPY
+        cp "$version_dir/pocketos-r1.upt" "$work/r1.upt"
+        actual=$(sha256sum "$work/r1.upt")
+        [ "${actual%% *}" = "$expected" ] || die "Recovery copy checksum mismatch"
+        sync
+        mv "$work/r1.upt" ./r1.upt
+    fi
+    sync
+    battery_ok || die "Battery check failed before recovery"
+    # Release the staging directory and working directory before the clean unmount.
+    cleanup
+    work=""
+    trap - EXIT HUP INT TERM
+    cd /
+    umount /mnt/sd_0 || die "microSD busy; close playback/files and retry"
+    phase RECOVERY
+    progress 95
+    # Do not allow the UI to kill the child during the erase/write/readback.
+    trap '' HUP INT TERM
+    if ! /usr/sbin/pocketos-recovery-arm --arm; then
+        die "Recovery selection failed; do not reboot"
+    fi
+    sync
+    /sbin/reboot || die "Recovery armed; automatic reboot failed"
+    # Reboot may return before shutdown; never label this as installed.
+    while :; do sleep 1; done
+fi
 if [ "$mode" = rollback ]; then
     [ "$#" -eq 0 ] && [ "$previous" != 0 ] || die "No previous staged version"
     [ -d "$store/versions/$previous" ] && [ ! -L "$store/versions/$previous" ] || die "Previous directory unavailable"

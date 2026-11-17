@@ -114,3 +114,7 @@ python3 "$packer" --firmware --channel test --sequence 8 --key "$tmp/private.pem
 run sd "$tmp/fw8"
 test "$(run status)" = '8 7 8'
 if python3 "$packer" --firmware --sequence 9 --key "$tmp/private.pem" --output "$tmp/invalid" "$tmp/data-test"; then exit 1; fi
+
+# A fixture must never access the real recovery partition.
+if run --ui install > "$tmp/install.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Recovery writes are disabled in fixtures' "$tmp/install.log"

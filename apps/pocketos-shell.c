@@ -1399,7 +1399,11 @@ static void render(void) {
             }
             reader_print(12,243,"Keep microSD inserted",13,fg,bg,0,0,228);
         }else if(update_confirm){
-            if(update_confirm==U_ROLLBACK){
+            if(update_confirm==U_INSTALL){
+                reader_print(12,94,"Install firmware?",18,fg,bg,0,1,228);
+                reader_print(12,130,"Keep card inserted; charge 50%+.",12,muted,bg,0,0,228);
+                reader_print(12,152,"Reboots into recovery.",12,muted,bg,0,0,228);
+            }else if(update_confirm==U_ROLLBACK){
                 reader_print(12,94,"Select previous version?",18,fg,bg,0,1,228);
                 reader_print(12,130,"Rollback rechecks signatures.",12,muted,bg,0,0,228);
             }else{
@@ -1407,21 +1411,21 @@ static void render(void) {
                 reader_print(12,94,offer,18,fg,bg,0,1,228);
                 reader_print(12,130,"Download signed update to SD?",12,muted,bg,0,0,228);
             }
-            reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
+            if(update_confirm!=U_INSTALL)reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
             rounded(12,240,104,36,card);rounded(124,240,104,36,mint);
             reader_print(20,250,"Cancel",15,fg,card,0,0,112);
             reader_print(132,250,"Confirm",15,bg,mint,0,1,225);
         }else{
-            const char *const labels[]={"Stable updates","Test / pre-release","Stage from microSD","Roll back selection"};
-            const char *const detail[]={"Check official stable release","Check experimental channel","PocketOS-inbox folder","Return to previous package"};
-            for(int i=0;i<4;i++){
-                int y=81+i*37;rounded(12,y,216,34,card);
-                if(selected==i)rect(12,y+3,2,28,mint);
+            const char *const labels[]={"Stable updates","Test / pre-release","Stage from microSD","Roll back selection","Install firmware"};
+            const char *const detail[]={"Check official stable release","Check experimental channel","PocketOS-inbox folder","Return to previous package","Reverify and enter recovery"};
+            for(int i=0;i<5;i++){
+                int y=79+i*31;rounded(12,y,216,29,card);
+                if(selected==i)rect(12,y+3,2,23,mint);
                 reader_print(20,y+3,labels[i],14,fg,card,0,1,226);
-                reader_print(20,y+19,detail[i],10,muted,card,0,0,226);
+                reader_print(20,y+16,detail[i],10,muted,card,0,0,226);
             }
             reader_print(12,239,update_note,12,mint,bg,0,0,228);
-            reader_print(12,256,update_allow?"SD staging only / no flash":"Updates locked",11,muted,bg,0,0,228);
+            reader_print(12,256,update_allow?"Installation requires recovery approval":"Updates locked",11,muted,bg,0,0,228);
             text_at(12,301,"BACK",2,mint);text_at(157,301,"REFRESH",1,mint);
         }
     } else if(page==STORAGE){
@@ -1563,7 +1567,12 @@ static void set_volume_target(int v){
 }
 static void update_choose(int i){
     if(update_pid>=0)return;
-    if(i==3){
+    if(i==4){
+        if(!update_allow){update_message("Update actions locked");return;}
+        if(!update_current){update_message("No staged firmware");return;}
+        if(music_pid>=0){update_message("Stop music before installing");return;}
+        update_confirm=U_INSTALL;
+    }else if(i==3){
         if(!update_allow){update_message("Update actions locked");return;}
         if(!update_previous){update_message("No previous staged version");return;}
         update_confirm=U_ROLLBACK;
@@ -1581,7 +1590,7 @@ static void tap(int x,int y) {
     if(page==UPDATES){
         if(update_pid>=0)return;
         if(update_confirm){if(y>=240&&y<279){enum update_job job=update_confirm;update_confirm=U_NONE;if(x>=120)(void)update_spawn(job);}return;}
-        if(y>=81&&y<229){selected=(y-81)/37;update_choose(selected);}
+        if(y>=79&&y<234){selected=(y-79)/31;update_choose(selected);}
         else if(y>=287){if(x<120)back();else (void)update_spawn(U_STATUS);}
         return;
     }
@@ -1673,7 +1682,7 @@ static int key(unsigned code) {
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(update_pid>=0)return 0;
         if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){enum update_job job=update_confirm;update_confirm=U_NONE;(void)update_spawn(job);return 1;}return 0;}
-        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+4+(code==KEY_UP?-1:1))%4;return 1;}
+        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+5+(code==KEY_UP?-1:1))%5;return 1;}
         if(code==KEY_ENTER||code==KEY_OK){update_choose(selected);return 1;}
         return 0;
     }

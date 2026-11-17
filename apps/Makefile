@@ -2,6 +2,10 @@ CC ?= cc
 BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
+all: $(BUILD_DIR)/pocketos-recovery-arm
+$(BUILD_DIR)/pocketos-recovery-arm: pocketos-recovery-arm.c
+	mkdir -p "$(BUILD_DIR)"
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 all: $(BUILD_DIR)/pocketos-timeout
 all: $(BUILD_DIR)/pocketos-userdata
 $(BUILD_DIR)/pocketos-userdata: ../tools/r1-userdata.c
@@ -76,6 +80,7 @@ $(BUILD_DIR)/S95pocketos: ../boards/hiby-r1/rootfs-overlay/etc/init.d/S95pocketo
 	chmod 755 "$@"
 
 check: all
+	"$(BUILD_DIR)/pocketos-recovery-arm" --self-test
 	python3 test-timeout.py "$(abspath $(BUILD_DIR)/pocketos-timeout)"
 	"$(BUILD_DIR)/pocketos-shell" --test-smart-sleep
 	python3 test-stat.py "$(abspath $(BUILD_DIR)/pocketos-stat)"
