@@ -80,3 +80,24 @@ The primary boot flag is still normal, installed sequence remains 1, and no
 firmware installation/reboot was invoked. The owner now explicitly requires
 review and approval before applying UI changes or installing firmware. Physical
 automatic completion/reboot remains pending that approval.
+
+## Authorized physical test passed
+
+The owner approved system update 2 while explicitly preserving recovery and
+bootloader. The installer reverified the signed package and physical identities,
+cleanly unmounted the card, selected existing recovery and requested reboot.
+The owner then reported the update worked. PocketOS returned with installed
+sequence 2, build `3b57c9b46524dc6d`, and its UI supervisor reported a successful
+shell launch. No extra manual-reset command was issued by the development session.
+
+Readback of the exact installed primary rootfs bytes matches the release image
+SHA-256 `fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a`.
+The full primary kernel is byte-identical to its pre-update reference. Bootloader,
+both recovery partitions and the normal boot-selection partition also match
+their saved references. Recovery and bootloader were not modified.
+
+The newly booted UI process was observed at 2,312 KiB RSS and 2,704 KiB high-water
+mark. This observation is not a controlled before/after UI benchmark. A separate
+cold power-cycle and a subsequent fresh online payload-download/install remain
+distinct tests; the successful installation used the already verified staged
+package after an on-device signed online channel check.
