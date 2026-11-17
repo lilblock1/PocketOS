@@ -606,12 +606,12 @@ static void music_select(int idx){
     if(music_index<music_top)music_top=music_index;
     if(music_index>=music_top+4)music_top=music_index-3;
 }
-static void music_scroll(int step){
-    if(!music_count)return;
-    int max=music_count>4?music_count-4:0;
-    int next=music_top+step;
-    music_top=next<0?0:next>max?max:next;
+static int scroll_top(int top,int count,int visible,int step){
+    int max=count>visible?count-visible:0;
+    int next=top+step;
+    return next<0?0:next>max?max:next;
 }
+static void music_scroll(int step){music_top=scroll_top(music_top,music_count,4,step);}
 static int music_read_report(void){
     if(music_report<0)return 0;
     uint32_t msg[2];int changed=0;ssize_t n;
@@ -1037,6 +1037,12 @@ static void book_select(int direction){
     if(book_index>=book_top+4)book_top=book_index-3;
     book_status[0]=0;
 }
+static void book_scroll(int step){book_top=scroll_top(book_top,book_count,4,step);}
+static void fm_scroll(int step){
+    fm_top=scroll_top(fm_top,fm_count,5,step);
+    if(fm_index<fm_top)fm_index=fm_top;
+    if(fm_count&&fm_index>=fm_top+5)fm_index=fm_top+4;
+}
 static void fm_note(const char *text){snprintf(fm_message,sizeof(fm_message),"%.39s",text);}
 static void fm_start(void){
     fm_panel=fm_confirm=fm_edit_new=fm_action=0;fm_message[0]=0;
@@ -1224,6 +1230,14 @@ static void read_build_id(char out[17]){
     }
     fclose(f);
 }
+static void list_scrollbar(int y,int height,int top,int count,int visible){
+    if(count<=visible)return;
+    int thumb=height*visible/count;if(thumb<10)thumb=10;
+    int offset=(height-thumb)*top/(count-visible);
+    if(offset<0)offset=0;
+    if(offset>height-thumb)offset=height-thumb;
+    rect(232,y,3,height,edge);rect(232,y+offset,3,thumb,mint);
+}
 static void render(void) {
     palette();
     rect(0,0,W,H,bg);statusbar();
@@ -1278,9 +1292,12 @@ static void render(void) {
             else if(fm_clip)text_at(12,245,fm_clip==2?"MOVE READY":"COPY READY",1,mint);
             else if(fm_truncated)text_at(12,245,"LIST LIMITED TO 512 ITEMS",1,muted);
             else text_at(12,245,fm_allow?"MICROSD USER FILES":"READ ONLY",1,muted);
-            const char *const buttons[]={"UP","OPEN","MORE","DOWN"};
-            for(int j=0;j<4;j++){int x=12+j*55;rounded(x,261,51,24,card);text_at(x+5,269,buttons[j],1,mint);}
-            text_at(12,301,"BACK",2,mint);text_at(143,301,"PARENT",1,mint);
+            list_scrollbar(84,152,fm_top,fm_count,5);
+            rounded(12,261,104,24,card);rounded(124,261,104,24,card);
+            reader_print(39,265,"Open",14,mint,card,0,0,111);
+            reader_print(149,265,"More",14,mint,card,0,0,226);
+            text_at(12,301,*fm_dir?"PARENT":"BACK",2,mint);
+            reader_print(143,300,"Swipe to scroll",11,muted,bg,0,0,228);
         }
     } else if(page==BOOKS){
         rect(0,27,W,293,bg);
@@ -1310,9 +1327,9 @@ static void render(void) {
         }
         if(!book_count)book_print(14,112,"Add books to SD / Books",8,12,muted,bg,0);
         if(book_status[0])text_at(12,258,book_status,1,muted);
-        rounded(12,278,54,31,card);rounded(72,278,96,31,mint);rounded(174,278,54,31,card);
-        book_print(19,288,"Back",7,10,fg,card,0);book_print(91,287,"Read",10,13,bg,mint,0);
-        book_print(182,288,"Next",7,10,fg,card,0);
+        list_scrollbar(83,168,book_top,book_count,4);
+        rounded(12,278,78,31,card);book_print(23,288,"Back",7,10,fg,card,0);
+        reader_print(105,287,"Swipe / tap a book",12,muted,bg,0,0,228);
     } else if(page==READER){
         uint16_t paper=book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
         uint16_t ink=book_theme>=2?RGB(244,240,222):RGB(38,35,32);
@@ -1392,8 +1409,10 @@ static void render(void) {
         if(!music_count)text_at(12,100,"NO MUSIC TRACKS FOUND",1,muted);
         text_at(12,213,music_pid>=0?(music_pending>=0?"SWITCHING TRACK":music_pause?"PAUSED":"PLAYING"):music_error?music_error_text(music_error):allow_audio?"READY - HEADPHONE ONLY":"PLAYBACK LOCKED",1,mint);
         if(music_count>4){char range[32];snprintf(range,sizeof(range),"%d-%d / %d",music_top+1,music_top+4<music_count?music_top+4:music_count,music_count);text_at(12,228,range,1,muted);}
-        const char *labels[]={"PREV",music_pid>=0?(music_pause?"GO":"PAUSE"):"PLAY","STOP","NEXT"};
-        for(int i=0;i<4;i++){int x=12+i*55;rounded(x,240,51,33,card);text_at(x+5,252,labels[i],1,fg);}
+        list_scrollbar(82,116,music_top,music_count,4);
+        rounded(12,240,104,33,card);rounded(124,240,104,33,card);
+        reader_print(34,249,music_pid>=0?(music_pause?"Resume":"Pause"):"Play",15,fg,card,0,0,114);
+        reader_print(154,249,"Stop",15,fg,card,0,0,226);
         text_at(12,278,music_shuffle?"SHUFFLE ON":"SHUFFLE OFF",1,music_shuffle?mint:muted);
         text_at(128,278,music_repeat==2?"REPEAT ONE":music_repeat==1?"REPEAT ALL":"REPEAT OFF",1,music_repeat?mint:muted);
         text_at(12,301,"BACK",2,mint);text_at(76,301,"NOW",2,mint);text_at(154,301,"LIST",2,mint);
@@ -1671,11 +1690,15 @@ static void tap(int x,int y) {
         if(fm_panel==1){if(x>=12&&x<228&&y>=78&&y<276&&(y-78)%33<30)fm_operation((y-78)/33);else if(y>=288)fm_cancel();return;}
         if(x>=12&&x<228&&y>=84&&y<239&&(y-84)%31<28){
             int idx=fm_top+(y-84)/31;
-            if(idx<fm_count){if(fm_index==idx)fm_open_media();else fm_index=idx;}
-        }else if(x>=12&&x<228&&y>=261&&y<285&&(x-12)%55<51){
-            int action=(x-12)/55;
-            if(action==0)fm_select(-1);else if(action==1)fm_open_media();else if(action==2){fm_action=0;fm_panel=1;}else fm_select(1);
-        }else if(y>=288){if(x<120)back();else (void)fm_up();}
+            if(idx<fm_count){
+                int was_selected=fm_index==idx;
+                fm_index=idx;
+                if(fm_items[idx].dir||was_selected)fm_open_media();
+            }
+        }else if(y>=261&&y<285){
+            if(x>=12&&x<116)fm_open_media();
+            else if(x>=124&&x<228){fm_action=0;fm_panel=1;}
+        }else if(y>=288&&x<120)back();
         return;
     }
     if(page==READER){
@@ -1692,12 +1715,10 @@ static void tap(int x,int y) {
         return;
     }
     if(page==BOOKS){
-        if(y>=83&&y<255){
+        if(x>=12&&x<228&&y>=83&&y<255&&(y-83)%43<39){
             int idx=book_top+(y-83)/43;
-            if(idx<book_count){if(book_index==idx)(void)book_open();else{book_index=idx;book_status[0]=0;}}
-        }else if(y>=278){
-            if(x<70)back();else if(x<170)(void)book_open();else book_select(1);
-        }
+            if(idx<book_count){book_index=idx;book_status[0]=0;(void)book_open();}
+        }else if(y>=278&&y<309&&x>=12&&x<90)back();
         return;
     }
     if(page==MUSIC&&y>=295){
@@ -1717,9 +1738,12 @@ static void tap(int x,int y) {
             if(idx<music_count){
                 if(music_pid>=0)music_choose_track(idx,0);
                 else if(idx==music_index)music_start();
-                else music_choose_track(idx,0);
+                else music_choose_track(idx,1);
             }
-        } else if(x>=12&&x<228&&y>=240&&y<273)music_action((x-12)/55);
+        }else if(y>=240&&y<273){
+            if(x>=12&&x<116)music_action(1);
+            else if(x>=124&&x<228)music_action(2);
+        }
         return;
     }
     if(page==SOUND&&x>=24&&x<=216&&y>=148&&y<=183){set_volume_target((x-24)*(volume_extended?VOL_MAX:VOL_NORMAL)/192);return;}
@@ -2120,13 +2144,13 @@ static int native(const char *input) {
                                 (start_y-y>=25||y-start_y>=25)){
                             int delta=start_y-y;int steps=(abs(delta)+15)/31;
                             if(steps<1)steps=1;
-                            fm_select(delta>0?steps:-steps);
+                            fm_scroll(delta>0?steps:-steps);
                         }else if(page==MUSIC&&start_y>=82&&start_y<202&&abs(start_y-y)>=25){
                             int delta=start_y-y,steps=(abs(delta)+15)/30;if(steps<1)steps=1;
                             music_scroll(delta>0?steps:-steps);
                         }else if(page==BOOKS&&start_y>=83&&start_y<255&&abs(start_y-y)>=30){
                             int delta=start_y-y,steps=(abs(delta)+21)/43;if(steps<1)steps=1;
-                            book_select(delta>0?steps:-steps);
+                            book_scroll(delta>0?steps:-steps);
                         }else tap(x,y);
                         changed=1;
                     }
@@ -2188,6 +2212,12 @@ static int selftest(void) {
     music_pid=-1;output_busy=0;
     book_count=8;book_index=0;book_select(-99);if(book_index!=0)return 1;
     book_select(99);if(book_index!=7||book_top!=4)return 1;
+    book_scroll(-99);if(book_top!=0||book_index!=7)return 1;
+    book_scroll(99);if(book_top!=4)return 1;
+    page=BOOKS;tap(202,293);if(page!=BOOKS||book_index!=7)return 1; /* old Next area is inert */
+    fm_count=20;fm_top=0;fm_index=0;fm_scroll(99);if(fm_top!=15||fm_index!=15)return 1;
+    fm_scroll(-99);if(fm_top!=0||fm_index!=4)return 1;
+    fm_count=fm_index=fm_top=0;
     page=MUSIC;tap(100,305);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
     render();return 0;
 }
