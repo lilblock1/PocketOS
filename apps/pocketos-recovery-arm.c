@@ -41,6 +41,18 @@ int main(int argc,char **argv){
     int write_flag=!strcmp(argv[1],"--arm");
     if(geteuid()!=0)return fail("root required");
     struct stat st;
+    if(write_flag){
+        const char *marker="/etc/pocketos/recovery-enable";
+        static const char approval[]="POCKETOS-R1-RECOVERY-1\n";
+        char text[sizeof(approval)];
+        int m=open(marker,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+        if(m<0)return fail("recovery approval missing");
+        int ok=!fstat(m,&st)&&S_ISREG(st.st_mode)&&st.st_uid==0&&
+               (st.st_mode&0777)==0400&&st.st_size==(off_t)(sizeof(approval)-1)&&
+               read(m,text,sizeof(text))==(ssize_t)(sizeof(approval)-1)&&
+               !memcmp(text,approval,sizeof(approval)-1);
+        close(m);if(!ok)return fail("untrusted recovery approval");
+    }
     if(lstat("/dev/mtd5",&st)||!S_ISCHR(st.st_mode))return fail("expected MTD character device");
     int fd=open("/dev/mtd5",(write_flag?O_RDWR:O_RDONLY)|O_CLOEXEC|O_NOFOLLOW);
     if(fd<0)return fail("cannot open boot-selection partition");
@@ -56,9 +68,16 @@ int main(int argc,char **argv){
     if(!write_flag){close(fd);puts("Primary boot-selection block verified");return 0;}
     struct erase_info_user erase={0,ERASE};
     make_flag(page,1);
-    if(ioctl(fd,MEMERASE,&erase)||pwrite(fd,page,sizeof(page),0)!=(ssize_t)sizeof(page)||
-       fsync(fd)||pread(fd,block,sizeof(block),0)!=(ssize_t)sizeof(block)||memcmp(block,page,PAGE)){
-        close(fd);return fail("boot-selection write/readback failed; DO NOT reboot");
+    if(ioctl(fd,MEMERASE,&erase)||pwrite(fd,page,sizeof(page),0)!=(ssize_t)sizeof(page)){
+        close(fd);return fail("boot-selection erase/write failed; DO NOT reboot");
+    }
+    /* MTD writes are synchronous; close also synchronizes the device. Do not
+       assume the character driver implements fsync(2). Reopen for readback. */
+    if(close(fd))return fail("boot-selection close failed; DO NOT reboot");
+    fd=open("/dev/mtd5",O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+    if(fd<0)return fail("boot-selection reopen failed; DO NOT reboot");
+    if(pread(fd,block,sizeof(block),0)!=(ssize_t)sizeof(block)||memcmp(block,page,PAGE)){
+        close(fd);return fail("boot-selection readback failed; DO NOT reboot");
     }
     for(unsigned i=PAGE;i<ERASE;i++)if(block[i]!=255){close(fd);return fail("unexpected readback; DO NOT reboot");}
     close(fd);puts("Recovery selection verified");return 0;

@@ -101,6 +101,8 @@ jobs:
           printf 'Battery\n' > fixture/sys/class/power_supply/battery/type
           printf '18\n' > fixture/sys/class/power_supply/battery/capacity
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-r1-runtime --root "$PWD/fixture" --status | grep -Fx 'battery_percent=18'
+          readelf -h target-app-output/pocketos-recovery-arm | grep -q MIPS
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-recovery-arm --self-test
           readelf -h target-app-output/pocketos-shell | grep -q MIPS
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-update-ui
