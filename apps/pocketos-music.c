@@ -68,6 +68,8 @@ static void gain(unsigned char *p,size_t n,unsigned bits,int volume){
 }
 static volatile sig_atomic_t interrupted=0;
 static int stopped=0, progress_fd=-1;
+/* Explicit routes require trusted ALSA configuration; legacy default remains unchanged. */
+static const char *pcm_device="default";
 static unsigned start_seconds=0;
 static uint32_t total_seconds=0;
 static void report_progress(uint32_t position){
@@ -221,7 +223,7 @@ static int playback(struct wav *w,int volume,int controlled){
     if(!pid){
         close(p[1]);if(dup2(p[0],STDIN_FILENO)<0)_exit(126);close(p[0]);
         char r[16],c[16];snprintf(r,sizeof(r),"%u",w->rate);snprintf(c,sizeof(c),"%u",w->channels);
-        execl("/usr/bin/aplay","aplay","-q","-D","default","-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
+        execl("/usr/bin/aplay","aplay","-q","-D",pcm_device,"-t","raw","-f",w->bits==16?"S16_LE":"S24_3LE","-c",c,"-r",r,(char*)NULL);
         _exit(127);
     }
     close(p[0]);
@@ -237,7 +239,7 @@ static int playback(struct wav *w,int volume,int controlled){
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS music v1");return 0;}
-    if(argc<3||argc>9)return 2;
+    if(argc<3||argc>11)return 2;
     const char *mode=argv[1];int volume=25,controlled=0;
     if(argc>=4){
         char *end;long v=strtol(argv[3],&end,10);
@@ -246,6 +248,13 @@ int main(int argc,char **argv){
     }
     for(int i=4;i<argc;i++){
         if(!strcmp(argv[i],"--controlled"))controlled=1;
+        else if(!strcmp(argv[i],"--output")&&i+1<argc){
+            const char *route=argv[++i];
+            if(!strcmp(route,"wired"))pcm_device="pocketos_wired";
+            else if(!strcmp(route,"bluetooth"))pcm_device="pocketos_bluetooth";
+            else return 2;
+            if(strcmp(mode,"--allow-play"))return 2;
+        }
         else if(!strcmp(argv[i],"--start")&&i+1<argc){
             char *end;long v=strtol(argv[++i],&end,10);
             if(end==argv[i]||*end||v<0||v>604800)return 2;
