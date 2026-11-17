@@ -34,6 +34,8 @@ test "$(wc -c < "$tmp/READER.ppm")" -eq 1152015
 
 mkdir -p "$tmp/sd/Documents" "$tmp/sd/Downloads" "$tmp/sd/PocketOS-updates"
 printf 'file manager test\n' > "$tmp/sd/Documents/example.txt"
+# Sparse input is larger than the previous 64 MiB limit.
+dd if=/dev/zero of="$tmp/sd/Documents/large.bin" bs=1 count=1 seek=68157440 2>/dev/null
 printf 'preserve\n' > "$tmp/sd/Downloads/existing.txt"
 printf 'protected\n' > "$tmp/sd/PocketOS-updates/protected.txt"
 printf 'loose media\n' > "$tmp/sd/loose.txt"
@@ -49,6 +51,8 @@ test "$(cat "$tmp/sd/Documents/loose.txt")" = 'loose media'
 test ! -e "$tmp/sd/loose.txt"
 test "$(cat "$tmp/sd/r1.upt")" = firmware
 test -d "$tmp/sd/Documents/New folder"
+test ! -e "$tmp/sd/Documents/large.bin"
+test "$(wc -c < "$tmp/sd/Documents/large copy.bin")" -eq 68157441
 test ! -d "$tmp/sd/PocketOS-updates/bad"
 "$bin" --preview FILES "$tmp/FILES.ppm"
 test "$(wc -c < "$tmp/FILES.ppm")" -eq 1152015

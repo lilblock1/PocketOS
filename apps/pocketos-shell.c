@@ -111,6 +111,9 @@ static const char *book_dir="/mnt/sd_0/Books";
 static FILE *book_file=NULL;
 static int fm_allow=0,fm_panel=0,fm_confirm=0,fm_preview=0,fm_edit_new=0,fm_action=0;
 static char fm_message[40],fm_rename[64];
+static pid_t fm_worker=-1;
+static int fm_worker_fd=-1,fm_worker_action;
+static unsigned fm_percent;
 static const char *music_dir="/mnt/sd_0/Music";
 static int volume=25, output=0,volume_extended=0,volume_warning=0;
 static int music_keep_audio(int route,int jack);
@@ -1131,13 +1134,51 @@ static void fm_operation(int action){
         fm_edit_new=0;strcpy(fm_rename,name);fm_panel=2;
     }
 }
+static int fm_begin_transfer(int action){
+    int pipefd[2];if(fm_worker>=0||pipe(pipefd)!=0)return 0;
+    int flags=fcntl(pipefd[0],F_GETFL),outflags=fcntl(pipefd[1],F_GETFL);
+    if(flags<0||outflags<0||fcntl(pipefd[0],F_SETFL,flags|O_NONBLOCK)!=0||
+       fcntl(pipefd[1],F_SETFL,outflags|O_NONBLOCK)!=0||
+       fcntl(pipefd[0],F_SETFD,FD_CLOEXEC)!=0||fcntl(pipefd[1],F_SETFD,FD_CLOEXEC)!=0){
+        close(pipefd[0]);close(pipefd[1]);return 0;
+    }
+    pid_t child=fork();
+    if(child==0){
+        close(pipefd[0]);fm_progress_fd=pipefd[1];fm_cancel_transfer=0;
+        struct sigaction sa={.sa_handler=fm_transfer_stop};sigemptyset(&sa.sa_mask);
+        (void)sigaction(SIGTERM,&sa,NULL);(void)sigaction(SIGINT,&sa,NULL);
+        int code=fm_transfer(action==3?fm_rename:fm_source_name,action==3||fm_clip==2);
+        close(pipefd[1]);_exit(code==1?0:code==2?2:1);
+    }
+    close(pipefd[1]);if(child<0){close(pipefd[0]);return 0;}
+    fm_worker=child;fm_worker_fd=pipefd[0];fm_worker_action=action;fm_percent=0;
+    fm_note(action==3?"RENAMING":fm_clip==2?"MOVING":"COPYING");
+    return 1;
+}
+static int fm_poll_transfer(void){
+    if(fm_worker<0)return 0;
+    unsigned pct;int changed=0;
+    for(int i=0;i<128&&read(fm_worker_fd,&pct,sizeof(pct))==(ssize_t)sizeof(pct);i++){
+        if(pct<=100&&pct>fm_percent){fm_percent=pct;changed=1;}
+    }
+    int status=0;pid_t got=waitpid(fm_worker,&status,WNOHANG);
+    if(got==0||(got<0&&errno==EINTR))return changed;
+    close(fm_worker_fd);fm_worker_fd=-1;fm_worker=-1;
+    int code=got>0&&WIFEXITED(status)?WEXITSTATUS(status):1;
+    fm_note(code==0?"DONE":code==2?"COPIED; SOURCE NOT REMOVED":"FAILED / EXISTS / NO SPACE");
+    if(code!=1||fm_worker_action==3)fm_clip=0;
+    (void)fm_scan();return 1;
+}
 static void fm_apply(void){
     int action=fm_confirm;fm_confirm=0;
     if(!fm_writable()||music_pid>=0||book_file){fm_clip=0;fm_note("FILE WRITES LOCKED");return;}
     int result=0;
-    if(action==1)result=fm_transfer(fm_source_name,fm_clip==2);
-    else if(action==2)result=fm_delete();
-    else if(action==3)result=fm_transfer(fm_rename,1);
+    if(action==1||action==3){
+        fm_edit_new=0;
+        if(!fm_begin_transfer(action))fm_note("COULD NOT START TRANSFER");
+        return;
+    }
+    if(action==2)result=fm_delete();
     else if(action==4)result=fm_mkdir(fm_rename);
     fm_edit_new=0;
     fm_note(result==2?"COPIED; SOURCE NOT REMOVED":result?"DONE":"FAILED / EXISTS / NO SPACE");
@@ -1284,7 +1325,15 @@ static void render(void) {
         text_at(12,270,radio_allow?"RADIO CONTROLS ENABLED":"RADIO CHANGES LOCKED",1,muted);
         text_at(12,301,"CLOSE",2,mint);
     } else if(page==FILES){
-        if(fm_confirm){
+        if(fm_worker>=0){
+            reader_print(12,95,fm_message,18,fg,bg,0,1,228);
+            reader_print(12,125,fm_source_name,13,muted,bg,0,0,228);
+            rect(12,164,216,10,edge);rect(12,164,(int)(216*fm_percent/100),10,mint);
+            char label[16];snprintf(label,sizeof(label),"%u%%",fm_percent);
+            reader_print(12,181,label,18,mint,bg,0,1,228);
+            reader_print(12,221,"Keep microSD inserted",13,fg,bg,0,0,228);
+            reader_print(12,245,"Verifying moves before removal",11,muted,bg,0,0,228);
+        }else if(fm_confirm){
             reader_print(14,65,"Confirm file operation",17,fg,bg,0,1,228);
             reader_print(14,103,fm_confirm==4?"Create folder?":fm_confirm==2?"Delete permanently?":fm_confirm==3?"Rename file?":fm_clip==2?"Move file here?":"Copy file here?",16,fg,bg,0,0,228);
             reader_print(14,144,fm_confirm==4?fm_rename:fm_source_name,14,muted,bg,0,0,228);
@@ -1638,7 +1687,7 @@ static void render(void) {
     }
 }
 static void open_control(void) {
-    if(page==CONTROL)return;
+    if(page==CONTROL||fm_worker>=0)return;
     if(radio_keyboard)radio_clear_key();
     return_page=page;return_selected=selected;page=CONTROL;selected=0;
 }
@@ -1649,7 +1698,7 @@ static void back(void) {
     if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_active==R_BT_SCAN)radio_cancel_scan();if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
-    if(page==FILES){if(fm_confirm||fm_panel){fm_cancel();return;}if(*fm_dir){if(!fm_up())fm_note("CANNOT OPEN PARENT");else fm_message[0]=0;return;}fm_close();page=HOME;selected=0;return;}
+    if(page==FILES){if(fm_worker>=0)return;if(fm_confirm||fm_panel){fm_cancel();return;}if(*fm_dir){if(!fm_up())fm_note("CANNOT OPEN PARENT");else fm_message[0]=0;return;}fm_close();page=HOME;selected=0;return;}
     page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
 }
 static void activate(int i) {
@@ -1726,6 +1775,7 @@ static void tap(int x,int y) {
     }
     if(page==RADIO&&y>=81&&y<214){radio_open(y>=153);return;}
     if(page==FILES){
+        if(fm_worker>=0)return;
         if(fm_confirm){if(y>=246&&y<281&&x>=12&&x<228){if(x>=126)fm_apply();else if(x<114)fm_cancel();}return;}
         if(fm_panel==2){fm_edit_char(x,y);return;}
         if(fm_panel==1){if(x>=12&&x<228&&y>=78&&y<276&&(y-78)%33<30)fm_operation((y-78)/33);else if(y>=288)fm_cancel();return;}
@@ -1829,6 +1879,7 @@ static int key(unsigned code) {
     }
     if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){radio_open(code==KEY_DOWN);return 1;}
     if(page==FILES){
+        if(fm_worker>=0)return 0;
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(fm_confirm){if(code==KEY_ENTER||code==KEY_OK){fm_apply();return 1;}return 0;}
         if(fm_panel==1){
@@ -2043,7 +2094,7 @@ static int native(const char *input) {
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
         long long now=mono_ms();
-        int busy=radio_pid>=0||update_pid>=0||book_prepare_pid>0;
+        int busy=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0;
         int saving=saver||smart_asleep;
         if(saving!=old_saver){cpu_policy(saving);old_saver=saving;}
         /* Do not switch off the display while a transfer is in progress. */
@@ -2053,7 +2104,7 @@ static int native(const char *input) {
         int report=music_read_report();
         if((music_pid>=0&&!music_pause)||volume_extended)smart_audio_guard();
         int reaped=music_reap();
-        int book_changed=smart_asleep?0:book_prepare_reap();
+        int book_changed=smart_asleep?0:book_prepare_reap(),fm_changed=fm_poll_transfer();
         int radio_changed=smart_asleep?0:radio_poll(),update_changed=smart_asleep?0:update_poll(),sample_changed=0;
         if(!smart_asleep&&now>=0&&now>=next_sample){
             int n=sample_battery(),oldwifi=wifi_present,oldbt=bt_present,oldaudio=audio_present;
@@ -2069,12 +2120,12 @@ static int native(const char *input) {
         int timeout=smart_asleep?0:update_clock(&clock_changed);
         if(power_stage)timeout=saver?60000:30000;
         if(!power_stage&&((book_changed&&(page==BOOKS||page==READER))||(radio_changed&&(page==WIFIUI||page==BTUI))||
-              (update_changed&&page==UPDATES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
+              (update_changed&&page==UPDATES)||(fm_changed&&page==FILES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
               (page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(radio_wifi_wait&&timeout>250)timeout=250;
         if(update_pid>=0&&timeout>500)timeout=500;
-        if(book_prepare_pid>=0&&timeout>200)timeout=200;
+        if((book_prepare_pid>=0||fm_worker>=0)&&timeout>200)timeout=200;
         if(((music_pid>=0&&!music_pause)||volume_extended)&&timeout>500)timeout=500;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
@@ -2113,7 +2164,7 @@ static int native(const char *input) {
                     for(int j=0;j<16;j++)if(read(fd,discarded,sizeof(discarded))<=0)break;
                     (void)update_clock(&clock_changed);render();present(&b);continue;
                 }
-                int blocked=radio_pid>=0||update_pid>=0||book_prepare_pid>0||down||pending;
+                int blocked=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||down||pending;
                 if(!blocked&&smart_allow&&smart_unlocked()&&suspend_key_released(power_fd)){
                     book_save();
                     if((!book_file||!book_allow_save||!book_save_error)&&power_wake()){
@@ -2187,7 +2238,7 @@ static int native(const char *input) {
                     if(x>=0&&y>=0){
                         if(start_y>=0&&start_y<26&&y-start_y>=35&&page!=CONTROL&&page!=UPDATES)open_control();
                         else if(page==CONTROL&&start_y>=0&&start_y-y>=40)back();
-                        else if(page==FILES&&!fm_panel&&!fm_confirm&&start_y>=84&&start_y<239&&
+                        else if(page==FILES&&fm_worker<0&&!fm_panel&&!fm_confirm&&start_y>=84&&start_y<239&&
                                 (start_y-y>=25||y-start_y>=25)){
                             int delta=start_y-y;int steps=(abs(delta)+15)/31;
                             if(steps<1)steps=1;
@@ -2214,6 +2265,7 @@ static int native(const char *input) {
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
     if(book_prepare_pid>0)(void)kill(book_prepare_pid,SIGTERM);
+    if(fm_worker>=0){(void)kill(fm_worker,SIGTERM);while(waitpid(fm_worker,NULL,0)<0&&errno==EINTR){}close(fm_worker_fd);fm_worker=-1;}
     for(int k=0;k<volume_count;k++)if(volume_inputs[k].fd>=0)close(volume_inputs[k].fd);
     if(power_fd>=0)close(power_fd);
     (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
@@ -2371,6 +2423,11 @@ int main(int argc,char **argv) {
         if(!fm_enter("New folder")||!fm_up()||strcmp(fm_items[fm_index].name,"New folder"))return 1;
         fm_select(-999);if(fm_index!=0)return 1;
         fm_select(999);if(fm_index!=fm_count-1)return 1;
+        if(!fm_capture("large.bin",1))return 1;
+        strcpy(fm_rename,"large copy.bin");
+        if(!fm_begin_transfer(3))return 1;
+        for(int i=0;i<1000&&fm_worker>=0;i++){(void)fm_poll_transfer();usleep(10000);}
+        if(fm_worker>=0||strcmp(fm_message,"DONE"))return 1;
         fm_close();return 0;
     }
     if(argc==3&&!strcmp(argv[1],"--test-books")&&argv[2][0]=='/'){

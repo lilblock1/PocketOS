@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <stdint.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +16,7 @@
 
 #define FM_CAP 512
 #define FM_PATH 768
-#define FM_COPY_MAX (64ULL*1024*1024)
+#define FM_COPY_MAX (1024ULL*1024*1024) /* safe with the existing 32-bit target off_t */
 struct fm_item {char name[256];int dir;unsigned long long bytes;};
 static struct fm_item fm_items[FM_CAP];
 static char fm_dir[FM_PATH],fm_source_dir[FM_PATH],fm_source_name[256];
@@ -22,6 +24,10 @@ static struct stat fm_source_stat;
 static int fm_count,fm_index,fm_top,fm_clip,fm_truncated;
 static int fm_root=-1;
 static dev_t fm_device;
+static int fm_progress_fd=-1;
+static volatile sig_atomic_t fm_cancel_transfer;
+static void fm_transfer_stop(int sig){(void)sig;fm_cancel_transfer=1;}
+static void fm_progress(unsigned percent){if(fm_progress_fd>=0)(void)write(fm_progress_fd,&percent,sizeof(percent));}
 static int fm_name_ok(const char *name){
     if(!name||!*name||*name=='.'||strlen(name)>255)return 0;
     for(const unsigned char *p=(const unsigned char*)name;*p;p++)if(*p<32||*p==127||*p=='/'||*p=='\\')return 0;
@@ -167,32 +173,68 @@ static int fm_transfer(const char *destination,int remove_source){
     if(src<0||fstat(src,&st)!=0||!fm_identity(&fm_source_stat,&st)||st.st_size<0||
        (unsigned long long)st.st_size>FM_COPY_MAX||fstatvfs(b,&v)!=0||!v.f_frsize||
        (unsigned long long)v.f_bavail<(unsigned long long)(st.st_size+1048576ULL+v.f_frsize-1)/v.f_frsize)goto end;
-    dst=openat(b,destination,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    dst=openat(b,destination,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(dst<0)goto end;
     created=1;
-    unsigned char buf[8192];unsigned long long remaining=(unsigned long long)st.st_size;
+    unsigned char buf[8192],check[8192];unsigned long long total=(unsigned long long)st.st_size,remaining=total;
+    unsigned last=0;
+    fm_progress(0);
     while(remaining){
+        if(fm_cancel_transfer)goto end;
         size_t need=remaining>sizeof(buf)?sizeof(buf):(size_t)remaining;
         ssize_t n=read(src,buf,need);
-        if(n<0&&errno==EINTR)continue;
+        if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
         if(n<=0||(size_t)n>need)goto end;
         size_t offset=0;
         while(offset<(size_t)n){
             ssize_t k=write(dst,buf+offset,(size_t)n-offset);
-            if(k<0&&errno==EINTR)continue;
+            if(k<0&&errno==EINTR&&!fm_cancel_transfer)continue;
             if(k<=0)goto end;
             offset+=(size_t)k;
         }
         remaining-=(unsigned long long)n;
+        unsigned pct=(unsigned)((total-remaining)*80/total);
+        if(pct>last){last=pct;fm_progress(pct);}
     }
-    if(!fm_match(a,fm_source_name,&st)||fsync(dst)!=0)goto end;
+    if(fm_cancel_transfer||!fm_match(a,fm_source_name,&st)||fsync(dst)!=0)goto end;
+    /* Read back moves before deleting the source. Both files stay open, and
+       the source is checked again before any removal. */
+    if(remove_source){
+        if(lseek(src,0,SEEK_SET)<0||lseek(dst,0,SEEK_SET)<0)goto end;
+        remaining=total;
+        while(remaining){
+            if(fm_cancel_transfer)goto end;
+            size_t need=remaining>sizeof(buf)?sizeof(buf):(size_t)remaining;
+            size_t offset=0;
+            while(offset<need){
+                ssize_t n=read(src,buf+offset,need-offset);
+                if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
+                if(n<=0)goto end;
+                offset+=(size_t)n;
+            }
+            offset=0;
+            while(offset<need){
+                ssize_t n=read(dst,check+offset,need-offset);
+                if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
+                if(n<=0)goto end;
+                offset+=(size_t)n;
+            }
+            if(memcmp(buf,check,need))goto end;
+            remaining-=need;
+            unsigned pct=80+(unsigned)((total-remaining)*19/total);
+            if(pct>last){last=pct;fm_progress(pct);}
+        }
+    }
+    if(fm_cancel_transfer||!fm_match(a,fm_source_name,&st))goto end;
     if(close(dst)!=0){dst=-1;goto end;}
     dst=-1;
     /* Keep the completed copy if removal fails. */
     created=0;result=1;
     if(remove_source){
-        if(!fm_match(a,fm_source_name,&st)||unlinkat(a,fm_source_name,0)!=0)result=2;
+        if(fm_cancel_transfer||fsync(b)!=0||!fm_match(a,fm_source_name,&st)||unlinkat(a,fm_source_name,0)!=0)result=2;
+        else (void)fsync(a);
     }
+    fm_progress(100);
 end:
     if(dst>=0)close(dst);
     if(created)(void)unlinkat(b,destination,0);
