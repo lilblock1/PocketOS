@@ -25,6 +25,7 @@
 #include "pocketos-radio-ui.h"
 #include "pocketos-update-ui.h"
 #include "pocketos-power.h"
+#include "pocketos-transfer-ui.h"
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -1199,16 +1200,24 @@ static void render(void) {
         rounded(12,197,216,51,selected==2?edge:card);
         reader_print(21,203,"Wireless File Transfer",16,fg,card,0,1,220);
         reader_print(21,226,"Transfer files over Wi-Fi",11,muted,card,0,0,220);
-        reader_print(12,261,"Transfer server not installed yet",11,muted,bg,0,0,228);
+        reader_print(12,261,transfer_pid>0?"Transfer session running":transfer_allow?"Transfer available on request":"Transfer locked",11,muted,bg,0,0,228);
         text_at(12,301,"BACK",2,mint);
     } else if(page==TRANSFERUI){
-        rounded(12,81,216,174,card);
-        reader_print(21,94,"Wireless File Transfer",17,fg,card,0,1,220);
-        reader_print(21,131,"Transfer music, books and",13,muted,card,0,0,220);
-        reader_print(21,150,"files from your computer",13,muted,card,0,0,220);
-        reader_print(21,169,"or phone using Wi-Fi.",13,muted,card,0,0,220);
-        reader_print(21,203,"NOT AVAILABLE YET",14,mint,card,0,1,220);
-        reader_print(12,267,"No transfer server is running",12,muted,bg,0,0,228);
+        rounded(12,81,216,175,card);
+        reader_print(21,93,"Wireless File Transfer",17,fg,card,0,1,220);
+        if(transfer_pid>0){
+            reader_print(21,123,transfer_url[0]?transfer_url:"Starting server...",12,fg,card,0,0,220);
+            reader_print(21,149,"PAIRING CODE",12,muted,card,0,0,220);
+            reader_print(21,167,transfer_pin[0]?transfer_pin:"--------",22,mint,card,0,1,220);
+            rounded(23,209,194,36,edge);
+            reader_print(68,217,"STOP TRANSFER",15,fg,edge,0,1,220);
+        } else {
+            reader_print(21,126,"Use your phone or PC",13,fg,card,0,0,220);
+            reader_print(21,146,"on the same local Wi-Fi.",13,fg,card,0,0,220);
+            rounded(23,209,194,36,edge);
+            reader_print(transfer_allow?63:45,217,transfer_allow?"START TRANSFER":"TRANSFER LOCKED",15,fg,edge,0,1,220);
+        }
+        reader_print(12,265,transfer_note,11,muted,bg,0,0,228);
         text_at(12,301,"BACK",2,mint);
     } else {
         rounded(12,81,216,92,card);
@@ -1299,7 +1308,7 @@ static void tap(int x,int y) {
         }else radio_tap(x,y);
         return;
     }
-    if(page==TRANSFERUI)return;
+    if(page==TRANSFERUI){if(y>=207&&y<250){if(transfer_pid>0)transfer_stop();else (void)transfer_start();}return;}
     if(page==RADIO&&y>=81&&y<248){if(y<132)radio_open(0);else if(y>=139&&y<190)radio_open(1);else if(y>=197)page=TRANSFERUI;return;}
     if(page==FILES){
         if(fm_confirm){if(y>=241&&y<285){if(x>=120)fm_apply();else{fm_confirm=0;fm_note("CANCELLED");}}return;}
@@ -1386,7 +1395,7 @@ static int key(unsigned code) {
         }
         return 0;
     }
-    if(page==TRANSFERUI&&(code==KEY_ENTER||code==KEY_OK)){return 1;}
+    if(page==TRANSFERUI&&(code==KEY_ENTER||code==KEY_OK)){if(transfer_pid>0)transfer_stop();else (void)transfer_start();return 1;}
     if(page==RADIO&&(code==KEY_UP||code==KEY_DOWN||code==KEY_ENTER||code==KEY_OK)){
         if(code==KEY_UP)selected=(selected+2)%3;
         else if(code==KEY_DOWN)selected=(selected+1)%3;
@@ -1562,7 +1571,7 @@ static int native(const char *input) {
         if(now>=0&&last_input>=0&&!down&&!pending&&backlight_dir[0])
             power_idle(idle_target((now-last_input)/1000,saver,page==READER,busy,power_blank));
         int report=music_read_report(), reaped=music_reap();
-        int radio_changed=radio_poll(),update_changed=update_poll(),sample_changed=0;
+        int radio_changed=radio_poll(),update_changed=update_poll(),transfer_changed=transfer_poll(),sample_changed=0;
         if(now>=0&&now>=next_sample){
             int n=sample_battery(),oldwifi=wifi_present,oldbt=bt_present,oldaudio=audio_present;
             int oldip=internal_pct,oldsp=sd_pct,oldbr=brightness_pct;
@@ -1577,10 +1586,11 @@ static int native(const char *input) {
         int timeout=update_clock(&clock_changed);
         if(power_stage)timeout=saver?60000:30000;
         if(!power_stage&&((radio_changed&&(page==WIFIUI||page==BTUI))||
-              (update_changed&&page==UPDATES)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
+              (update_changed&&page==UPDATES)||(transfer_changed&&page==TRANSFERUI)||((report||reaped)&&(page==MUSIC||page==NOWPLAYING))||
               (page!=READER&&(clock_changed||sample_changed)))){render();present(&b);}
         if(radio_pid>=0&&timeout>200)timeout=200;
         if(update_pid>=0&&timeout>500)timeout=500;
+        if(transfer_fd>=0&&timeout>200)timeout=200;
         if(music_pid>=0&&music_report<0&&timeout>1000)timeout=1000;
         timeout=limit_wait(timeout,now,next_sample);
         if(power_allow&&!power_failed&&allow_backlight&&!busy&&now>=0&&last_input>=0&&backlight_dir[0]){
@@ -1591,13 +1601,16 @@ static int native(const char *input) {
                 else if(power_stage==1&&power_blank)timeout=limit_wait(timeout,now,last_input+blank*1000);
             }
         }
-        struct pollfd p[2]={{.fd=fd,.events=POLLIN},{.fd=music_report,.events=POLLIN}};
-        int rc=poll(p,2,timeout);
+        struct pollfd p[3]={{.fd=fd,.events=POLLIN},{.fd=music_report,.events=POLLIN},{.fd=transfer_fd,.events=POLLIN}};
+        int rc=poll(p,3,timeout);
         if(rc<0){if(errno==EINTR)continue;break;}
         if(!rc)continue;
         if(p[1].revents&(POLLHUP|POLLERR|POLLNVAL)){
             (void)music_read_report();if(music_report>=0)close(music_report);music_report=-1;
             if(!power_stage&&(page==MUSIC||page==NOWPLAYING)){render();present(&b);}
+        }
+        if(p[2].revents&(POLLIN|POLLHUP|POLLERR|POLLNVAL)){
+            if(transfer_poll()&&!power_stage&&page==TRANSFERUI){render();present(&b);}
         }
         if(p[0].revents&(POLLERR|POLLHUP|POLLNVAL))break;
         if(!(p[0].revents&POLLIN))continue;
@@ -1650,7 +1663,7 @@ static int native(const char *input) {
         if(changed){(void)update_clock(&clock_changed);render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
-    (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
+    transfer_cleanup();(void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
 }
 static int selftest(void) {
     char label[16];
@@ -1785,6 +1798,7 @@ int main(int argc,char **argv) {
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;
         else if(!strcmp(argv[1],"--allow-file-writes"))fm_allow=1;
+        else if(!strcmp(argv[1],"--allow-transfer"))transfer_allow=1;
         else if(!strcmp(argv[1],"--allow-radio"))radio_allow=1;
         else if(!strcmp(argv[1],"--allow-updates"))update_allow=1;
         else if(!strcmp(argv[1],"--boot-splash"))boot_splash=1;
