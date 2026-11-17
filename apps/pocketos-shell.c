@@ -62,6 +62,7 @@ static const char *config_path=NULL;
 static int wifi_present=0, bt_present=0, brightness_pct=-1;
 static int timezone_choice=0, allow_backlight=0, brightness_error=0, audio_present=0;
 static int unblank_display=0;
+static int brightness_saved=-1;
 static int internal_pct=-1, sd_pct=-1;
 static int output_busy=0;
 static unsigned long long internal_free=0, sd_free=0;
@@ -153,15 +154,18 @@ static void load_preferences(void) {
     struct stat st;
     if(fstat(fd,&st)<0||!S_ISREG(st.st_mode)||st.st_size>128){close(fd);return;}
     FILE *f=fdopen(fd,"r");if(!f){close(fd);return;}
-    int a,b,c,d,z=0,v=25,o=0;char extra,version[16];
+    int a,b,c,d,z=0,v=25,o=0,br=-1,sh=0,rp=0,pl=0;char extra,version[16];
     int n=0;
     if(fscanf(f,"%15s",version)==1) {
         if(!strcmp(version,"POCKETOS1")) n=fscanf(f,"%d %d %d %d %c",&a,&b,&c,&d,&extra)==4;
         if(!strcmp(version,"POCKETOS2")) n=fscanf(f,"%d %d %d %d %d %c",&a,&b,&c,&d,&z,&extra)==5;
         if(!strcmp(version,"POCKETOS3")) n=fscanf(f,"%d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&extra)==7;
+        if(!strcmp(version,"POCKETOS4")) n=fscanf(f,"%d %d %d %d %d %d %d %d %d %d %d %c",&a,&b,&c,&d,&z,&v,&o,&br,&sh,&rp,&pl,&extra)==11;
     }
     fclose(f);
-    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6&&v>=0&&v<=100&&o>=0&&o<3){
+    if(n&&a>=0&&a<=2&&b>=0&&b<=1&&c>=0&&c<=1&&d>=0&&d<=1&&z>=0&&z<6&&v>=0&&v<=100&&o>=0&&o<3&&
+       (br==-1||(br>=10&&br<=100))&&sh>=0&&sh<=1&&rp>=0&&rp<=2&&pl>=0&&pl<=1){
+        brightness_saved=br;music_shuffle=sh;music_repeat=rp;music_list=pl;
         theme=a;clock24=b;readable=c;saver=d;timezone_choice=z;volume=v>VOL_BOOT_MAX?VOL_BOOT_MAX:v;volume_extended=volume_warning=0;output=o;apply_timezone();
     }
 }
@@ -172,10 +176,20 @@ static int save_preferences(void) {
     if(n<0||(size_t)n>=sizeof(tmp))return 0;
     int fd=mkstemp(tmp);if(fd<0)return 0;
     FILE *f=fdopen(fd,"w");if(!f){close(fd);unlink(tmp);return 0;}
-    int ok=fprintf(f,"POCKETOS3 %d %d %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice,vol_clamp(volume,0),output)>0;
+    int ok=fprintf(f,"POCKETOS4 %d %d %d %d %d %d %d %d %d %d %d\n",theme,clock24,readable,saver,timezone_choice,vol_clamp(volume,0),output,brightness_saved,music_shuffle,music_repeat,music_list)>0;
     if(fflush(f)!=0||fsync(fd)!=0)ok=0;
     if(fclose(f)!=0)ok=0;
-    if(ok&&rename(tmp,config_path)==0)return 1;
+    if(ok&&rename(tmp,config_path)==0){
+        /* Make the atomic replacement durable across a cold power cycle. */
+        char dir[1024];size_t len=strlen(config_path);
+        if(len>=sizeof(dir))return 0;
+        memcpy(dir,config_path,len+1);char *slash=strrchr(dir,'/');
+        if(!slash)strcpy(dir,".");else if(slash==dir)slash[1]=0;else *slash=0;
+        int parent=open(dir,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+        if(parent<0)return 0;
+        int durable=fsync(parent)==0;if(close(parent)!=0)durable=0;
+        return durable;
+    }
     unlink(tmp);return 0;
 }
 static void rect(int x,int y,int w,int h,uint16_t col) {
@@ -455,6 +469,7 @@ static int change_brightness(int pct) {
     if(!brightness_error){
         long max=read_number(backlight_dir,"max_brightness"),val=read_number(backlight_dir,"brightness");
         if(max>0&&val>=0&&val<=max)brightness_pct=(int)(val*100/max);
+        brightness_saved=pct;save_error=!save_preferences();
     }
     return !brightness_error;
 }
@@ -1597,12 +1612,19 @@ static void render(void) {
     } else {
         rounded(12,81,216,92,card);
         if(page==DIAGNOSTICS) {
-            text_at(21,94,"R1 DEVELOPMENT",2,mint);
-            text_at(21,119,"FRAMEBUFFER SHELL",1,fg);
-            text_at(21,133,"HARDWARE NOT VERIFIED",1,muted);
-            text_at(21,148,"INSTALLATION DISABLED",1,muted);
-            char id[17],label[32];read_build_id(id);snprintf(label,sizeof(label),"Build: %s",id);
-            reader_print(12,191,label,12,fg,bg,0,0,228);
+            reader_print(21,94,"PocketOS diagnostics",16,mint,card,0,1,220);
+            char id[17],label[64];read_build_id(id);snprintf(label,sizeof(label),"Build: %s",id);
+            reader_print(21,122,label,12,fg,card,0,0,220);
+            reader_print(21,146,update_allow?"Signed updates enabled":"Updates locked",12,muted,card,0,0,220);
+            snprintf(label,sizeof(label),"Battery: %d%%",battery);
+            reader_print(12,185,battery>=0?label:"Battery: unknown",12,fg,bg,0,0,228);
+            if(ram_available>=0)snprintf(label,sizeof(label),"Available RAM: %ld MiB",ram_available/1024);
+            else strcpy(label,"Available RAM: unknown");
+            reader_print(12,204,label,12,fg,bg,0,0,228);
+            reader_print(12,223,config_path?"Settings: persistent":"Settings: session only",12,fg,bg,0,0,228);
+            reader_print(12,242,sd_pct>=0?"microSD: mounted":"microSD: unavailable",12,fg,bg,0,0,228);
+            reader_print(12,261,radio_wifi_state()==2?"Wi-Fi: connected":"Wi-Fi: not connected",12,fg,bg,0,0,228);
+            reader_print(12,280,save_error?"Settings save failed":power_failed?"Display power check failed":"Kernel suspend disabled",11,muted,bg,0,0,228);
         } else if(page==POWER) {
             char b[16]; if(battery>=0)snprintf(b,sizeof(b),"%d%%",battery);else snprintf(b,sizeof(b),"UNKNOWN");
             text_at(21,94,"BATTERY",2,mint);text_at(21,122,b,3,fg);
@@ -1742,14 +1764,14 @@ static void tap(int x,int y) {
     }
     if(page==MUSIC&&y>=295){
         if(x>=72&&x<145){page=NOWPLAYING;return;}
-        if(x>=150&&music_pid<0){music_list=!music_list;music_scan();return;}
+        if(x>=150&&music_pid<0){music_list=!music_list;music_scan();save_error=!save_preferences();return;}
     }
     if(page==NOWPLAYING){
         if(y>=295){back();return;}
         if(x>=12&&x<228&&y>=231&&y<=256){music_seek((x-12)*100/215);return;}
         if(x>=12&&x<228&&y>=266&&y<288){music_action((x-12)/55);return;}
     }
-    if(page==MUSIC&&y>=274&&y<290){if(x<120)music_shuffle=!music_shuffle;else music_repeat=(music_repeat+1)%3;return;}
+    if(page==MUSIC&&y>=274&&y<290){if(x<120)music_shuffle=!music_shuffle;else music_repeat=(music_repeat+1)%3;save_error=!save_preferences();return;}
     if(y>=287&&page!=HOME){back();return;}
     if(page==MUSIC){
         if(x>=12&&x<228&&y>=82&&y<202&&(y-82)%30<26){
@@ -2009,7 +2031,13 @@ static int native(const char *input) {
     int clock_changed=0;
     (void)update_clock(&clock_changed);
     load_preferences();(void)update_clock(&clock_changed);
-    battery=sample_battery();sample_quick();power_memory();render();present(&b);
+    battery=sample_battery();sample_quick();power_memory();
+    if(allow_backlight&&brightness_saved>=10&&backlight_dir[0]){
+        /* Restore without writing preferences again at every boot. */
+        if(write_backlight(backlight_dir,brightness_saved))sample_quick();
+        else brightness_error=1;
+    }
+    render();present(&b);
     long long last_input=mono_ms(),next_sample=last_input+60000;
     int wake_gesture=0,old_saver=-1;
     (void)signal(SIGPIPE,SIG_IGN);
@@ -2391,9 +2419,16 @@ int main(int argc,char **argv) {
     }
     if(argc==3&&!strcmp(argv[1],"--test-config")&&argv[2][0]=='/') {
         config_path=argv[2];theme=2;clock24=readable=saver=1;timezone_choice=3;volume=37;output=2;
+        /* First prove migration of the old installed config. */
+        FILE *legacy=fopen(config_path,"w");if(!legacy)return 1;
+        if(fputs("POCKETOS3 2 1 1 1 3 37 2\n",legacy)<0){fclose(legacy);return 1;}
+        if(fclose(legacy))return 1;
+        load_preferences();if(theme!=2||volume!=37||brightness_saved!=-1||music_shuffle||music_repeat)return 1;
+        brightness_saved=42;music_shuffle=1;music_repeat=2;music_list=1;
         if(!save_preferences())return 1;
-        theme=clock24=readable=saver=timezone_choice=volume=output=0;load_preferences();
-        return !(theme==2&&clock24&&readable&&saver&&timezone_choice==3&&volume==37&&output==2);
+        theme=clock24=readable=saver=timezone_choice=volume=output=music_shuffle=music_repeat=music_list=0;brightness_saved=-1;load_preferences();
+        return !(theme==2&&clock24&&readable&&saver&&timezone_choice==3&&volume==37&&output==2&&
+                 brightness_saved==42&&music_shuffle==1&&music_repeat==2&&music_list==1);
     }
     if(argc==2&&!strcmp(argv[1],"--test-smart-sleep")){int rc=suspend_key_test();return rc?rc:smart_audio_test();}
     if(argc==4&&!strcmp(argv[1],"--preview")){
