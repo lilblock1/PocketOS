@@ -32,6 +32,19 @@ class Music(unittest.TestCase):
                 w.setnchannels(1);w.setsampwidth(3);w.setframerate(96000);w.writeframes(raw)
             self.assertEqual(subprocess.check_output([bin,"--decode",str(f)]),raw)
             self.assertEqual(subprocess.check_output([bin,"--decode",str(f),"50"]),b"\x00\x00\xe0\xff\xff\x1f")
+    def test_explicit_route_argument_validation(self):
+        with tempfile.TemporaryDirectory() as d:
+            f=pathlib.Path(d)/"route.wav"
+            with wave.open(str(f),"wb") as w:
+                w.setnchannels(1);w.setsampwidth(2);w.setframerate(8000);w.writeframes(b"\\x00\\x00"*64)
+            for args in [
+                ["--decode",str(f),"100","--output","wired"],
+                ["--probe",str(f),"100","--output","bluetooth"],
+                ["--allow-play",str(f),"100","--output","default"],
+                ["--allow-play",str(f),"100","--output","hw:0,0"],
+            ]:
+                with self.subTest(args=args):
+                    self.assertEqual(subprocess.run([bin,*args],capture_output=True).returncode,2)
     @unittest.skipUnless(shutil.which("ffmpeg"),"optional host decoder unavailable")
     def test_compressed(self):
         with tempfile.TemporaryDirectory() as d:
