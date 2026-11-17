@@ -15,6 +15,40 @@ struct po_radio_observation {
     int discovery_busy, external_radio_lease;
     long long wifi_idle_since_ms, bt_idle_since_ms;
 };
+/* Track consecutive confirmed, safe idle time. Do not count an unknown state,
+ * unobserved interval, activity, or a clock failure toward the threshold. */
+struct po_radio_tracker {
+    long long wifi_since, bt_since;
+    long long previous_ms;
+};
+static inline void po_radio_tracker_reset(struct po_radio_tracker *t) {
+    t->wifi_since=-1;t->bt_since=-1;t->previous_ms=-1;
+}
+static inline void po_radio_tracker_update(struct po_radio_tracker *t,
+                                           struct po_radio_observation *s,
+                                           long long now) {
+    if(now<0|| (t->previous_ms>=0&&now<t->previous_ms)){
+        po_radio_tracker_reset(t);
+        s->wifi_idle_since_ms=-1;
+        s->bt_idle_since_ms=-1;
+        return;
+    }
+    /* Global work blocks both clocks. Connection checks are deliberately
+     * independent so a wired download does not reset Bluetooth unnecessarily
+     * once it's complete. */
+    int shared_busy=s->update_busy||s->transfer_busy||s->radio_job_busy||
+                    s->discovery_busy||s->external_radio_lease;
+    int wifi_ok=!shared_busy&&s->wifi_enabled&&s->wifi_link==PO_LINK_IDLE&&!s->wifi_page;
+    int bt_ok=!shared_busy&&s->bt_enabled&&s->bt_clients==PO_LINK_IDLE&&
+              !s->audio_bt_playing&&!s->bt_page;
+    if(!wifi_ok)t->wifi_since=-1;
+    else if(t->wifi_since<0)t->wifi_since=now;
+    if(!bt_ok)t->bt_since=-1;
+    else if(t->bt_since<0)t->bt_since=now;
+    s->wifi_idle_since_ms=t->wifi_since;
+    s->bt_idle_since_ms=t->bt_since;
+    t->previous_ms=now;
+}
 static inline int po_radio_old_enough(long long now,long long since) {
     return now>=0&&since>=0&&now>=since&&(now-since)>=PO_RADIO_IDLE_MS;
 }
