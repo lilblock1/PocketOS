@@ -59,6 +59,9 @@ $(BUILD_DIR)/S95pocketos: ../boards/hiby-r1/rootfs-overlay/etc/init.d/S95pocketo
 	chmod 755 "$@"
 
 check: all
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$(BUILD_DIR)/test-radio-idle" test-radio-idle.c
+	"$(BUILD_DIR)/test-radio-idle"
+	rm -f "$(BUILD_DIR)/test-radio-idle"
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o "$(BUILD_DIR)/test-audio-route" test-audio-route.c
 	"$(BUILD_DIR)/test-audio-route"
 	rm -f "$(BUILD_DIR)/test-audio-route"
