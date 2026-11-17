@@ -41,7 +41,7 @@ $(BUILD_DIR)/pocketos-r1-runtime: pocketos-r1-runtime.c pocketos-hardware.h
 	mkdir -p "$(BUILD_DIR)"
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -o "$@" "$<" $(LDLIBS)
 
-$(BUILD_DIR)/pocketos-reader-font.h: generate-reader-font.py
+$(BUILD_DIR)/pocketos-reader-font.h: generate-reader-font.py compact_ui_font.py
 	mkdir -p "$(BUILD_DIR)"
 	/usr/bin/python3 generate-reader-font.py "$@"
 	cp /usr/share/doc/fonts-dejavu-core/copyright "$(BUILD_DIR)/reader-font-LICENSE.txt"
@@ -84,6 +84,8 @@ $(BUILD_DIR)/S95pocketos: ../boards/hiby-r1/rootfs-overlay/etc/init.d/S95pocketo
 	chmod 755 "$@"
 
 check: all
+
+	"$(BUILD_DIR)/pocketos-shell" --test-friendly-navigation
 	"$(BUILD_DIR)/pocketos-recovery-arm" --self-test
 	python3 test-timeout.py "$(abspath $(BUILD_DIR)/pocketos-timeout)"
 	"$(BUILD_DIR)/pocketos-shell" --test-smart-sleep

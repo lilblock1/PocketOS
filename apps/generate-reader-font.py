@@ -3,6 +3,7 @@
 import argparse
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from compact_ui_font import compact
 
 p=argparse.ArgumentParser()
 p.add_argument("output",type=Path)
@@ -43,4 +44,4 @@ parts.append("static const unsigned char ui_advance[3][95]={"+",".join(ui_advanc
 parts.append("static const unsigned char ui_pixels[3][95][960]={\n"+",\n".join(ui_rows)+"\n};")
 parts.append("#endif")
 a.output.parent.mkdir(parents=True,exist_ok=True)
-a.output.write_text("\n".join(parts)+"\n")
+a.output.write_text(compact("\n".join(parts)+"\n"))

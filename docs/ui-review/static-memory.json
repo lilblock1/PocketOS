@@ -1,0 +1,36 @@
+{
+  "baseline": "system update 2 UI",
+  "proposed": "uninstalled UI review",
+  "before": {
+    "text_and_readonly_bytes": 564340,
+    "data_bytes": 1928,
+    "bss_bytes": 1244176,
+    "total_static_bytes": 1810444,
+    "elf_file_bytes": 629012,
+    "writable_loads": [
+      {
+        "file_bytes": 1940,
+        "memory_bytes": 1246120,
+        "pages_4k": 306
+      }
+    ]
+  },
+  "after": {
+    "text_and_readonly_bytes": 342020,
+    "data_bytes": 1964,
+    "bss_bytes": 1244176,
+    "total_static_bytes": 1588160,
+    "elf_file_bytes": 432656,
+    "writable_loads": [
+      {
+        "file_bytes": 1976,
+        "memory_bytes": 1246164,
+        "pages_4k": 306
+      }
+    ]
+  },
+  "static_reduction_bytes": 222284,
+  "device_ram_comparison_verified": false,
+  "font_pixel_parity_verified_on_six_screens": true,
+  "host_target_pixel_parity_screens": 9
+}

@@ -125,7 +125,7 @@ static int music_keep_audio(int route,int jack);
 static const char *const outputs[]={"HEADPHONES","USB AUDIO","BLUETOOTH","AUTO"};
 static char clock_label[16]="--:--";
 static const char *titles[]={"HOME","MUSIC","BOOKS","GAMES","FILES","SETTINGS","SYSTEM","DISPLAY","SOUND","RADIOS","BATTERY","STORAGE","UPDATES","PREFERENCES","CONTROL","NOW PLAYING","READER","WI-FI","BLUETOOTH"};
-static const enum page home_items[]={MUSIC,BOOKS,GAMES,FILES,SETTINGS,DIAGNOSTICS};
+static const enum page home_items[]={MUSIC,BOOKS,FILES,SETTINGS,CONTROL,DIAGNOSTICS};
 static const enum page setting_items[]={DISPLAY,SOUND,RADIO,POWER,STORAGE,UPDATES,PREFERENCES};
 static const unsigned char glyph[][7]={
  {14,17,17,31,17,17,17},{30,17,17,30,17,17,30},{14,17,16,16,16,17,14},
@@ -334,12 +334,27 @@ static void text_at(int x,int y,const char *s,int scale,uint16_t col){
     for(;*s;s++){
         unsigned char c=(unsigned char)*s;if(c<32||c>126)c='?';
         int advance=ui_advance[style][c-32];if(px+advance>CW)break;
+#ifdef UI_ATLAS_SPARSE
+        unsigned glyph=(unsigned)style*95+c-32,at=ui_offsets[glyph],end=ui_offsets[glyph+1],pos=0;
+        while(at<end){
+            pos+=ui_data[at++];unsigned count=ui_data[at++];
+            for(unsigned k=0;k<count;k++,pos++){
+                unsigned value=ui_data[at++];
+                for(unsigned half=0;half<2;half++){
+                    unsigned pixel=pos*2+half,a=((value>>(half?0:4))&15u)*17u;
+                    int xx=px+(int)(pixel%UI_ATLAS_WIDTH),yy=py+(int)(pixel/UI_ATLAS_WIDTH);
+                    if(a&&xx>=0&&xx<CW&&yy>=0&&yy<CH){size_t where=(size_t)yy*CW+xx;canvas[where]=blend565(canvas[where],col,a);}
+                }
+            }
+        }
+#else
         const unsigned char *g=ui_pixels[style][c-32];
         for(int j=0;j<UI_ATLAS_HEIGHT;j++)for(int i=0;i<UI_ATLAS_WIDTH;i++){
             unsigned k=(unsigned)(j*UI_ATLAS_WIDTH+i),a=((g[k/2]>>(k%2?0:4))&15u)*17u;
             int xx=px+i,yy=py+j;
             if(a&&xx>=0&&xx<CW&&yy>=0&&yy<CH){size_t at=(size_t)yy*CW+xx;canvas[at]=blend565(canvas[at],col,a);}
         }
+#endif
         px+=advance;
     }
 #else
@@ -356,7 +371,7 @@ static void icon(int x,int y,enum page item) {
     case BOOKS: rect(x,y+3,12,22,col);rect(x+15,y+3,12,22,col);rect(x+12,y+5,3,22,col);break;
     case GAMES: rounded(x,y+5,32,22,col);rect(x+5,y+10,3,12,bg);rect(x+1,y+14,11,3,bg);rect(x+22,y+12,4,4,bg);rect(x+26,y+18,4,4,bg);break;
     case FILES: rounded(x,y+7,30,20,col);rect(x+3,y+3,12,7,col);break;
-    case SETTINGS: for(int i=0;i<3;i++){rect(x,y+4+i*9,29,2,col);rect(x+5+(i%2)*12,y+1+i*9,5,8,col);}break;
+    case CONTROL: case SETTINGS: for(int i=0;i<3;i++){rect(x,y+4+i*9,29,2,col);rect(x+5+(i%2)*12,y+1+i*9,5,8,col);}break;
     default: rect(x,y+14,5,12,col);rect(x+10,y+8,5,18,col);rect(x+20,y,5,26,col);break;
     }
     layout_depth--;
@@ -403,7 +418,7 @@ static void row(int i,const char *label) {
     int y=80+i*29;
     rounded(12,y,216,26,i==selected?edge:card);
     if(i==selected)rect(12,y+5,2,18,mint);
-    text_at(21,y+7,label,2,fg);text_at(216,y+11,"-",1,mint);
+    text_at(21,y+7,label,2,fg);text_at(214,y+7,">",2,mint);
 }
 static int attr_path(char path[1200],const char *dir,const char *name) {
     int n=snprintf(path,1200,"%s/%s",dir,name);
@@ -1463,10 +1478,42 @@ static void list_scrollbar(int y,int height,int top,int count,int visible){
     if(offset>height-thumb)offset=height-thumb;
     rect(232,y,3,height,edge);rect(232,y+offset,3,thumb,mint);
 }
+static const char *page_label(enum page p){
+    switch(p){
+    case HOME:return "Home";case MUSIC:return "Music";case BOOKS:return "Books";
+    case FILES:return "Files";case SETTINGS:return "Settings";case DIAGNOSTICS:return "Device info";
+    case DISPLAY:return "Screen";case SOUND:return "Sound";case RADIO:return "Connections";
+    case POWER:return "Battery";case STORAGE:return "Storage";case UPDATES:return "Updates";
+    case PREFERENCES:return "Appearance";case CONTROL:return "Quick controls";
+    case NOWPLAYING:return "Now playing";case WIFIUI:return "Wi-Fi";case BTUI:return "Bluetooth";
+    default:return titles[p];
+    }
+}
+static int navigation_available(void){
+    if(page==HOME||page==READER||page==CONTROL)return 0;
+    if((page==WIFIUI||page==BTUI)&&radio_keyboard)return 0;
+    if(update_pid>=0||update_handoff||radio_pid>=0||volume_warning)return 0;
+    if(page==UPDATES&&update_confirm)return 0;
+    if(page==FILES&&(fm_worker>=0||fm_confirm||fm_panel))return 0;
+    return 1;
+}
+static void navigation_bar(void){
+    if(!navigation_available())return;
+    rect(0,293,W,27,bg);
+    if(page==MUSIC||page==BTUI){
+        rounded(12,294,66,25,card);rounded(84,294,68,25,card);rounded(158,294,70,25,card);
+        text_at(20,298,"Back",2,fg);text_at(169,298,"Home",2,mint);
+        if(page==MUSIC)text_at(89,299,"Playing",1,mint);
+        else reader_print(87,300,"Disconnect",10,mint,card,0,0,151);
+    }else{
+        rounded(12,294,104,25,card);rounded(124,294,104,25,card);
+        text_at(24,298,"< Back",2,fg);text_at(153,298,"Home",2,mint);
+    }
+}
 static void render(void) {
     palette();
     rect(0,0,W,H,bg);statusbar();
-    text_at(12,37,page==CONTROL?"QUICK CONTROLS":titles[page],page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
+    text_at(12,37,page_label(page),page==CONTROL||page==PREFERENCES||page==NOWPLAYING?2:3,fg);
     if(page==CONTROL) {
         char v[16];
         text_at(12,64,"SWIPE UP OR TAP CLOSE",1,muted);
@@ -1534,9 +1581,9 @@ static void render(void) {
         }
     } else if(page==BOOKS){
         rect(0,27,W,293,bg);
-        book_print(14,39,"Your library",12,19,fg,bg,0);
+        text_at(12,37,"Books",3,fg);
         char count[32];snprintf(count,sizeof(count),"%d books on microSD",book_count);
-        book_print(14,65,count,7,9,muted,bg,0);
+        text_at(12,64,count,1,muted);
         for(int i=0;i<4&&book_top+i<book_count;i++){
             int idx=book_top+i,y=83+i*43;
             const char *base=strrchr(books[idx],'/');base=base?base+1:books[idx];
@@ -1561,8 +1608,7 @@ static void render(void) {
         if(!book_count)book_print(14,112,"Add books to SD / Books",8,12,muted,bg,0);
         if(book_status[0])text_at(12,258,book_status,1,muted);
         list_scrollbar(83,168,book_top,book_count,4);
-        rounded(12,278,78,31,card);book_print(23,288,"Back",7,10,fg,card,0);
-        reader_print(105,287,"Swipe / tap a book",12,muted,bg,0,0,228);
+        text_at(14,272,"Swipe to browse, tap to read",1,muted);
     } else if(page==READER){
         uint16_t paper=book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
         uint16_t ink=book_theme>=2?RGB(244,240,222):RGB(38,35,32);
@@ -1632,6 +1678,7 @@ static void render(void) {
         char count[32];
         snprintf(count,sizeof(count),"%d TRACKS / %s",music_count,music_list?"PLAYLIST":"SD MUSIC");
         text_at(12,64,count,1,muted);
+        rounded(168,59,60,22,card);text_at(180,62,music_list?"Folders":"List",1,mint);
         for(int i=0;i<4&&music_top+i<music_count;i++){
             int idx=music_top+i,y=82+i*30;
             const char *base=strrchr(music_files[idx],'/');
@@ -1660,17 +1707,22 @@ static void render(void) {
         text_at(12,251,save_error?"SAVE FAILED":config_path?"SETTINGS SAVED ON CHANGE":"SESSION ONLY",1,muted);
         text_at(12,301,"BACK",2,mint);
     } else if(page==HOME) {
-        text_at(12,64,"YOUR POCKET. YOUR WORLD.",1,muted);
-        for(int i=0;i<6;i++) {
-            int x=12+(i%2)*110,y=80+(i/2)*66;
-            rounded(x,y,106,60,i==selected?edge:card);
-            if(i==selected)rect(x,y+5,2,50,mint);
-            icon(x+10,y+8,home_items[i]);text_at(x+10,y+41,titles[home_items[i]],1,fg);
+        text_at(12,64,"What would you like to do?",1,muted);
+        static const char *const hints[]={"Your music","Keep reading","Browse card","Make it yours"};
+        for(int i=0;i<4;i++) {
+            int x=12+(i%2)*110,y=80+(i/2)*86;
+            rounded(x,y,106,78,i==selected?edge:card);
+            if(i==selected)rect(x,y+8,3,62,mint);
+            icon(x+12,y+10,home_items[i]);text_at(x+12,y+45,page_label(home_items[i]),2,fg);
+            text_at(x+12,y+63,hints[i],1,muted);
         }
-        text_at(12,301,"ALPHA  /  DEVICE SHELL",1,muted);
+        rounded(12,260,106,26,selected==4?edge:card);rounded(122,260,106,26,selected==5?edge:card);
+        text_at(21,267,"Quick controls",1,selected==4?mint:fg);text_at(136,267,"Device info",1,selected==5?mint:fg);
+        text_at(12,302,"Swipe down for quick controls",1,muted);
     } else if(page==SETTINGS) {
-        text_at(12,64,"DEVICE PREFERENCES",1,muted);
-        for(int i=0;i<7;i++) row(i,titles[setting_items[i]]);
+        static const char *const labels[]={"Screen & brightness","Sound & volume","Wi-Fi & Bluetooth","Battery","Storage","Updates","Appearance & time"};
+        text_at(12,64,"Choose a setting",1,muted);
+        for(int i=0;i<7;i++) row(i,labels[i]);
         text_at(12,301,"BACK",2,mint);
     } else if(page==DISPLAY){
         char b[16];
@@ -1856,6 +1908,7 @@ static void render(void) {
         }
         text_at(12,301,"BACK",2,mint);
     }
+    navigation_bar();
 }
 static void open_control(void) {
     if(page==CONTROL||fm_worker>=0||update_pid>=0||update_handoff)return;
@@ -1870,7 +1923,15 @@ static void back(void) {
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
     if(page==NOWPLAYING){page=MUSIC;return;}
     if(page==FILES){if(fm_worker>=0)return;if(fm_confirm||fm_panel){fm_cancel();return;}if(*fm_dir){if(!fm_up())fm_note("CANNOT OPEN PARENT");else fm_message[0]=0;return;}fm_close();page=HOME;selected=0;return;}
-    page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
+    enum page previous=page;page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
+    const enum page *items=page==SETTINGS?setting_items:home_items;
+    for(int i=0;i<(page==SETTINGS?7:6);i++)if(items[i]==previous){selected=i;break;}
+}
+static void go_home(void){
+    if(!navigation_available())return;
+    if(page==FILES)fm_close();
+    if(page==WIFIUI||page==BTUI)radio_clear_key();
+    page=HOME;selected=0;
 }
 static void activate(int i) {
     if(i<0)return;
@@ -1892,7 +1953,7 @@ static void activate(int i) {
         else return;
         selected=0;return;
     }
-    if(page==HOME&&i<6){page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
+    if(page==HOME&&i<6){if(home_items[i]==CONTROL){open_control();return;}page=home_items[i];if(page==MUSIC&&music_pid<0)music_scan();if(page==BOOKS)book_scan();if(page==FILES)fm_start();}
     else if(page==SETTINGS&&i<7){page=setting_items[i];if(page==UPDATES){fm_close();update_current=update_previous=0;update_confirm=U_NONE;(void)update_spawn(U_STATUS);}}else return;
     selected=0;
 }
@@ -1922,6 +1983,11 @@ static void update_choose(int i){
     (void)update_spawn(i==0?U_SD:i==1?U_CHECK_TEST:U_CHECK_STABLE);
 }
 static void tap(int x,int y) {
+    if(navigation_available()&&y>=294){
+        if(page==MUSIC||page==BTUI){if(x>=12&&x<78)back();else if(x>=84&&x<152){if(page==MUSIC)page=NOWPLAYING;else radio_disconnect_audio();}else if(x>=158&&x<228)go_home();}
+        else if(x>=12&&x<116)back();else if(x>=124&&x<228)go_home();
+        return;
+    }
     if(page==SOUND&&volume_warning){
         if(y>=236&&y<273&&x>=20&&x<220){
             if(x>=125&&x<220)(void)volume_confirm(smart_jack());
@@ -1939,7 +2005,7 @@ static void tap(int x,int y) {
     }
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
     if(page==WIFIUI||page==BTUI){
-        if(!radio_keyboard&&y>=288){
+        if(!radio_keyboard&&y>=294){
             if(page==BTUI&&x>=125)radio_disconnect_audio();
             else back();
         }else radio_tap(x,y);
@@ -1984,6 +2050,7 @@ static void tap(int x,int y) {
         }else if(y>=278&&y<309&&x>=12&&x<90)back();
         return;
     }
+    if(page==MUSIC&&x>=168&&x<228&&y>=59&&y<81&&music_pid<0){music_list=!music_list;music_scan();save_error=!save_preferences();return;}
     if(page==MUSIC&&y>=295){
         if(x>=72&&x<145){page=NOWPLAYING;return;}
         if(x>=150&&music_pid<0){music_list=!music_list;music_scan();save_error=!save_preferences();return;}
@@ -2015,9 +2082,10 @@ static void tap(int x,int y) {
     if(page==SOUND&&x>=12&&x<228&&y>=265&&y<288){if(volume_extended)volume_revoke();else volume_warning=1;return;}
     if(page==DISPLAY&&x>=24&&x<=216&&y>=148&&y<=183&&allow_backlight){change_brightness((x-24)*100/192);return;}
     if(x<12||x>=228||y<80)return;
-    if(page==HOME&&y<278) {
+    if(page==HOME&&y>=260&&y<286){if(x<118)activate(4);else if(x>=122)activate(5);}
+    else if(page==HOME&&y<252) {
         int a=x-12,b=y-80;
-        if(a%110<106&&b%66<60)activate((b/66)*2+a/110);
+        if(a%110<106&&b%86<78)activate((b/86)*2+a/110);
     } else if(page==CONTROL&&y>=82&&y<265) {
         int a=x-12,b=y-82;
         if(a%110<106&&b%61<55)activate((b/61)*2+a/110);
@@ -2476,15 +2544,15 @@ static int selftest(void) {
     test.tm_hour=23;test.tm_min=59;format_clock(&test,label);if(strcmp(label,"11:59 PM"))return 1;
     format_clock(NULL,label);if(strcmp(label,"--:--"))return 1;
     page=HOME;selected=0;tap(20,80);if(page!=MUSIC)return 1;back();
-    tap(20,215);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
+    tap(140,215);if(page!=SETTINGS)return 1;tap(20,180);if(page!=POWER)return 1;back();
     if(page!=SETTINGS)return 1;
     back();
-    if(page!=HOME)return 1;
-    key(KEY_DOWN);if(selected!=2)return 1;key(KEY_ENTER);if(page!=GAMES)return 1;
+    if(page!=HOME||selected!=3)return 1;
+    selected=0;key(KEY_DOWN);if(selected!=2)return 1;key(KEY_ENTER);if(page!=FILES)return 1;
     back();tap(100,10);if(page!=CONTROL)return 1;
     tap(20,210);if(!saver||page!=CONTROL)return 1;
     tap(20,300);if(page!=HOME)return 1;
-    tap(20,215);if(page!=SETTINGS)return 1;
+    tap(140,215);if(page!=SETTINGS)return 1;
     tap(20,260);if(page!=PREFERENCES)return 1;
     tap(20,110);if(!clock24)return 1;
     format_clock(&test,label);if(strcmp(label,"23:59"))return 1;
@@ -2526,7 +2594,25 @@ static int selftest(void) {
     page=MUSIC;tap(100,305);if(page!=NOWPLAYING)return 1;back();if(page!=MUSIC)return 1;
     render();return 0;
 }
+static int friendly_navigation_test(void){
+    page=SETTINGS;selected=0;tap(200,305);if(page!=HOME)return 1;
+    tap(140,120);if(page!=BOOKS)return 1;
+    tap(200,305);if(page!=HOME)return 1;
+    tap(30,270);if(page!=CONTROL)return 1;
+    back();if(page!=HOME)return 1;
+    tap(150,270);if(page!=DIAGNOSTICS)return 1;
+    tap(30,305);if(page!=HOME||selected!=5)return 1;
+    page=DISPLAY;tap(30,305);if(page!=SETTINGS||selected!=0)return 1;
+    page=MUSIC;music_pid=getpid();tap(200,305);
+    if(page!=HOME||music_pid!=getpid())return 1;
+    music_pid=-1;
+    page=UPDATES;update_handoff=1;tap(200,305);if(page!=UPDATES)return 1;update_handoff=0;
+    page=FILES;fm_worker=getpid();tap(200,305);if(page!=FILES)return 1;fm_worker=-1;
+    page=HOME;selected=0;
+    puts("PASS: Home/Back navigation, shortcuts, playback and busy guards");return 0;
+}
 int main(int argc,char **argv) {
+    if(argc==2&&!strcmp(argv[1],"--test-friendly-navigation"))return friendly_navigation_test();
     if(argc==3&&!strcmp(argv[1],"--test-metadata")){
         FILE *f=regular_file(argv[2]);if(!f)return 1;
         char title[65]="",artist[65]="",album[65]="";uint32_t duration=0;
@@ -2716,6 +2802,7 @@ int main(int argc,char **argv) {
         if(!found)return 2;
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
+        battery=78;
         strcpy(date_label,"2026-11-15");
         if(page==POWER){battery=78;ram_total=65536;ram_available=32768;shell_rss=1024;}
         if(page==UPDATES){update_installed=11;update_current=12;update_previous=11;update_allow=1;}
