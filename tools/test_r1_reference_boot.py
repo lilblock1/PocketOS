@@ -13,6 +13,9 @@ def make_fixture(root, apps):
     for i in range(20):
         (root / f"etc/init.d/S{i:02d}original").write_bytes(f"original init {i}".encode())
     (root / "module_driver" / "soc_fb.ko").write_bytes(b"original driver")
+    identity=root/"usr/resource/sonix/components/system-info.json"
+    identity.parent.mkdir(parents=True,exist_ok=True)
+    identity.write_text('{"device-name":"HiBy R1","OS_version":"0.3.0.99","ota-repo":"lilblock1/Sonix-Books"}')
     apps.mkdir()
     for app in overlay.APPLICATIONS:
         (apps / app).write_bytes(b"pocketos "+app.encode())
@@ -57,6 +60,59 @@ class Stage(unittest.TestCase):
                              (root/"module_driver/soc_fb.ko").read_bytes())
             with self.assertRaisesRegex(ValueError,"collision"):
                 overlay.add_guard(base/"candidate",original,guard,report)
+    def test_internal_pocketos_is_default_with_original_player_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp)
+            ref=base/"reference"
+            apps=base/"apps"
+            make_fixture(ref,apps)
+            stock=overlay.manifest(ref)
+            boot=base/"boot.sh"
+            boot.write_text(
+                "#!/bin/sh\n"
+                "ORIGINAL=/usr/bin/sonix_player.pocketos-fallback.sh\n"
+                "POCKETOS=/usr/bin/pocketos-shell\n"
+                "fallback(){ exec \"$ORIGINAL\"; }\n"
+                "\"$POCKETOS\" --boot-splash --auto-input || fallback\n"
+            )
+            result=overlay.stage_internal_gui(ref,base/"candidate",apps,boot,"0.3.0.101")
+            built=base/"candidate"
+            self.assertTrue(result["pocketos_internal"])
+            self.assertTrue(result["pocketos_default_boot"])
+            self.assertFalse(result["sd_boot_marker_required"])
+            self.assertEqual(set(result["installed_pocketos_apps"]),set(overlay.INTERNAL_GUI_APPS))
+            self.assertEqual((built/"usr/bin/pocketos-shell").read_bytes(),
+                             (apps/"pocketos-shell").read_bytes())
+            self.assertEqual(overlay.digest(built/"usr/bin/sonix_player.pocketos-fallback.sh"),
+                             stock["usr/bin/sonix_player.sh"])
+            self.assertEqual((built/"usr/bin/sonix_player").read_bytes(),
+                             (ref/"usr/bin/sonix_player").read_bytes())
+            updated=overlay.manifest(built)
+            self.assertEqual([name for name in stock if updated[name]!=stock[name]],
+                             ["usr/bin/sonix_player.sh"])
+            self.assertIn("lilblock1/PocketOS",
+                          (built/"usr/resource/sonix/components/system-info.json").read_text())
+            with self.assertRaisesRegex(ValueError,"existing staged"):
+                overlay.stage_internal_gui(ref,built,apps,boot,"0.3.0.101")
+
+    def test_no_sd_required_in_default_boot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp)
+            ref=base/"reference"
+            apps=base/"apps"
+            make_fixture(ref,apps)
+            boot=base/"boot.sh"
+            boot.write_text(
+                "#!/bin/sh\n"
+                "ORIGINAL=/usr/bin/sonix_player.pocketos-fallback.sh\n"
+                "POCKETOS=/usr/bin/pocketos-shell\n"
+                "fallback(){ exec \"$ORIGINAL\"; }\n"
+                "test -f /mnt/sd_0/PocketOS-try-new-ui || fallback\n"
+                "\"$POCKETOS\" --auto-input\n"
+            )
+            with self.assertRaisesRegex(ValueError,"microSD"):
+                overlay.stage_internal_gui(ref,base/"candidate",apps,boot,"0.3.0.101")
+
     def test_refuses_collision_with_reference(self):
         with tempfile.TemporaryDirectory() as temp:
             base=Path(temp)
