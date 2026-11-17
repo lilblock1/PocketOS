@@ -1400,7 +1400,8 @@ static void render(void) {
             reader_print(12,243,"Keep microSD inserted",13,fg,bg,0,0,228);
         }else if(update_confirm){
             if(update_confirm==U_INSTALL){
-                reader_print(12,94,"Install firmware?",18,fg,bg,0,1,228);
+                char ready[64];snprintf(ready,sizeof(ready),"Install %s %u?",update_ready_channel,update_ready_seq);
+                reader_print(12,94,ready,18,fg,bg,0,1,228);
                 reader_print(12,130,"Keep card inserted; charge 50%+.",12,muted,bg,0,0,228);
                 reader_print(12,152,"Reboots into recovery.",12,muted,bg,0,0,228);
             }else if(update_confirm==U_ROLLBACK){
@@ -1416,17 +1417,17 @@ static void render(void) {
             reader_print(20,250,"Cancel",15,fg,card,0,0,112);
             reader_print(132,250,"Confirm",15,bg,mint,0,1,225);
         }else{
-            const char *const labels[]={"Stable updates","Test / pre-release","Stage from microSD","Roll back selection","Install firmware"};
-            const char *const detail[]={"Check official stable release","Check experimental channel","PocketOS-inbox folder","Return to previous package","Reverify and enter recovery"};
-            for(int i=0;i<5;i++){
-                int y=79+i*31;rounded(12,y,216,29,card);
-                if(selected==i)rect(12,y+3,2,23,mint);
-                reader_print(20,y+3,labels[i],14,fg,card,0,1,226);
-                reader_print(20,y+16,detail[i],10,muted,card,0,0,226);
+            const char *const labels[]={"microSD","Pre-release","Stable"};
+            const char *const detail[]={"Signed package on your card","Latest experimental firmware","Latest stable firmware"};
+            for(int i=0;i<3;i++){
+                int y=79+i*50;rounded(12,y,216,44,card);
+                if(selected==i)rect(12,y+5,2,34,mint);
+                reader_print(20,y+6,labels[i],17,fg,card,0,1,226);
+                reader_print(20,y+25,detail[i],11,muted,card,0,0,226);
             }
             reader_print(12,239,update_note,12,mint,bg,0,0,228);
-            reader_print(12,256,update_allow?"Installation requires recovery approval":"Updates locked",11,muted,bg,0,0,228);
-            text_at(12,301,"BACK",2,mint);text_at(157,301,"REFRESH",1,mint);
+            reader_print(12,256,update_allow?"Choose a source to update":"Updates locked",11,muted,bg,0,0,228);
+            text_at(12,301,"BACK",2,mint);
         }
     } else if(page==STORAGE){
         rounded(12,81,216,170,card);
@@ -1567,16 +1568,10 @@ static void set_volume_target(int v){
 }
 static void update_choose(int i){
     if(update_pid>=0)return;
-    if(i==4){
-        if(!update_allow){update_message("Update actions locked");return;}
-        if(!update_current){update_message("No staged firmware");return;}
-        if(music_pid>=0){update_message("Stop music before installing");return;}
-        update_confirm=U_INSTALL;
-    }else if(i==3){
-        if(!update_allow){update_message("Update actions locked");return;}
-        if(!update_previous){update_message("No previous staged version");return;}
-        update_confirm=U_ROLLBACK;
-    }else if(i==0||i==1||i==2)(void)update_spawn(i==0?U_CHECK_STABLE:i==1?U_CHECK_TEST:U_SD);
+    if(i<0||i>2)return;
+    if(!update_allow){update_message("Update actions locked");return;}
+    if(music_pid>=0){update_message("Stop music before updating");return;}
+    (void)update_spawn(i==0?U_SD:i==1?U_CHECK_TEST:U_CHECK_STABLE);
 }
 static void tap(int x,int y) {
     if(page==SOUND&&volume_warning){
@@ -1590,8 +1585,8 @@ static void tap(int x,int y) {
     if(page==UPDATES){
         if(update_pid>=0)return;
         if(update_confirm){if(y>=240&&y<279){enum update_job job=update_confirm;update_confirm=U_NONE;if(x>=120)(void)update_spawn(job);}return;}
-        if(y>=79&&y<234){selected=(y-79)/31;update_choose(selected);}
-        else if(y>=287){if(x<120)back();else (void)update_spawn(U_STATUS);}
+        if(x>=12&&x<228&&y>=79&&y<229&&(y-79)%50<44){selected=(y-79)/50;update_choose(selected);}
+        else if(y>=287&&x<120)back();
         return;
     }
     if(y<26&&page!=READER){if(page==CONTROL)back();else open_control();return;}
@@ -1682,7 +1677,7 @@ static int key(unsigned code) {
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
         if(update_pid>=0)return 0;
         if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){enum update_job job=update_confirm;update_confirm=U_NONE;(void)update_spawn(job);return 1;}return 0;}
-        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+5+(code==KEY_UP?-1:1))%5;return 1;}
+        if(code==KEY_UP||code==KEY_DOWN){selected=(selected+3+(code==KEY_UP?-1:1))%3;return 1;}
         if(code==KEY_ENTER||code==KEY_OK){update_choose(selected);return 1;}
         return 0;
     }
@@ -2151,8 +2146,15 @@ int main(int argc,char **argv) {
         if(update_current!=8||update_previous!=7||update_percent!=60)return 1;
         if(update_spawn(U_GITHUB)||update_pid>=0)return 1;
         page=UPDATES;update_allow=1;
-        update_choose(3);if(update_confirm!=U_ROLLBACK)return 1;
+        update_choose(3);if(update_confirm||update_pid>=0)return 1;
+        update_active=U_CHECK_STABLE;
+        update_parse("POCKETOS READY 8 test");if(update_ready_seq)return 1;
+        update_parse("POCKETOS READY 8 stable");
+        if(update_ready_seq!=8||strcmp(update_ready_channel,"stable"))return 1;
+        update_active=U_NONE;update_confirm=U_INSTALL;
         tap(20,260);if(update_confirm||update_pid>=0)return 1;
+        selected=2;
+        if(!key(KEY_DOWN)||selected!=0)return 1;
         render();update_close();return 0;
     }
     if(argc==2&&!strcmp(argv[1],"--test-radio")){

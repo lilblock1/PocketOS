@@ -1,11 +1,12 @@
 #!/bin/sh
-# PocketOS signed SD package staging only. Never executes packages or writes flash.
+# PocketOS signed SD staging and guarded R1 recovery handoff. Never executes payloads.
 set -eu
 ui=0
 progress(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS PROGRESS %s\n' "$1"; fi; }
 phase(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS PHASE %s\n' "$1"; fi; }
 bytes(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS BYTES %s %s\n' "$1" "$2"; fi; }
 selection(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS SELECTION %s %s\n' "$1" "$2"; fi; }
+ready(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS READY %s %s\n' "$1" "$2"; fi; }
 die(){ if [ "$ui" -eq 1 ]; then printf 'POCKETOS ERROR %s\n' "$*"; else printf '%s\n' "$*" >&2; fi; exit 1; }
 mode=""
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
@@ -20,7 +21,7 @@ else
     awk '$2=="/mnt/sd_0" {found=1} END {exit !found}' /proc/mounts || die "microSD not mounted"
 fi
 if [ "${1:-}" = "--ui" ]; then ui=1; shift; fi
-[ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | check-github TAG | github TAG [SEQUENCE] | rollback"
+[ "$#" -ge 1 ] || die "Usage: pocketos-update status | sd-inbox | sd DIRECTORY | check-github TAG | github TAG [SEQUENCE] | install SEQUENCE CHANNEL | rollback"
 mode=$1;shift
 [ -d "$root" ] && [ ! -L "$root" ] || die "Unsafe SD root"
 cd "$root" || die "Cannot enter SD root"
@@ -129,8 +130,11 @@ verify_payload(){
 phase MANIFEST
 progress 2
 if [ "$mode" = install ]; then
-    [ "$#" -eq 0 ] || die "Unexpected install arguments"
     [ "$fixture" -eq 0 ] || die "Recovery writes are disabled in fixtures"
+    [ "$#" -eq 2 ] || die "Expected confirmed firmware sequence and channel"
+    install_seq=$1 install_channel=$2
+    valid_seq "$install_seq" || die "Invalid install sequence"
+    case "$install_channel" in stable|test) ;; *) die "Invalid install channel";; esac
     marker=/etc/pocketos/recovery-enable
     [ -f "$marker" ] && [ ! -L "$marker" ] &&
         [ "$("$stat_cmd" -c '%u:%a' "$marker")" = 0:400 ] &&
@@ -152,7 +156,9 @@ if [ "$mode" = install ]; then
     phase VERIFY
     verify_payload "$version_dir"
     read -r magic channel target seq < "$version_dir/manifest"
-    [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" = "$current" ] || die "Selected firmware identity mismatch"
+    [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" = "$current" ] &&
+        [ "$seq" = "$install_seq" ] && [ "$channel" = "$install_channel" ] ||
+        die "Selected firmware changed; check again"
     # Match the preserved physical recovery backups, not just partition labels.
     for spec in '8604858bd975e272f5e238e1721656adbcd9e67eace049d096d049eff578a364 /dev/mtd1ro' 'ebcb4491fd67c5d479d4a7efccf0a7d5871f140634890b33ca1aeb83418aa297 /dev/mtd3ro' 'd4059f7cade350bfe0f53221ba2e886b8e45d6d625f7042bdd8cd4c39c149358 /dev/mtd4ro'; do
         set -- $spec
@@ -300,6 +306,20 @@ progress 15
 read -r magic channel target seq < "$work/manifest"
 [ -z "$expected_channel" ] || [ "$channel" = "$expected_channel" ] || die "Signed manifest channel mismatch"
 [ -z "$expected_seq" ] || [ "$seq" = "$expected_seq" ] || die "Release changed; check again"
+# Offer a retry of the same already-staged firmware, without accepting a
+# changed manifest, a rollback, or a stale installed sequence.
+if [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" -eq "$current" ] &&
+   [ "$seq" -eq "$high" ] && [ "$seq" -gt "$installed" ]; then
+    staged="$store/versions/$seq"
+    [ -d "$staged" ] && [ ! -L "$staged" ] || die "Selected firmware unavailable"
+    cmp -s "$work/manifest" "$staged/manifest" || die "Staged release differs; check sequence"
+    verify_payload "$staged"
+    selection "$current" "$previous"
+    ready "$seq" "$channel"
+    phase DONE
+    progress 100
+    exit 0
+fi
 if [ "$check_only" -eq 1 ]; then
     if [ "$seq" -le "$floor" ]; then seq=0; fi
     if [ "$ui" -eq 1 ]; then printf 'POCKETOS AVAILABLE %s\n' "$seq"; else printf '%s\n' "$seq"; fi
@@ -338,6 +358,7 @@ sync
 mv "$work/payload" "$store/versions/$seq"
 select_version "$seq" "$current" "$seq"
 selection "$seq" "$current"
+if [ "$magic" = POCKETOS-R1-FW-1 ]; then ready "$seq" "$channel"; fi
 phase DONE
 progress 100
-echo "Signed SD update staged and selected: $seq. Application activation and firmware installation remain disabled."
+echo "Signed SD update staged and selected: $seq. Installation requires separate confirmation."

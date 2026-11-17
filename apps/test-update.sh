@@ -118,3 +118,19 @@ if python3 "$packer" --firmware --sequence 9 --key "$tmp/private.pem" --output "
 # A fixture must never access the real recovery partition.
 if run --ui install > "$tmp/install.log"; then exit 1; fi
 grep -Fx 'POCKETOS ERROR Recovery writes are disabled in fixtures' "$tmp/install.log"
+
+# A firmware source offers a separate install confirmation and verified retry.
+mkdir "$tmp/fw-manifest-only"
+cp "$tmp/fw8/manifest" "$tmp/fw8/manifest.sig" "$tmp/fw-manifest-only/"
+POCKETOS_TEST_CP="$real_cp" POCKETOS_TEST_RELEASE="$tmp/fw-manifest-only" PATH="$tmp/shims:$PATH" run --ui check-github test-latest > "$tmp/fw-retry.log"
+grep -Fx 'POCKETOS READY 8 test' "$tmp/fw-retry.log"
+grep -Fx 'POCKETOS SELECTION 8 7' "$tmp/fw-retry.log"
+test "$(run status)" = '8 7 8'
+python3 "$packer" --firmware --channel stable --sequence 9 --key "$tmp/private.pem" --output "$tmp/fw9" "$tmp/pocketos-r1.upt" "$tmp/data-r1-report.json"
+run --ui sd "$tmp/fw9" > "$tmp/fw-ready.log"
+grep -Fx 'POCKETOS READY 9 stable' "$tmp/fw-ready.log"
+run --ui sd "$tmp/fw9" > "$tmp/fw-retry-sd.log"
+grep -Fx 'POCKETOS READY 9 stable' "$tmp/fw-retry-sd.log"
+printf x | dd of="$tmp/sd/PocketOS-updates/versions/9/pocketos-r1.upt" bs=1 conv=notrunc 2>/dev/null
+if run --ui sd "$tmp/fw9" > "$tmp/fw-bad-retry.log"; then exit 1; fi
+if grep -q '^POCKETOS READY ' "$tmp/fw-bad-retry.log"; then exit 1; fi

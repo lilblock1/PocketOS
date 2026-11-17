@@ -2,7 +2,9 @@
 # Run from an extracted trusted kit under Debian WSL. Builds only; never flashes.
 set -euo pipefail
 umask 077
-test "$#" -eq 2 || { echo "Usage: bash finalize-r1-bootstrap.sh PREFLIGHT_LOG PINNED_PREVIEW_UPT"; exit 2; }
+test "$#" -eq 2 || test "$#" -eq 3 || { echo "Usage: bash finalize-r1-bootstrap.sh PREFLIGHT_LOG PINNED_PREVIEW_UPT [SEQUENCE]"; exit 2; }
+seq=${3:-1}
+[[ "$seq" =~ ^[1-9][0-9]{0,8}$ ]] || { echo "Invalid sequence"; exit 2; }
 preflight=$(realpath -e "$1")
 preview=$(realpath -e "$2")
 cd "$(dirname "$0")"
@@ -25,12 +27,12 @@ test ! -L "$keydir"
 chmod 700 "$keydir"
 key="$keydir/release-private.pem"
 if [ ! -e "$key" ]; then
+    [ "$seq" -eq 1 ] || { echo "Existing signing key required for later updates"; exit 1; }
     openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$key"
 fi
 test -f "$key" && test ! -L "$key"
 chmod 600 "$key"
 openssl pkey -in "$key" -pubout -out "$work/public.pem"
-seq=1
 sudo python3 tools/provision-r1-update-trust.py "$work/root" "$work/public.pem" "$seq"
 # Offline candidate only, based on successful read-only physical preflight.
 sudo install -m 0400 -o root -g root /dev/null "$work/root/etc/pocketos/recovery-enable"

@@ -26,3 +26,5 @@ No automatic install or publication is performed. Never upload the private key.
 A physical preflight is not a cold-boot or OTA installation test. Review the
 candidate, including recovery behavior, before installing. No generically
 downloadable new firmware is provided by this kit.
+
+The Updates screen has three sources: microSD (signed assets in PocketOS-inbox), Pre-release and Stable. A successful staged firmware check presents a separate install confirmation; a matching already-staged firmware may be reverified and retried. The recovery action remains gated by the confirmed sequence and channel. The local builder accepts an optional third argument (release sequence); use 2 or higher for an update to the first bootstrap, and retain the existing private key. The default is 1 for a first bootstrap only.
