@@ -1657,17 +1657,27 @@ static void render(void) {
     } else if(page==UPDATES){
         char version[64];snprintf(version,sizeof(version),"Selected: %u   Previous: %u",update_current,update_previous);
         reader_print(12,62,version,12,muted,bg,0,0,228);
-        if(update_pid>=0){
-            reader_print(12,102,update_active==U_STATUS?"Reading status":"Preparing update",18,fg,bg,0,1,228);
-            rect(12,142,216,8,edge);rect(12,142,216*update_percent/100,8,mint);
-            char pct[16];snprintf(pct,sizeof(pct),"%d%%",update_percent);
-            reader_print(12,160,pct,17,mint,bg,0,0,228);
-            reader_print(12,190,update_note,12,muted,bg,0,0,228);
-            if(update_total){
-                char bytes_label[64];snprintf(bytes_label,sizeof(bytes_label),"%u / %u KiB",update_bytes/1024,update_total/1024);
-                reader_print(12,212,bytes_label,12,muted,bg,0,0,228);
+        if(update_pid>=0||update_handoff){
+            int checking=update_active==U_CHECK_STABLE||update_active==U_CHECK_TEST||update_active==U_STATUS;
+            int installing=update_active==U_INSTALL||update_handoff;
+            int pct=update_display_percent();
+            const char *heading=update_handoff?(update_error?"Recovery needs attention":"Restarting"):installing?"Preparing installation":checking?"Checking for update":"Downloading firmware";
+            rounded(12,83,216,201,card);
+            reader_print(20,96,heading,17,fg,card,0,1,220);
+            if(!checking){
+                reader_print(20,124,installing?"2 / 3  Prepare and restart":"1 / 3  Download and verify",12,muted,card,0,0,220);
+                rect(20,151,200,12,edge);rect(20,151,200*pct/100,12,mint);
+                char label[24];snprintf(label,sizeof(label),"%d%% prepared",pct);
+                reader_print(20,171,label,19,mint,card,0,1,220);
+            }else reader_print(20,153,"Checking signed release...",14,mint,card,0,1,220);
+            reader_print(20,202,update_note,11,fg,card,0,0,220);
+            if(update_total&&!installing){
+                char label[48];snprintf(label,sizeof(label),"%u / %u KiB",update_bytes/1024,update_total/1024);
+                reader_print(20,222,label,12,muted,card,0,0,220);
             }
-            reader_print(12,243,"Keep microSD inserted",13,fg,bg,0,0,228);
+            if(update_handoff)reader_print(20,244,update_error?"Do not manually reboot":"3 / 3  Recovery installs update",11,mint,card,0,0,220);
+            else reader_print(20,244,"Keep microSD inserted",12,muted,card,0,0,220);
+            reader_print(16,298,"DO NOT POWER OFF",14,mint,bg,0,1,228);
         }else if(update_confirm){
             if(update_confirm==U_INSTALL){
                 char ready[64];snprintf(ready,sizeof(ready),"Install %s %u?",update_ready_channel,update_ready_seq);
@@ -1680,12 +1690,14 @@ static void render(void) {
             }else{
                 char offer[64];snprintf(offer,sizeof(offer),"%s release %u",update_confirm==U_STABLE?"Stable":"Pre-release",update_offer);
                 reader_print(12,94,offer,18,fg,bg,0,1,228);
-                reader_print(12,130,"Download signed update to SD?",12,muted,bg,0,0,228);
+                reader_print(12,130,"Download and install update?",13,fg,bg,0,0,228);
+                reader_print(12,154,"Restarts automatically in recovery.",11,muted,bg,0,0,228);
+                reader_print(12,176,"Keep card inserted; charge 50%+.",11,muted,bg,0,0,228);
             }
-            if(update_confirm!=U_INSTALL)reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
+            if(update_confirm==U_ROLLBACK)reader_print(12,152,"No firmware is flashed.",12,muted,bg,0,0,228);
             rounded(12,240,104,36,card);rounded(124,240,104,36,mint);
             reader_print(20,250,"Cancel",15,fg,card,0,0,112);
-            reader_print(132,250,"Confirm",15,bg,mint,0,1,225);
+            reader_print(132,250,update_confirm==U_ROLLBACK?"Confirm":"Update",15,bg,mint,0,1,225);
         }else{
             const char *const labels[]={"microSD","Pre-release","Stable"};
             const char *const detail[]={"Signed package on your card","Latest experimental firmware","Latest stable firmware"};
@@ -1695,8 +1707,8 @@ static void render(void) {
                 reader_print(20,y+6,labels[i],17,fg,card,0,1,226);
                 reader_print(20,y+25,detail[i],11,muted,card,0,0,226);
             }
-            reader_print(12,239,update_note,12,mint,bg,0,0,228);
-            reader_print(12,256,update_allow?"Choose a source to update":"Updates locked",11,muted,bg,0,0,228);
+            reader_print(12,239,update_note,11,update_error?fg:mint,bg,0,0,228);
+            reader_print(12,256,update_error?"Check connection and retry":update_allow?"Choose a source to update":"Updates locked",11,muted,bg,0,0,228);
             text_at(12,301,"BACK",2,mint);
         }
     } else if(page==STORAGE){
@@ -1801,13 +1813,13 @@ static void render(void) {
     }
 }
 static void open_control(void) {
-    if(page==CONTROL||fm_worker>=0)return;
+    if(page==CONTROL||fm_worker>=0||update_pid>=0||update_handoff)return;
     if(radio_keyboard)radio_clear_key();
     return_page=page;return_selected=selected;page=CONTROL;selected=0;
 }
 static void back(void) {
     if(volume_warning){volume_warning=0;return;}
-    if(page==UPDATES){if(update_pid>=0)return;if(update_confirm){update_confirm=U_NONE;return;}page=SETTINGS;selected=5;return;}
+    if(page==UPDATES){if(update_pid>=0||update_handoff)return;if(update_confirm){update_confirm=U_NONE;update_clear_auto();return;}page=SETTINGS;selected=5;return;}
     if(page==CONTROL){page=return_page;selected=return_selected;return;}
     if(page==WIFIUI||page==BTUI){if(radio_keyboard){radio_clear_key();return;}if(radio_active==R_BT_SCAN)radio_cancel_scan();if(radio_pid>=0)return;page=RADIO;return;}
     if(page==READER){if(book_menu){book_menu=0;return;}book_close();page=BOOKS;return;}
@@ -1857,7 +1869,7 @@ static void set_volume_target(int v){
     if(music_pid>=0)(void)music_volume_state();
 }
 static void update_choose(int i){
-    if(update_pid>=0)return;
+    if(update_pid>=0||update_handoff)return;
     if(i<0||i>2)return;
     if(!update_allow){update_message("Update actions locked");return;}
     if(music_pid>=0||book_prepare_pid>=0||fm_worker>=0||book_file||sd_worker>=0){update_message("Close active media before updating");return;}
@@ -1874,8 +1886,8 @@ static void tap(int x,int y) {
     }
     if(page==POWER&&y>=112&&y<160){saver=!saver;save_error=!save_preferences();return;}
     if(page==UPDATES){
-        if(update_pid>=0)return;
-        if(update_confirm){if(y>=240&&y<279){enum update_job job=update_confirm;update_confirm=U_NONE;if(x>=120)(void)update_spawn(job);}return;}
+        if(update_pid>=0||update_handoff)return;
+        if(update_confirm){if(y>=240&&y<276&&x>=12&&x<228&&(x<116||x>=124)){enum update_job job=update_confirm;update_confirm=U_NONE;if(x>=124)(void)update_accept(job);else update_clear_auto();}return;}
         if(x>=12&&x<228&&y>=79&&y<229&&(y-79)%50<44){selected=(y-79)/50;update_choose(selected);}
         else if(y>=287&&x<120)back();
         return;
@@ -1967,6 +1979,7 @@ static void tap(int x,int y) {
     } else if((page==SETTINGS||page==PREFERENCES)&&y<283&&(y-80)%29<26) activate((y-80)/29);
 }
 static int key(unsigned code) {
+    if(page==UPDATES&&(update_pid>=0||update_handoff))return 0;
     int prev=selected,old_theme=theme,old_clock=clock24,old_readable=readable,old_saver=saver,old_zone=timezone_choice,old_brightness=brightness_pct;enum page prior=page;
     if(volume_warning){
         if(code==KEY_ESC||code==KEY_BACK){volume_warning=0;return 1;}
@@ -1977,8 +1990,8 @@ static int key(unsigned code) {
     if(page==POWER&&(code==KEY_ENTER||code==KEY_OK)){saver=!saver;save_error=!save_preferences();return 1;}
     if(page==UPDATES){
         if(code==KEY_ESC||code==KEY_BACK){back();return 1;}
-        if(update_pid>=0)return 0;
-        if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){enum update_job job=update_confirm;update_confirm=U_NONE;(void)update_spawn(job);return 1;}return 0;}
+        if(update_pid>=0||update_handoff)return 0;
+        if(update_confirm){if(code==KEY_ENTER||code==KEY_OK){enum update_job job=update_confirm;update_confirm=U_NONE;(void)update_accept(job);return 1;}return 0;}
         if(code==KEY_UP||code==KEY_DOWN){selected=(selected+3+(code==KEY_UP?-1:1))%3;return 1;}
         if(code==KEY_ENTER||code==KEY_OK){update_choose(selected);return 1;}
         return 0;
@@ -2210,7 +2223,7 @@ static int native(const char *input) {
     (void)signal(SIGPIPE,SIG_IGN);
     while(!shell_stopping){
         long long now=mono_ms();
-        int busy=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||sd_worker>=0;
+        int busy=radio_pid>=0||update_pid>=0||update_handoff||book_prepare_pid>0||fm_worker>=0||sd_worker>=0;
         int saving=saver||smart_asleep;
         if(saving!=old_saver){cpu_policy(saving);old_saver=saving;}
         /* Do not switch off the display while a transfer is in progress. */
@@ -2296,7 +2309,7 @@ static int native(const char *input) {
                     for(int j=0;j<16;j++)if(read(fd,discarded,sizeof(discarded))<=0)break;
                     (void)update_clock(&clock_changed);render();present(&b);continue;
                 }
-                int blocked=radio_pid>=0||update_pid>=0||book_prepare_pid>0||fm_worker>=0||sd_worker>=0||down||pending;
+                int blocked=radio_pid>=0||update_pid>=0||update_handoff||book_prepare_pid>0||fm_worker>=0||sd_worker>=0||down||pending;
                 if(!blocked&&smart_allow&&smart_unlocked()&&suspend_key_released(power_fd)){
                     book_save();
                     if((!book_file||!book_allow_save||!book_save_error)&&power_wake()){
@@ -2533,6 +2546,13 @@ int main(int argc,char **argv) {
         update_parse("POCKETOS READY 8 test");if(update_ready_seq)return 1;
         update_parse("POCKETOS READY 8 stable");
         if(update_ready_seq!=8||strcmp(update_ready_channel,"stable"))return 1;
+        update_auto=1;update_auto_seq=8;strcpy(update_auto_channel,"test");if(update_auto_matches())return 1;
+        strcpy(update_auto_channel,"stable");if(!update_auto_matches())return 1;
+        update_clear_auto();if(update_auto_matches())return 1;
+        update_active=U_GITHUB;update_percent=100;if(update_display_percent()!=70)return 1;
+        update_active=U_INSTALL;update_percent=0;if(update_display_percent()!=70)return 1;
+        update_parse("POCKETOS PHASE REBOOT");if(!update_handoff||strcmp(update_note,"Restarting into recovery"))return 1;
+        update_handoff=0;
         update_active=U_NONE;update_confirm=U_INSTALL;
         tap(20,260);if(update_confirm||update_pid>=0)return 1;
         selected=2;

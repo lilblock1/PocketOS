@@ -81,6 +81,13 @@ grep -Fx 'POCKETOS PHASE DOWNLOAD' "$tmp/github.log"
 grep -Fx 'POCKETOS BYTES 4096 16384' "$tmp/github.log"
 grep -Fx 'POCKETOS PROGRESS 100' "$tmp/github.log"
 test "$(run status)" = '5 4 5'
+# DNS failure must be surfaced before staging anything.
+mkdir "$tmp/dns-shim"
+printf '#!/bin/sh\nexit 6\n' > "$tmp/dns-shim/curl"
+chmod 755 "$tmp/dns-shim/curl"
+if PATH="$tmp/dns-shim:$PATH" run --ui check-github test-latest > "$tmp/dns.log"; then exit 1; fi
+grep -Fx 'POCKETOS ERROR Wi-Fi not connected or DNS failed' "$tmp/dns.log"
+test "$(run status)" = '5 4 5'
 # Same-size tampering may finish transfer but never report success.
 python3 "$packer" --sequence 6 --key "$tmp/private.pem" --output "$tmp/v6" "$tmp/data-large"
 printf x | dd of="$tmp/v6/data-large" bs=1 conv=notrunc 2>/dev/null

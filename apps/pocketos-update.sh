@@ -163,12 +163,15 @@ if [ "$mode" = install ]; then
         case "$level" in ''|*[!0-9]*) return 1;; esac
         [ "$level" -ge 50 ] && [ "$level" -le 100 ]
     }
+    phase PREFLIGHT
+    progress 7
     battery_ok || die "Charge battery to at least 50%"
     [ "$current" -gt "$installed" ] && [ "$current" -eq "$high" ] || die "No newer selected firmware"
     version_dir="$store/versions/$current"
     [ -d "$version_dir" ] && [ ! -L "$version_dir" ] || die "Selected firmware unavailable"
     phase VERIFY
     verify_payload "$version_dir"
+    progress 35
     read -r magic channel target seq < "$version_dir/manifest"
     [ "$magic" = POCKETOS-R1-FW-1 ] && [ "$seq" = "$current" ] &&
         [ "$seq" = "$install_seq" ] && [ "$channel" = "$install_channel" ] ||
@@ -181,6 +184,7 @@ if [ "$mode" = install ]; then
         [ "${actual%% *}" = "$1" ] || die "Recovery identity differs"
     done
     /usr/sbin/pocketos-recovery-arm --check || die "Boot-selection preflight failed"
+    progress 55
     expected=$(awk '$3=="pocketos-r1.upt" {print $1}' "$version_dir/manifest")
     # Prior manual firmware may still be on the card. Keep it intact in a
     # unique backup directory; do not require card removal or overwrite it.
@@ -214,6 +218,8 @@ if [ "$mode" = install ]; then
     fi
     actual=$(sha256sum ./r1.upt) || die "Cannot recheck recovery file"
     [ "${actual%% *}" = "$expected" ] || die "Final recovery checksum mismatch"
+    progress 80
+    phase FLUSH
     sync
     battery_ok || die "Battery check failed before recovery"
     # Release the staging directory and working directory before the clean unmount.
@@ -232,9 +238,14 @@ if [ "$mode" = install ]; then
         die "Recovery selection failed; do not reboot"
     fi
     sync
-    /sbin/reboot || die "Recovery armed; automatic reboot failed"
-    # Reboot may return before shutdown; never label this as installed.
-    while :; do sleep 1; done
+    phase REBOOT
+    progress 100
+    # Let the shell display the verified handoff before requesting shutdown.
+    sleep 3
+    /sbin/reboot || die "Restart request failed; keep device powered"
+    # Do not force another reboot or claim installation if init ignores it.
+    sleep 45
+    die "Restart did not happen; keep device powered"
 fi
 if [ "$mode" = rollback ]; then
     [ "$#" -eq 0 ] && [ "$previous" != 0 ] || die "No previous staged version"
@@ -311,7 +322,21 @@ fetch(){
             sleep 1
         done
     fi
-    if wait "$transfer_pid"; then transfer_pid=""; else transfer_pid=""; die "Package transfer failed"; fi
+    if wait "$transfer_pid"; then transfer_pid=""; else
+        code=$?; transfer_pid=""
+        if [ "$mode" = github ]; then
+            case "$code" in
+                6) die "Wi-Fi not connected or DNS failed";;
+                7|28) die "Connection failed or timed out";;
+                22) die "Release unavailable from GitHub";;
+                23) die "Cannot write to microSD";;
+                35|51|60) die "Secure connection failed; check clock";;
+                63) die "Package exceeds signed size limit";;
+                *) die "Download failed (curl $code)";;
+            esac
+        fi
+        die "Cannot copy package on microSD"
+    fi
     [ "$(wc -c < "$work/$transfer_name")" -le "$transfer_limit" ] || die "Downloaded file exceeds limit"
     if [ "${3:-}" = payload ] && [ "$ui" -eq 1 ]; then report_transfer; fi
 }
