@@ -149,9 +149,9 @@ jobs:
           mkdir -p fixture
           sh installed-pocketos-update.sh --fixture "$PWD/fixture" "$PWD/public.pem" \
             sd "$PWD/signed"
-          test -f fixture/PocketOS-updates/versions/4/pocketos-r1.upt
-          test -f fixture/PocketOS-updates/versions/4/data-r1-report.json
-          test "$(cat fixture/PocketOS-updates/selection)" = '4 0 4'
+          test -f fixture/PocketOS-updates/versions/5/pocketos-r1.upt
+          test -f fixture/PocketOS-updates/versions/5/data-r1-report.json
+          test "$(cat fixture/PocketOS-updates/selection)" = '5 0 5'
           # Validate the same signed payload against old BusyBox awk as well.
           busybox awk -v fixture=0 '
             NR==1 {if(NF!=4||$1!="POCKETOS-R1-FW-1"||
