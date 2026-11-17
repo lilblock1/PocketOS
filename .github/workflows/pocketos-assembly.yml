@@ -1,5 +1,12 @@
 name: PocketOS - R1 development assembly (NOT FIRMWARE)
 on:
+  push:
+    branches: [phase6-audio-routing]
+    paths:
+      - 'apps/**'
+      - 'tools/r1_assemble.py'
+      - 'tools/test_r1_assemble.py'
+      - '.github/workflows/pocketos-assembly.yml'
   workflow_run:
     workflows: ['PocketOS - Alpha foundation (NOT FIRMWARE)']
     types: [completed]
@@ -8,7 +15,7 @@ on:
     inputs:
       foundation_run_id:
         description: Successful foundation build with matching SDK
-        required: true
+        required: false
         type: string
 permissions:
   contents: read
@@ -18,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   assembly:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -68,7 +75,7 @@ jobs:
           done
           test -n "$compiler"
           make -C apps CC="$compiler" CFLAGS="-Os -Wall -Wextra -Werror" LDFLAGS="-s" BUILD_DIR="$PWD/target-apps" all
-          for name in pocketos-info pocketos-r1-runtime pocketos-shell pocketos-wifi pocketos-music; do
+          for name in pocketos-info pocketos-r1-runtime pocketos-shell pocketos-wifi pocketos-music pocketos-transfer; do
             timeout 30 qemu-mipsel -L "$PWD/rootfs" "target-apps/$name" --version
           done
           for test in --self-test --test-power --test-radio --test-update-ui; do
