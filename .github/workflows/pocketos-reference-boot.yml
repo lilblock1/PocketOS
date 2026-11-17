@@ -1,0 +1,121 @@
+name: PocketOS R1 reference-boot compatibility (NOT FLASHABLE)
+on:
+  push:
+    branches: [phase6-audio-routing]
+    paths:
+      - 'tools/r1_reference_boot.py'
+      - 'tools/test_r1_reference_boot.py'
+      - '.github/workflows/pocketos-reference-boot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-r1-reference-boot
+  cancel-in-progress: true
+jobs:
+  preserve-and-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APP_RUN: '44013473948'
+      APP_SHA: '6e67044343f5cccc943a6d5e67d6c281f75486b7'
+      APP_ARTIFACT_ID: '14298395085'
+      APP_DIGEST: 'sha256:508f0c209fac0e7330fc3a6a0e3b2e244441d44a22820e841b56b72556ab25c0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test reference-preserving overlay against fixtures
+        run: python3 -m unittest discover -s tools -p 'test_r1_reference_boot.py' -v
+      - name: Install R1 offline format and emulator tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user p7zip-full squashfs-tools genisoimage
+      - name: Authenticate pinned MIPS binaries
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN" > app-run.json
+          jq -e --arg sha "$APP_SHA" '.head_sha==$sha and .status=="completed" and .conclusion=="success" and .head_branch=="phase6-audio-routing" and .head_repository.full_name=="lilblock1/PocketOS"' app-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN/artifacts?per_page=100" > app-artifacts.json
+          jq -e --argjson id "$APP_ARTIFACT_ID" --arg digest "$APP_DIGEST" '[.artifacts[] | select(.id==$id and .digest==$digest and .name=="PocketOS-R1-MIPS-applications-NOT-FIRMWARE" and .expired==false)] | length==1' app-artifacts.json >/dev/null
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-MIPS-applications-NOT-FIRMWARE
+          run-id: 44013473948
+          github-token: ${{ github.token }}
+          path: target-apps
+      - name: Verify uploaded application hashes
+        run: |
+          set -euo pipefail
+          (cd target-apps && sha256sum -c SHA256SUMS)
+          file target-apps/pocketos-shell target-apps/pocketos-transfer
+          readelf -h target-apps/pocketos-shell | grep -q 'MIPS'
+      - name: Download and verify pinned R1 reference firmware
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reference=json.loads(Path('boards/hiby-r1/reference.json').read_text())['reference']
+          print('Pinned reference:',reference['tag'])
+          with open('reference-url.txt','w') as f:f.write(reference['url'])
+          PY
+          curl --fail --location --retry 3 "$(cat reference-url.txt)" -o reference.upt
+          python3 tools/extract_reference.py reference.upt boards/hiby-r1/reference.json reference-work
+          sudo unsquashfs -no-progress -no-xattrs -d reference-work/root reference-work/reference.squashfs
+      - name: Check exact PocketOS binary ABI against reference runtime
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          readelf -l target-apps/pocketos-shell > reports/pocketos-interpreter.txt
+          readelf -d target-apps/pocketos-shell > reports/pocketos-dynamic.txt
+          printf 'Target reference-run output\n' > reports/abi-probe.txt
+          for command in "--version" "--self-test"; do
+            echo "pocketos-shell $command" | tee -a reports/abi-probe.txt
+            timeout 30 qemu-mipsel -L "$PWD/reference-work/root" target-apps/pocketos-shell "$command" >> reports/abi-probe.txt 2>&1
+          done
+          for executable in pocketos-transfer pocketos-r1-runtime pocketos-info; do
+            timeout 30 qemu-mipsel -L "$PWD/reference-work/root" "target-apps/$executable" --version >> reports/abi-probe.txt 2>&1
+          done
+      - name: Stage apps without changing proven vendor boot and drivers
+        run: |
+          set -euo pipefail
+          mkdir -p staging
+          sudo python3 tools/r1_reference_boot.py reference-work/root target-apps staging/reference-root reports/reference-boot-preservation.json
+          sudo chown "$(id -u):$(id -g)" reports/reference-boot-preservation.json
+          timeout 30 qemu-mipsel -L "$PWD/staging/reference-root" staging/reference-root/usr/bin/pocketos-shell --self-test
+          sudo mksquashfs staging/reference-root staging/reference-compatible.squashfs -noappend -comp xz -processors 2 -no-progress >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          original=Path('reference-work/reference.squashfs').stat().st_size
+          candidate=Path('staging/reference-compatible.squashfs').stat().st_size
+          (Path('reports')/'reference-size.json').write_text(json.dumps({
+            'reference_squashfs_bytes':original,
+            'candidate_squashfs_bytes':candidate,
+            'size_delta_bytes':candidate-original,
+            'not_larger_than_reference':candidate<=original,
+            'partition_capacity_verified':False,
+            'bootable_verified':False,
+            'flashable':False,
+          },indent=2)+'\n')
+          print('Reference rootfs size:',original,'candidate:',candidate,'delta:',candidate-original)
+          PY
+      - name: Repack temporary OTA using preserved R1 kernel; verify round trip
+        run: |
+          set -euo pipefail
+          sudo python3 tools/r1_ota_format.py reference-work/iso staging/reference-compatible.squashfs staging/ref-test-NOT-FLASHABLE.upt reports/reference-upt-format.json
+          sudo chown "$(id -u):$(id -g)" reports/reference-upt-format.json
+          test -s reports/reference-upt-format.json
+          # The installer files are a disposable format test and are never uploaded.
+          sudo rm -rf staging reference-work reference.upt
+      - name: Upload findings (no firmware image)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-R1-reference-boot-compatibility-NOT-FIRMWARE
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 14
