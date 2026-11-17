@@ -27,7 +27,7 @@ static dev_t fm_device;
 static int fm_progress_fd=-1;
 static volatile sig_atomic_t fm_cancel_transfer;
 static void fm_transfer_stop(int sig){(void)sig;fm_cancel_transfer=1;}
-static void fm_progress(unsigned percent){if(fm_progress_fd>=0)(void)write(fm_progress_fd,&percent,sizeof(percent));}
+static void fm_progress(unsigned percent){if(fm_progress_fd>=0){ssize_t ignored=write(fm_progress_fd,&percent,sizeof(percent));(void)ignored;}}
 static int fm_name_ok(const char *name){
     if(!name||!*name||*name=='.'||strlen(name)>255)return 0;
     for(const unsigned char *p=(const unsigned char*)name;*p;p++)if(*p<32||*p==127||*p=='/'||*p=='\\')return 0;
@@ -189,7 +189,7 @@ static int fm_transfer(const char *destination,int remove_source){
         while(offset<(size_t)n){
             ssize_t k=write(dst,buf+offset,(size_t)n-offset);
             if(k<0&&errno==EINTR&&!fm_cancel_transfer)continue;
-            if(k<=0)goto end;
+            if(k<=0||(size_t)k>(size_t)n-offset)goto end;
             offset+=(size_t)k;
         }
         remaining-=(unsigned long long)n;
@@ -207,16 +207,20 @@ static int fm_transfer(const char *destination,int remove_source){
             size_t need=remaining>sizeof(buf)?sizeof(buf):(size_t)remaining;
             size_t offset=0;
             while(offset<need){
-                ssize_t n=read(src,buf+offset,need-offset);
+                if(offset>=sizeof(buf)||need>sizeof(buf)||offset>=need)goto end;
+                size_t left=need-offset;
+                ssize_t n=read(src,buf+offset,left);
                 if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
-                if(n<=0)goto end;
+                if(n<=0||(size_t)n>left)goto end;
                 offset+=(size_t)n;
             }
             offset=0;
             while(offset<need){
-                ssize_t n=read(dst,check+offset,need-offset);
+                if(offset>=sizeof(check)||need>sizeof(check)||offset>=need)goto end;
+                size_t left=need-offset;
+                ssize_t n=read(dst,check+offset,left);
                 if(n<0&&errno==EINTR&&!fm_cancel_transfer)continue;
-                if(n<=0)goto end;
+                if(n<=0||(size_t)n>left)goto end;
                 offset+=(size_t)n;
             }
             if(memcmp(buf,check,need))goto end;
