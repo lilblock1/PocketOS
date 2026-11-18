@@ -10,6 +10,7 @@ p.add_argument("output",type=Path)
 p.add_argument("--fonts",type=Path,default=Path("/usr/share/fonts/truetype/dejavu"))
 p.add_argument("--regular-file",type=Path)
 p.add_argument("--bold-file",type=Path)
+p.add_argument("--dense-reader",action="store_true",help="Validation only: retain unpacked reader atlases for pixel comparison")
 a=p.parse_args()
 parts=["/* Generated alpha atlases; retain the source font license. */","#ifndef POCKETOS_READER_FONT_H","#define POCKETOS_READER_FONT_H", "#define READER_ATLAS_WIDTH 36", "#define READER_ATLAS_HEIGHT 40"]
 regular=a.regular_file or a.fonts/"DejaVuSans.ttf"
@@ -44,4 +45,5 @@ parts.append("static const unsigned char ui_advance[3][95]={"+",".join(ui_advanc
 parts.append("static const unsigned char ui_pixels[3][95][960]={\n"+",\n".join(ui_rows)+"\n};")
 parts.append("#endif")
 a.output.parent.mkdir(parents=True,exist_ok=True)
-a.output.write_text(compact("\n".join(parts)+"\n"))
+rendered="\n".join(parts)+"\n"
+a.output.write_text(compact(rendered,not a.dense_reader))

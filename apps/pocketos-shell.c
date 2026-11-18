@@ -42,6 +42,11 @@
 #define W 240
 #define H 400
 #define PIXEL_SCALE 2
+#if defined(__GNUC__)
+#define UI_TEST_ONLY __attribute__((cold,noinline))
+#else
+#define UI_TEST_ONLY
+#endif
 #define CW (W*PIXEL_SCALE)
 #define CH (H*PIXEL_SCALE)
 #ifndef READER_ATLAS_WIDTH
@@ -63,6 +68,7 @@ static const char *config_path=NULL;
 static int wifi_present=0, bt_present=0, brightness_pct=-1;
 static int timezone_choice=0, allow_backlight=0, brightness_error=0, audio_present=0;
 static int unblank_display=0;
+static int allow_games;
 static int brightness_saved=-1;
 static int internal_pct=-1, sd_pct=-1;
 static int output_busy=0;
@@ -299,7 +305,14 @@ static void reader_draw(int x,int y,const char *text,int height,uint16_t ink,uin
                 }
             }else{
                 unsigned sw=READER_ATLAS_WIDTH,sh=READER_ATLAS_HEIGHT;
+#ifdef READER_ATLAS_SPARSE
+                const unsigned char *g=NULL;
+                unsigned glyph=(bold?95u:0u)+c-32u;
+                unsigned encoded=reader_offsets[glyph],encoded_end=reader_offsets[glyph+1];
+                unsigned run_start=0,run_end=0,run_data=0,previous=0;
+#else
                 const unsigned char *g=bold?reader_bold_pixels[c-32]:reader_regular_pixels[c-32];
+#endif
                 if(custom&&book_font_ok==2){
                     sw=book_native_width;sh=book_native_height;
                     g=book_native_pixels+((bold?95u:0u)+c-32u)*(sw*sh/2);
@@ -309,7 +322,24 @@ static void reader_draw(int x,int y,const char *text,int height,uint16_t ink,uin
                 for(int j=0;j<native_height;j++)for(int i=0;i<width&&x*PIXEL_SCALE+i<limit*PIXEL_SCALE;i++){
                     unsigned k=(unsigned)j*sh/(unsigned)native_height*sw+(unsigned)i*sh/(unsigned)native_height;
                     if(k>=sw*sh)continue;
-                    unsigned alpha=((g[k/2]>>(k%2?0:4))&15u)*17u;
+                    unsigned packed;
+#ifdef READER_ATLAS_SPARSE
+                    if(!g){
+                        unsigned wanted=k/2;
+                        /* Upscaling can repeat a source row. Rewind the tiny
+                         * stream cursor rather than allocate a glyph cache. */
+                        if(wanted<previous){encoded=reader_offsets[glyph];run_start=run_end=run_data=0;}
+                        previous=wanted;
+                        while(wanted>=run_end&&encoded<encoded_end){
+                            run_start=run_end+reader_data[encoded++];
+                            unsigned count=reader_data[encoded++];run_end=run_start+count;
+                            run_data=encoded;encoded+=count;
+                        }
+                        packed=wanted>=run_start&&wanted<run_end?reader_data[run_data+wanted-run_start]:0;
+                    }else
+#endif
+                    packed=g[k/2];
+                    unsigned alpha=((packed>>(k%2?0:4))&15u)*17u;
                     int px=x*PIXEL_SCALE+i,py=y*PIXEL_SCALE+j;
                     if(alpha&&px>=0&&px<CW&&py>=0&&py<CH){
                         size_t at=(size_t)py*CW+px;
@@ -1470,6 +1500,7 @@ static void list_scrollbar(int y,int height,int top,int count,int visible){
 static const char *page_label(enum page p){
     switch(p){
     case HOME:return "Home";case MUSIC:return "Music";case BOOKS:return "Books";
+    case GAMES:return "Games";
     case FILES:return "Files";case SETTINGS:return "Settings";case DIAGNOSTICS:return "Device info";
     case DISPLAY:return "Screen";case SOUND:return "Sound";case RADIO:return "Connections";
     case POWER:return "Battery";case STORAGE:return "Storage";case UPDATES:return "Updates";
@@ -1519,6 +1550,7 @@ static void record_placeholder(int x,int y){
         if(r<=49*49)rect(x+64+i,y+64+j,1,1,r<=9*9?bg:r<=21*21?mint:RGB(39,48,63));
     }
 }
+#include "pocketos-classic-draw.h"
 static const char *book_theme_label(void){
     switch(book_theme){
     case 0:return "Theme: Paper";case 1:return "Theme: White";
@@ -1528,7 +1560,7 @@ static const char *book_theme_label(void){
     }
 }
 static void reader_classic_band(int y,int height){
-    for(int i=0;i<height;i++)rect(0,y+i,W,1,blend565(RGB(253,254,255),RGB(204,213,225),(unsigned)i*255/(height-1)));
+    for(int i=0;i<height;i++)rect(0,y+i,W,1,blend565(cp_colour(CP_HEADER_TOP),cp_colour(CP_HEADER_BOTTOM),(unsigned)i*255/(height-1)));
 }
 #include "pocketos-classic-ui.h"
 static void render(void) {
@@ -1634,9 +1666,22 @@ static void render(void) {
         text_at(14,272,"Swipe to browse, tap to read",1,muted);
     } else if(page==READER){
         int classic=book_theme==BOOK_THEME_CLASSIC;
-        uint16_t paper=classic?RGB(250,251,253):book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
-        uint16_t ink=classic?RGB(24,32,45):(book_theme==2||book_theme==3)?RGB(244,240,222):RGB(38,35,32);
-        uint16_t soft=classic?RGB(87,103,124):book_theme==3?RGB(188,191,171):book_theme==2?RGB(145,153,153):RGB(112,103,89);
+        uint16_t paper=classic?bg:book_theme==3?RGB(35,43,29):book_theme==0?RGB(246,242,229):book_theme==1?RGB(255,255,255):RGB(15,18,21);
+        uint16_t ink=classic?fg:(book_theme==2||book_theme==3)?RGB(244,240,222):RGB(38,35,32);
+        uint16_t soft=classic?(theme?muted:RGB(87,103,124)):book_theme==3?RGB(188,191,171):book_theme==2?RGB(145,153,153):RGB(112,103,89);
+        uint16_t accent=theme==1?RGB(128,178,247):theme==2?mint:RGB(34,91,177);
+        /* Every reading style follows the system mode without replacing the
+         * saved style, font or page position. Keep artwork colours intact. */
+        if(theme==2){paper=RGB(0,0,0);ink=RGB(255,255,255);soft=RGB(220,220,220);}
+        else if(theme==1&&!classic){
+            paper=book_theme==3?RGB(35,43,29):book_theme==0?RGB(35,31,27):book_theme==2?RGB(15,18,21):RGB(18,24,34);
+            ink=book_theme==0?RGB(244,236,222):book_theme==3?RGB(244,240,222):RGB(243,246,251);
+            soft=book_theme==3?RGB(188,191,171):RGB(166,181,202);
+        }else if(theme==0&&!classic){
+            paper=book_theme==3?RGB(236,240,223):book_theme==0?RGB(246,242,229):book_theme==2?RGB(235,239,242):RGB(255,255,255);
+            ink=book_theme==3?RGB(38,46,30):RGB(38,35,32);
+            soft=book_theme==3?RGB(96,105,78):RGB(112,103,89);
+        }
         rect(0,0,W,H,paper);
         if(book_menu){
             if(classic)reader_classic_band(0,32);
@@ -1654,7 +1699,7 @@ static void render(void) {
             reader_print(174,288,"Done",16,ink,paper,0,1,228);
         }else{
             layout_depth++;
-            if(classic){reader_classic_band(0,28);reader_classic_band(H-27,27);rect(0,27,W,1,RGB(167,181,200));}
+            if(classic){reader_classic_band(0,28);reader_classic_band(H-27,27);rect(0,27,W,1,theme?edge:RGB(167,181,200));}
             char heading[65];snprintf(heading,sizeof(heading),"%s",book_title[0]?book_title:"Reading");
             int title_width=reader_measure(heading,11,0,0);
             reader_draw(title_width<W-32?(W-title_width)/2:16,8,heading,11,soft,paper,0,0,W-16,classic);
@@ -1672,8 +1717,8 @@ static void render(void) {
             char progress[24],bat[16];snprintf(progress,sizeof(progress),"%u.%u%%",permille/10,permille%10);
             if(battery>=0)snprintf(bat,sizeof(bat),"%d%%",battery);else strcpy(bat,"--%");
             rect(16,H-23,W-32,1,soft);
-            if(classic)rect(16,H-23,(int)((W-32)*permille/1000),1,RGB(34,91,177));
-            reader_draw(16,H-17,progress,10,classic?RGB(34,91,177):soft,paper,0,0,80,classic);
+            if(classic)rect(16,H-23,(int)((W-32)*permille/1000),1,accent);
+            reader_draw(16,H-17,progress,10,classic?accent:soft,paper,0,0,80,classic);
             int clock_width=reader_measure(clock_label,10,0,0);
             reader_draw((W-clock_width)/2,H-17,clock_label,10,soft,paper,0,0,W-60,classic);
             int bat_width=reader_measure(bat,10,0,0);
@@ -1724,7 +1769,7 @@ static void render(void) {
         text_at(12,301,"BACK",2,mint);text_at(76,301,"NOW",2,mint);text_at(154,301,"LIST",2,mint);
     } else if(page==PREFERENCES) {
         text_at(12,64,"TAP TO CHANGE",1,muted);
-        row(0,theme==0?"Theme: Classic":theme==1?"Theme: Night":"High contrast");
+        row(0,theme==0?"Mode: Light":theme==1?"Mode: Dark":"Mode: High contrast");
         row(1,clock24?"CLOCK: 24H":"CLOCK: 12H");
         row(2,readable?"TEXT: CONTRAST":"TEXT: NORMAL");
         row(3,saver?"POWER: SAVER":"POWER: NORMAL");
@@ -1944,6 +1989,7 @@ static void back(void) {
     enum page previous=page;page=(page>=DISPLAY?SETTINGS:HOME);selected=0;
     const enum page *items=page==SETTINGS?setting_items:home_items;
     for(int i=0;i<(page==SETTINGS?7:6);i++)if(items[i]==previous){selected=i;break;}
+    if(classic_ui&&page==HOME){if(previous==GAMES)selected=2;else if(selected>=2)selected++;}
 }
 static void go_home(void){
     if(!navigation_available())return;
@@ -1954,7 +2000,7 @@ static void go_home(void){
 static void activate(int i) {
     if(i<0)return;
     if(page==PREFERENCES) {
-        if(i==0)theme=(theme+1)%3;
+        if(i==0)theme=classic_ui?(theme==0?1:0):(theme+1)%3;
         else if(i==1)clock24=!clock24;
         else if(i==2)readable=!readable;
         else if(i==3)saver=!saver;
@@ -2002,7 +2048,7 @@ static void update_choose(int i){
 }
 static void classic_step(int step){
     if(page==HOME||page==SETTINGS){
-        int count=7;selected+=step;if(selected<0)selected=0;if(selected>=count)selected=count-1;
+        int count=page==HOME?8:7;selected+=step;if(selected<0)selected=0;if(selected>=count)selected=count-1;
     }else if(page==MUSIC){
         classic_music_cursor=classic_window(classic_music_cursor+step,music_count,&classic_music_top);
     }else if(page==BOOKS){
@@ -2016,10 +2062,12 @@ static void classic_step(int step){
 }
 static void classic_select(void){
     if(page==HOME){
-        if(selected==6){page=NOWPLAYING;return;}
-        int destination=selected;activate(destination);
+        if(selected==7){page=NOWPLAYING;return;}
+        if(selected==2){page=GAMES;selected=0;return;}
+        int destination=selected>2?selected-1:selected;activate(destination);
         if(page==MUSIC){classic_music_cursor=music_index;classic_music_top=0;}
     }else if(page==SETTINGS)activate(selected);
+    else if(page==GAMES)selected=allow_games?1:-20;
     else if(page==BOOKS){book_status[0]=0;(void)book_open();}
     else if(page==MUSIC&&music_count){
         if(music_pid>=0&&classic_music_cursor==music_index){if(music_pause)music_action(1);}
@@ -2057,10 +2105,11 @@ static void classic_tap(int x,int y){
     }
     if(nx<20||nx>=460||ny<78||ny>=518)return;
     if(page==HOME){
-        int item=ny>=478?6:(ny-104)/56;
-        if(ny<104&&ny<478)return;
-        if(item<0||item>6||(ny<478&&(ny>=440||nx>=276)))return;
+        int item=ny>=478?7:(ny-91)/54;
+        if(ny<91&&ny<478)return;
+        if(item<0||item>7||(ny<478&&(ny>=469||nx>=276)))return;
         if(selected==item)classic_select();else selected=item;
+    }else if(page==GAMES){if(ny>=105&&ny<156)classic_select();
     }else if(page==SETTINGS||page==MUSIC||page==BOOKS){
         int pitch=page==SETTINGS?56:54;
         if(ny<91||ny>=91+7*pitch)return;
@@ -2259,7 +2308,35 @@ static int key(unsigned code) {
 static int sample_battery(void) {
     return (int)hw_battery_read("").percent;
 }
-static int test_classic_navigation(void){
+static UI_TEST_ONLY uint32_t classic_frame_hash(void){
+    uint32_t value=2166136261u;
+    for(unsigned i=0;i<CW*CH;i++)value=(value^canvas[i])*16777619u;
+    return value;
+}
+static UI_TEST_ONLY int test_classic_modes(const char *path){
+    config_path=path;classic_ui=1;page=HOME;selected=theme=0;
+    render();uint32_t light=classic_frame_hash();
+    if(canvas[90*CW+30]!=RGB(255,255,255))return 1;
+    page=PREFERENCES;activate(0);if(theme!=1||save_error)return 2;
+    theme=0;load_preferences();if(theme!=1)return 3;
+    page=HOME;render();if(classic_frame_hash()==light||canvas[90*CW+30]!=RGB(19,25,35))return 4;
+    enum page screens[]={HOME,MUSIC,BOOKS,GAMES,SETTINGS,NOWPLAYING,PREFERENCES,DISPLAY,RADIO};
+    for(unsigned i=0;i<sizeof(screens)/sizeof(screens[0]);i++){
+        page=screens[i];theme=0;render();uint32_t first=classic_frame_hash();
+        theme=1;render();if(classic_frame_hash()==first)return 5;
+    }
+    page=READER;book_theme=BOOK_THEME_CLASSIC;theme=1;render();
+    if(canvas[100*CW+4]!=RGB(18,24,34))return 6;
+    book_theme=3;render();if(canvas[100*CW+4]!=RGB(35,43,29))return 7;
+    page=PREFERENCES;activate(0);if(theme!=0||save_error)return 8;
+    theme=1;load_preferences();if(theme!=0)return 9;
+    page=HOME;render();if(classic_frame_hash()!=light)return 10;
+    theme=2;if(!save_preferences())return 11;
+    theme=0;load_preferences();if(theme!=2)return 12;
+    page=PREFERENCES;activate(0);if(theme!=0)return 13;
+    return 0;
+}
+static UI_TEST_ONLY int test_classic_navigation(void){
     classic_ui=1;page=HOME;selected=0;
     key(KEY_DOWN);if(selected!=1)return 1;
     classic_tap(120,264);if(page!=BOOKS)return 2;
@@ -2273,15 +2350,19 @@ static int test_classic_navigation(void){
     classic_reset_gesture();classic_motion(350,616);classic_motion(350,706);
     if(selected!=1)return 6;
     classic_motion(350,616);if(selected!=0)return 7;
-    classic_step(-100);if(selected)return 8;classic_step(100);if(selected!=6)return 9;
+    classic_step(-100);if(selected)return 8;classic_step(100);if(selected!=7)return 9;
     classic_select();if(page!=NOWPLAYING)return 10;
     classic_select();if(!classic_seek_mode)return 11;
     classic_select();if(classic_seek_mode)return 12;
     key(KEY_MENU);if(page!=MUSIC)return 13;
     key(KEY_MENU);if(page!=HOME||selected)return 14;
-    selected=3;classic_select();if(page!=SETTINGS)return 15;
+    selected=4;classic_select();if(page!=SETTINGS)return 15;
     selected=3;classic_select();if(page!=POWER)return 16;
     key(KEY_MENU);if(page!=SETTINGS||selected!=3)return 17;
+    page=HOME;selected=2;classic_select();if(page!=GAMES)return 25;
+    classic_select();if(selected!=-20)return 26;
+    allow_games=1;classic_select();if(selected!=1)return 27;
+    allow_games=0;key(KEY_MENU);if(page!=HOME||selected!=2)return 28;
     page=MUSIC;music_count=10;classic_music_cursor=0;music_index=4;classic_music_top=0;
     int f[2];if(pipe(f))return 18;
     music_pid=getpid();music_fd=f[1];music_pause=0;music_pending=-1;
@@ -2420,6 +2501,33 @@ static void boot_frame(int frame){
     reader_print((W-reader_measure(subtitle,13,0,0))/2,190,subtitle,13,RGB(151,171,179),bg,0,0,W);
     rounded(82,230,76,5,RGB(47,62,70));
     rect(82,230,19*(frame+1),5,mint);
+}
+static int run_game(int touch_fd,struct volume_input *volume_inputs,int volume_count){
+    if(!allow_games)return 20;
+    if(music_pid>=0){
+        music_action(2);
+        for(int i=0;i<50&&music_pid>=0;i++){(void)music_reap();if(music_pid>=0)usleep(20000);}
+        if(music_pid>=0)return 21;
+    }
+    const char *runner=getenv("POCKETOS_GAME_RUNNER");
+    if(!runner||strncmp(runner,"/tmp/pocketos-design-",21))runner="/usr/bin/pocketos-game";
+    if(access(runner,X_OK))return 10;
+    if(exclusive_input){
+        (void)ioctl(touch_fd,EVIOCGRAB,0);
+        for(int i=0;i<volume_count;i++)if(volume_inputs[i].fd>=0)(void)ioctl(volume_inputs[i].fd,EVIOCGRAB,0);
+    }
+    pid_t child=fork();int status=0,result=13;
+    if(child==0){if(setsid()<0)_exit(126);execl(runner,runner,"doom",(char*)NULL);_exit(127);}
+    if(child>0){
+        pid_t done;
+        while((done=waitpid(child,&status,0))<0&&errno==EINTR){if(shell_stopping)(void)kill(-child,SIGTERM);}
+        if(done==child&&WIFEXITED(status))result=WEXITSTATUS(status);
+    }
+    if(exclusive_input){
+        if(ioctl(touch_fd,EVIOCGRAB,1)<0)shell_stopping=1;
+        for(int i=0;i<volume_count;i++)if(volume_inputs[i].fd>=0&&ioctl(volume_inputs[i].fd,EVIOCGRAB,1)<0)shell_stopping=1;
+    }
+    return result;
 }
 static int native(const char *input) {
     struct fb b={0};if(!fb_open(&b)){fputs("Unsupported or unavailable framebuffer\n",stderr);return 1;}
@@ -2671,6 +2779,10 @@ static int native(const char *input) {
                 pending=0;have_x=have_y=0;start_y=-1;
             }
         }
+        if(classic_ui&&page==GAMES&&selected==1){
+            int result=run_game(fd,volume_inputs,volume_count);selected=result?-result:0;
+            pending=down=have_x=have_y=0;start_y=-1;classic_reset_gesture();changed=1;
+        }
         if(changed){int interval=update_clock(&clock_changed);long long t=mono_ms();if(t>=0)next_clock=t+interval;render();present(&b);}
     }
     if(music_pid>=0){if(music_fd>=0)close(music_fd);if(music_report>=0)close(music_report);(void)kill(music_pid,SIGTERM);}
@@ -2681,7 +2793,7 @@ static int native(const char *input) {
     if(power_fd>=0)close(power_fd);
     (void)power_wake();(void)cpu_restore();update_close();radio_close();fm_close();book_close();close(fd);munmap(b.mem,b.f.smem_len);close(b.fd);return shell_stopping?0:1;
 }
-static int selftest(void) {
+static UI_TEST_ONLY int selftest(void) {
     char label[16];
     struct tm test={.tm_hour=0,.tm_min=5};
     format_clock(&test,label);if(strcmp(label,"12:05 AM"))return 1;
@@ -2794,6 +2906,7 @@ int main(int argc,char **argv) {
     if(argc==2&&!strcmp(argv[1],"--version")){puts("PocketOS shell v1");return 0;}
     if(argc==2&&!strcmp(argv[1],"--self-test"))return selftest();
     if(argc==2&&!strcmp(argv[1],"--test-classic-navigation"))return test_classic_navigation();
+    if(argc==3&&!strcmp(argv[1],"--test-classic-modes")&&argv[2][0]=='/')return test_classic_modes(argv[2]);
     if(argc==4&&!strcmp(argv[1],"--boot-preview")){
         if(strlen(argv[2])!=1||argv[2][0]<'0'||argv[2][0]>'3')return 2;
         boot_frame(argv[2][0]-'0');return ppm(argv[3]);
@@ -2884,7 +2997,9 @@ int main(int argc,char **argv) {
         if(!book_count||strcmp(books[book_index],"example.txt")||!book_open())return 1;
         if(strcmp(book_text[0],"CHAPTER ONE")||book_eof)return 1;
         if(reader_measure("iiii",17,0,0)>=reader_measure("WWWW",17,0,0))return 1;
-        render();if(canvas[0]!=RGB(35,43,29))return 1;
+        render();if(canvas[0]!=RGB(236,240,223))return 1;
+        theme=1;render();if(canvas[0]!=RGB(35,43,29)||book_pos!=0)return 1;
+        theme=0;
         tap(120,120);if(!book_menu)return 1;
         tap(200,300);if(book_menu||page!=READER)return 1;
         book_turn(1);if(book_pos<=0)return 1;
@@ -2949,9 +3064,10 @@ int main(int argc,char **argv) {
     }
     if(argc==2&&!strcmp(argv[1],"--test-smart-sleep")){int rc=suspend_key_test();return rc?rc:smart_audio_test();}
     if(argc==4&&!strcmp(argv[1],"--preview")){
-        const char *preview=argv[2];if(!strncmp(preview,"CLASSIC-",8)){classic_ui=1;preview+=8;}
+        const char *preview=argv[2];if(!strncmp(preview,"DARK-",5)){theme=1;preview+=5;}
+        if(!strncmp(preview,"CLASSIC-",8)){classic_ui=1;preview+=8;}
         int found=0;for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++)if(!strcmp(preview,titles[i])){page=(enum page)i;found=1;}
-        if(!strcmp(argv[2],"READER-CLASSIC")||!strcmp(argv[2],"READING-CLASSIC-SETTINGS")){page=READER;book_theme=BOOK_THEME_CLASSIC;book_menu=!strcmp(argv[2],"READING-CLASSIC-SETTINGS");found=1;}
+        if(!strcmp(preview,"READER-CLASSIC")||!strcmp(preview,"READING-CLASSIC-SETTINGS")){page=READER;book_theme=BOOK_THEME_CLASSIC;book_menu=!strcmp(preview,"READING-CLASSIC-SETTINGS");found=1;}
         if(!found)return 2;
         struct tm sample={.tm_hour=10,.tm_min=42};
         format_clock(&sample,clock_label);
@@ -2970,6 +3086,7 @@ int main(int argc,char **argv) {
     if(argc>=5&&!strcmp(argv[1],"--config")&&argv[2][0]=='/') {config_path=argv[2];argc-=2;argv+=2;}
     while(argc>=4){
         if(!strcmp(argv[1],"--classic-ui"))classic_ui=1;
+        else if(!strcmp(argv[1],"--allow-games"))allow_games=1;
         else if(!strcmp(argv[1],"--allow-backlight"))allow_backlight=1;
         else if(!strcmp(argv[1],"--allow-audio"))allow_audio=1;
         else if(!strcmp(argv[1],"--allow-bookmarks"))book_allow_save=1;

@@ -73,6 +73,16 @@ if [ -e "$classic_marker" ] || [ -L "$classic_marker" ]; then
     fi
     feature_args=--classic-ui
 fi
+games_marker="$root/etc/pocketos/games-enable"
+if [ -e "$games_marker" ] || [ -L "$games_marker" ]; then
+    [ -f "$games_marker" ] && [ ! -L "$games_marker" ] || die "Unsafe games marker"
+    [ "$(wc -c < "$games_marker")" -eq 20 ] &&
+    grep -Fxq POCKETOS-R1-GAMES-1 "$games_marker" || die "Invalid games marker"
+    if [ "$fixture" -eq 0 ]; then
+        [ "$("$stat_cmd" -c '%u:%a' "$games_marker")" = 0:400 ] || die "Untrusted games marker"
+    fi
+    feature_args="$feature_args --allow-games"
+fi
 features="$root/etc/pocketos/features"
 if [ -e "$features" ] || [ -L "$features" ]; then
     [ -f "$features" ] && [ ! -L "$features" ] || die "Unsafe feature configuration"

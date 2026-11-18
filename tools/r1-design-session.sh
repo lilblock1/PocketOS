@@ -22,6 +22,19 @@ if [ "$mode" = interactive ]; then
     if pidof pocketos-music >/dev/null 2>&1; then echo 'Stop music before an interactive UI test' >&2;exit 1;fi
     cp /run/pocketos-data/PocketOS/preferences "$dir/preferences"
     chmod 600 "$dir/preferences"
+    case "${POCKETOS_REVIEW_MODE:-keep}" in
+        0|1)
+            awk -v mode="$POCKETOS_REVIEW_MODE" '$1=="POCKETOS5" && NF==12 {$2=mode;print;ok=1} END {exit !ok}' "$dir/preferences" > "$dir/preferences.next"
+            mv "$dir/preferences.next" "$dir/preferences" ;;
+        keep) ;; *) exit 2;;
+    esac
+fi
+game_args=
+if [ "$mode" = interactive ] && [ -x "$dir/game-runner" ] && [ -f "$dir/doom.sha256" ]; then
+    export POCKETOS_GAME_RUNNER="$dir/game-runner"
+    POCKETOS_DOOM_REVIEW_SHA256=$(cat "$dir/doom.sha256")
+    export POCKETOS_DOOM_REVIEW_SHA256
+    game_args=--allow-games
 fi
 light=/sys/class/backlight/backlight_pwm0
 old_light=$(cat "$light/brightness")
@@ -71,7 +84,7 @@ snapshot=1
 "$dir/r1-display" unblank
 if [ "$old_light" -lt 30 ]; then printf '35\n' > "$light/brightness"; fi
 if [ "$mode" = interactive ]; then
-    "$dir/pocketos-shell" --config "$dir/preferences" --classic-ui --allow-audio --allow-backlight --exclusive-input --trace-touch --unblank-display --fb /dev/input/event1 </dev/null > "$dir/viewer.log" 2>&1 &
+    "$dir/pocketos-shell" --config "$dir/preferences" --classic-ui $game_args --allow-audio --allow-backlight --exclusive-input --trace-touch --unblank-display --fb /dev/input/event1 </dev/null > "$dir/viewer.log" 2>&1 &
 else
     "$dir/r1-design-preview" --ram-preview "$dir/home.rgb565" "$dir/music.rgb565" "$dir/player.rgb565" "$dir/books.rgb565" "$dir/reader-classic.rgb565" "$dir/reader-classic-settings.rgb565" "$dir/settings.rgb565" </dev/null > "$dir/viewer.log" 2>&1 &
 fi

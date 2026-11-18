@@ -3,6 +3,11 @@ BUILD_DIR ?= ../app-output
 CFLAGS ?= -Os -Wall -Wextra -Werror
 .PHONY: all check
 all: $(BUILD_DIR)/pocketos-recovery-arm $(BUILD_DIR)/pocketos-sd
+all: $(BUILD_DIR)/pocketos-game
+$(BUILD_DIR)/pocketos-game: pocketos-game.sh
+	mkdir -p "$(BUILD_DIR)"
+	cp "$<" "$@"
+	chmod 755 "$@"
 $(BUILD_DIR)/pocketos-sd: pocketos-sd.sh
 	mkdir -p "$(BUILD_DIR)"
 	cp "$<" "$@"

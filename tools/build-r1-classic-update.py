@@ -47,6 +47,7 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--sequence", type=int, required=True)
+    parser.add_argument("--doom", type=Path, help="Reviewed optional SD game executable; only its digest enters the system")
     args = parser.parse_args()
     if not 3 <= args.sequence <= 999999999 or not re.fullmatch("[a-f0-9]{40}", args.source_commit):
         parser.error("Invalid update sequence or source commit")
@@ -77,10 +78,15 @@ def main():
                 "BUILD_ID=3b57c9b46524dc6d"}.issubset(old):
             raise ValueError("Unexpected baseline identity")
         app_hashes = {name: digest(path) for name, path in applications.items()}
+        if args.doom is not None:
+            if args.doom.is_symlink() or not args.doom.is_file():
+                raise ValueError("Doom must be the reviewed regular SDK executable")
+            app_hashes["doom_sd_executable"] = digest(args.doom)
+            app_hashes["pocketos-game"] = digest(REPO / "apps/pocketos-game.sh")
         identity = json.dumps({"baseline": BASELINE_SHA, "apps": app_hashes,
                                "source": args.source_commit, "sequence": args.sequence}, sort_keys=True)
         build_id = hashlib.sha256(identity.encode()).hexdigest()[:16]
-        replacements = {"VERSION": "0.1.0-alpha.3", "BUILD_ID": build_id,
+        replacements = {"VERSION": f"0.1.0-alpha.{args.sequence}", "BUILD_ID": build_id,
                         "UPDATE_SEQUENCE": str(args.sequence)}
         release.write_text("\n".join(key + "=" + replacements[key] if
                            (key := line.split("=", 1)[0]) in replacements else line for line in old) + "\n")
@@ -96,9 +102,26 @@ def main():
         provenance = root / "etc/pocketos/source-commit"
         provenance.write_text(args.source_commit + "\n")
         provenance.chmod(0o444)
+        allowed = set(CHANGED)
+        if args.doom is not None:
+            if args.doom.is_symlink() or not args.doom.is_file():
+                raise ValueError("Doom must be the reviewed regular SDK executable")
+            game_elf = subprocess.check_output(["readelf", "-h", str(args.doom)], text=True)
+            if not all(token in game_elf for token in ("ELF32", "little endian", "MIPS")):
+                raise ValueError("Wrong Doom target ABI")
+            helper = root / "usr/bin/pocketos-game"
+            shutil.copyfile(REPO / "apps/pocketos-game.sh", helper)
+            helper.chmod(0o755)
+            trust = root / "etc/pocketos/doom.sha256"
+            trust.write_text(digest(args.doom) + "\n")
+            trust.chmod(0o400)
+            games = root / "etc/pocketos/games-enable"
+            games.write_text("POCKETOS-R1-GAMES-1\n")
+            games.chmod(0o400)
+            allowed.update({"usr/bin/pocketos-game", "etc/pocketos/doom.sha256", "etc/pocketos/games-enable"})
         after = inventory(root)
         changed = {name for name in before.keys() | after.keys() if before.get(name) != after.get(name)}
-        if changed != CHANGED:
+        if changed != allowed:
             raise ValueError("Unexpected rootfs changes: " + repr(sorted(changed)))
         image = work / "pocketos-rootfs.squashfs"
         subprocess.run(["mksquashfs", str(root), str(image), "-noappend", "-all-root",

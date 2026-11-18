@@ -83,6 +83,12 @@ grep -Fx -- '--boot-splash --unblank-display --fb /dev/input/event7' "$tmp/featu
 printf 'POCKETOS-R1-CLASSIC-1\n' > "$tmp/etc/pocketos/classic-ui-enable"
 "$start" --fixture "$tmp" "$tmp/features-ok"
 grep -Fx -- '--boot-splash --unblank-display --classic-ui --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'POCKETOS-R1-GAMES-1\n' > "$tmp/etc/pocketos/games-enable"
+"$start" --fixture "$tmp" "$tmp/features-ok"
+grep -Fx -- '--boot-splash --unblank-display --classic-ui --allow-games --fb /dev/input/event7' "$tmp/features-ok.log"
+printf 'invalid\n' > "$tmp/etc/pocketos/games-enable"
+if "$start" --fixture "$tmp" "$tmp/features-ok"; then exit 1; fi
+rm "$tmp/etc/pocketos/games-enable"
 printf 'invalid\n' > "$tmp/etc/pocketos/classic-ui-enable"
 if "$start" --fixture "$tmp" "$tmp/features-ok"; then exit 1; fi
 rm "$tmp/etc/pocketos/classic-ui-enable"

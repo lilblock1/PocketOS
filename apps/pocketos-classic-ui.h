@@ -1,11 +1,10 @@
 /* Functional Classic shell. Rendering reuses canvas; browsing never changes
  * the active decoder until the owner selects a track. Detailed settings and
  * reading retain the existing full-screen controls. */
-#include "pocketos-classic-draw.h"
 static int classic_ui,classic_music_cursor,classic_music_top,classic_books_top;
 static int classic_seek_mode,classic_sector=-1,classic_accum,classic_moved;
 static int classic_page(void){
-    return classic_ui&&(page==HOME||page==MUSIC||page==BOOKS||page==SETTINGS||page==NOWPLAYING);
+    return classic_ui&&(page==HOME||page==MUSIC||page==BOOKS||page==GAMES||page==SETTINGS||page==NOWPLAYING);
 }
 static int classic_window(int index,int count,int *top){
     if(index<0)index=0;
@@ -16,27 +15,34 @@ static int classic_window(int index,int count,int *top){
     return index;
 }
 static void classic_status(const char *label){
-    cp_box(20,478,440,39,RGB(239,243,248));
+    cp_box(20,478,440,39,cp_colour(CP_STATUS));
     cp_text(32,485,label,0,cp_soft,450);
 }
 static void classic_render(void){
     cp_shell(page==HOME?"PocketOS":page==NOWPLAYING?"Now Playing":page_label(page));
     /* Replace the concept's sample battery with the current device status. */
-    cp_box(411,36,31,15,RGB(112,126,146));cp_box(414,39,24,9,RGB(239,243,248));
+    cp_box(411,36,31,15,cp_colour(CP_BATTERY_EDGE));cp_box(414,39,24,9,cp_colour(CP_BATTERY_EMPTY));
     if(battery>=0)cp_box(414,39,24*(battery>100?100:battery)/100,9,RGB(79,149,91));
     if(music_pid>=0&&!music_pause)cp_triangle(35,37,8,1,cp_soft);
-    else cp_box(33,34,20,23,RGB(238,242,248));
+    else cp_box(33,34,20,23,cp_colour(CP_IDLE_ICON));
     if(page==HOME){
-        static const char *const labels[]={"Music","Books","Files","Settings","Controls","About"};
-        static const char *const hints[]={"Your library","Read a book","On microSD","Your player","Quick access","Device info"};
-        cp_gradient(276,78,184,438,RGB(244,247,251),RGB(224,232,242));
-        for(int i=0;i<6;i++)cp_selected_row(27,104+i*56,239,labels[i],selected==i);
-        cp_box(275,78,1,438,RGB(194,205,222));cp_album(291,156,143);
-        cp_centered(367,327,selected<6?labels[selected]:"Playing",1,cp_ink);
-        cp_centered(367,365,selected<6?hints[selected]:"Your music",0,cp_soft);
-        if(selected==6)cp_gradient(20,478,440,39,RGB(66,131,222),RGB(20,71,154));
-        else cp_box(20,478,440,39,RGB(239,243,248));
-        cp_centered(240,482,"Now Playing  >",0,selected==6?cp_white:cp_ink);
+        static const char *const labels[]={"Music","Books","Games","Files","Settings","Controls","About"};
+        static const char *const hints[]={"Your library","Read a book","On microSD","On microSD","Your player","Quick access","Device info"};
+        cp_gradient(276,78,184,438,cp_colour(CP_PANEL_TOP),cp_colour(CP_PANEL_BOTTOM));
+        for(int i=0;i<7;i++)cp_selected_row(27,91+i*54,239,labels[i],selected==i);
+        cp_box(275,78,1,438,theme?cp_colour(CP_DIVIDER):RGB(194,205,222));cp_album(291,156,143);
+        cp_centered(367,327,selected<7?labels[selected]:"Playing",1,cp_ink);
+        cp_centered(367,365,selected<7?hints[selected]:"Your music",0,cp_soft);
+        if(selected==7)cp_gradient(20,478,440,39,cp_colour(CP_SELECT_TOP),cp_colour(CP_SELECT_BOTTOM));
+        else cp_box(20,478,440,39,cp_colour(CP_STATUS));
+        cp_centered(240,482,"Now Playing  >",0,selected==7?cp_colour(CP_SELECT_INK):cp_ink);
+    }else if(page==GAMES){
+        cp_selected_row(27,105,426,"DOOM Shareware",1);
+        cp_text(40,185,"Game files on microSD",0,cp_soft,445);
+        cp_text(40,228,"Touch movement and actions",0,cp_soft,445);
+        cp_text(40,271,"Volume buttons: Fire / Use",0,cp_soft,445);
+        cp_text(40,314,"First port: audio pending",0,cp_soft,445);
+        classic_status(selected==-10?"Install Doom on microSD":selected==-11?"Game verification failed":selected==-12?"Shareware data differs":selected<0?"Game exited; try again":allow_games?"Press centre to play":"Game launch locked in this system");
     }else if(page==SETTINGS){
         static const char *const labels[]={"Screen","Sound","Wi-Fi & Bluetooth","Battery","Storage","Updates","Appearance"};
         for(int i=0;i<7;i++)cp_selected_row(27,91+i*56,426,labels[i],selected==i);
@@ -68,8 +74,8 @@ static void classic_render(void){
         cp_text(247,141,track_title[0]?track_title:"Choose a track",1,cp_ink,449);
         cp_text(248,187,track_artist[0]?track_artist:"Music library",0,cp_soft,449);
         cp_text(248,221,track_album,0,cp_soft,449);
-        cp_box(40,378,400,13,RGB(211,218,228));
-        if(music_length)cp_gradient(40,378,(int)(400*(uint64_t)(music_pos>music_length?music_length:music_pos)/music_length),13,RGB(66,131,222),RGB(20,71,154));
+        cp_box(40,378,400,13,cp_colour(CP_TRACK));
+        if(music_length)cp_gradient(40,378,(int)(400*(uint64_t)(music_pos>music_length?music_length:music_pos)/music_length),13,cp_colour(CP_SELECT_TOP),cp_colour(CP_SELECT_BOTTOM));
         char elapsed[20],duration[20],status[100];
         snprintf(elapsed,sizeof(elapsed),"%u:%02u",music_pos/60,music_pos%60);
         if(music_length)snprintf(duration,sizeof(duration),"%u:%02u",music_length/60,music_length%60);else strcpy(duration,"--:--");

@@ -30,6 +30,14 @@ jobs:
           make -C apps BUILD_DIR="$PWD/host-app-output" check
           host-app-output/pocketos-shell --test-update-ui
           host-app-output/pocketos-shell --test-classic-navigation
+          host-app-output/pocketos-shell --test-classic-modes "$PWD/mode-preferences"
+          mkdir -p dense-font-test
+          python3 apps/generate-reader-font.py dense-font-test/pocketos-reader-font.h --dense-reader
+          cc -Os -Wall -Wextra -Werror -I dense-font-test tools/test-reader-sparse.c -o /tmp/reader-dense-test
+          cc -Os -Wall -Wextra -Werror -I host-app-output tools/test-reader-sparse.c -o /tmp/reader-sparse-test
+          /tmp/reader-dense-test > /tmp/reader-dense.hashes
+          /tmp/reader-sparse-test > /tmp/reader-sparse.hashes
+          cmp /tmp/reader-dense.hashes /tmp/reader-sparse.hashes
           cc -Os -Wall -Wextra -Werror tools/r1-design-preview.c -o /tmp/pocketos-design-preview
           sh -n tools/r1-design-session.sh
           python3 -m py_compile apps/pack-update.py tools/pack-r1-firmware-update.py tools/build-r1-upt.py tools/provision-r1-update-trust.py tools/test-r1-recovery-monitor.py
@@ -55,6 +63,9 @@ jobs:
           done
           host-app-output/pocketos-shell --preview 'NOW PLAYING' ui-previews/NOW-PLAYING.ppm
           for screen in CLASSIC-HOME CLASSIC-MUSIC CLASSIC-BOOKS CLASSIC-SETTINGS 'CLASSIC-NOW PLAYING' READER-CLASSIC READING-CLASSIC-SETTINGS; do
+            host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
+          done
+          for screen in CLASSIC-GAMES DARK-CLASSIC-HOME DARK-CLASSIC-GAMES DARK-PREFERENCES DARK-READER-CLASSIC; do
             host-app-output/pocketos-shell --preview "$screen" "ui-previews/$screen.ppm"
           done
           for frame in 0 1 2 3; do host-app-output/pocketos-shell --boot-preview "$frame" "ui-previews/BOOT-$frame.ppm"; done
@@ -132,6 +143,7 @@ jobs:
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --self-test
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-update-ui
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-classic-navigation
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --test-classic-modes "$PWD/target-mode-preferences"
           for screen in CLASSIC-HOME CLASSIC-MUSIC CLASSIC-BOOKS CLASSIC-SETTINGS 'CLASSIC-NOW PLAYING' READER-CLASSIC READING-CLASSIC-SETTINGS; do
             timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --preview "$screen" "target-app-output/$screen.ppm"
             cmp "ui-previews/$screen.ppm" "target-app-output/$screen.ppm"
@@ -142,6 +154,11 @@ jobs:
           cmp ui-previews/READER.ppm target-app-output/READER.ppm
           timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-shell --boot-preview 3 target-app-output/BOOT-3.ppm
           cmp ui-previews/BOOT-3.ppm target-app-output/BOOT-3.ppm
+          git init /tmp/pocketos-doom-source
+          git -C /tmp/pocketos-doom-source fetch --depth 1 https://github.com/ozkl/doomgeneric.git e257a09527062bfb986b6e5e0780839b6cbd5b71
+          git -C /tmp/pocketos-doom-source checkout --detach FETCH_HEAD
+          python3 tools/build-r1-doom.py --source /tmp/pocketos-doom-source --output "$PWD/doom-sd-development" --cc "$compiler"
+          timeout 30 qemu-mipsel -L "$PWD/rootfs" doom-sd-development/pocketos-doom --self-test
           readelf -h target-app-output/pocketos-wifi | grep -q MIPS
           test "$(timeout 30 qemu-mipsel -L "$PWD/rootfs" target-app-output/pocketos-wifi --version)" = 'PocketOS Wi-Fi v1'
           readelf -h target-app-output/pocketos-music | grep -q MIPS
@@ -158,6 +175,19 @@ jobs:
         with:
           name: PocketOS-applications-NOT-FIRMWARE
           path: target-app-output/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload optional Doom SDK development build and complete GPL source
+        if: steps.pick.outputs.run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-DOOM-SD-DEVELOPMENT-NOT-FIRMWARE
+          path: |
+            doom-sd-development/pocketos-doom
+            doom-sd-development/pocketos-doom.sha256
+            doom-sd-development/COPYING
+            doom-sd-development/SOURCE.json
+            doom-sd-development/pocketos-doom-source.tar.gz
           if-no-files-found: error
           retention-days: 14
       - name: Prepare offline updater bootstrap kit (no draft release access)
