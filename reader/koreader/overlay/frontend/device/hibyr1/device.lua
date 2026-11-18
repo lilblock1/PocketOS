@@ -28,7 +28,6 @@ local R1 = Generic:extend{
     canPowerOff = no,
     canToggleMassStorage = no,
     hasGSensor = no,
-    hasColorScreen = yes,
     display_dpi = 160, -- Temporary value until measured on physical R1.
 }
 
