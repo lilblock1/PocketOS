@@ -78,6 +78,12 @@ jobs:
           test "$(git -C native-koreader rev-parse HEAD)" = "$KOREADER_SHA"
           git -C native-koreader submodule update --init --depth 1 --jobs 2 \
             base l10n resources/fonts
+          # KOReader base contains the separately pinned crengine submodule.
+          # Without recursive checkout, its document engine Makefile fails
+          # before compilation because cr3gui/data/dict is absent.
+          git -C native-koreader submodule update --init --recursive --depth 1 --jobs 2
+          test -f native-koreader/base/thirdparty/kpvcrlib/crengine/Makefile ||
+            test -d native-koreader/base/thirdparty/kpvcrlib/crengine/cr3gui/data
           test -f native-koreader/base/Makefile.defs
           test -d native-koreader/plugins
           python3 reader/koreader/prepare-upstream.py \
