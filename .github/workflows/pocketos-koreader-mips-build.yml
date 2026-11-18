@@ -25,7 +25,7 @@ jobs:
       - name: Install cross-compiler and QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user gcc-multilib libc6-dev-i386
+          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user libc6-dev-i386 lib32gcc-13-dev
       - name: Fetch pinned upstream LuaJIT and compile for R1 MIPS32 little-endian
         run: |
           set -euo pipefail
