@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Prepare a pinned upstream KOReader tree for R1 MIPS32 Linux compilation.
+
+Changes are made only in a temporary CI source checkout. Original KOReader
+frontend, its plugin folders, and all license files remain intact.
+"""
+from pathlib import Path
+import argparse
+import shutil
+
+UPSTREAM = "21cc368d388378b6fc8ecdbfc879d8f89c17eca1"
+DISPATCH = '        elseif platform:sub(1, #"kobo") == "kobo" then'
+TARGET = 'ifeq ($(TARGET), arm-generic)'
+FLAGS = 'ifeq ($(TARGET), kobo)'
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--upstream", required=True, type=Path)
+    parser.add_argument("--overlay", required=True, type=Path)
+    args = parser.parse_args()
+
+    root = args.upstream.resolve(strict=True)
+    overlay = args.overlay.resolve(strict=True)
+    if root == overlay or overlay.is_relative_to(root):
+        parser.error("Overlay must be separate from upstream checkout")
+    for path in (
+        "reader.lua", "frontend/device.lua",
+        "base/Makefile.defs", "Makefile", "plugins",
+    ):
+        if not (root / path).exists():
+            parser.error("Missing upstream file " + path)
+    if not (root / "plugins").is_dir():
+        parser.error("Missing full upstream plugin tree")
+    initial = sorted(p.name for p in (root / "plugins").glob("*.koplugin"))
+    if len(initial) < 20:
+        parser.error("Upstream plugin tree is incomplete")
+    source = (root / "frontend/device.lua").read_text()
+    patched = (overlay / "frontend/device.lua").read_text()
+    if DISPATCH not in source or 'platform == "hibyr1"' not in patched:
+        parser.error("KOReader platform dispatch guard failed")
+    # Only change the device dispatcher and ADD the R1 backend.
+    shutil.copy2(overlay / "frontend/device.lua", root / "frontend/device.lua")
+    target = root / "frontend/device/hibyr1"
+    if target.exists():
+        parser.error("Refuse to replace upstream hibyr1 backend")
+    shutil.copytree(overlay / "frontend/device/hibyr1", target)
+
+    path = root / "base/Makefile.defs"
+    defs = path.read_text()
+    if defs.count(TARGET) != 1 or defs.count(FLAGS) != 1:
+        parser.error("Upstream build selectors changed; refusing unsafe patch")
+    defs = defs.replace(TARGET,
+        "ifeq ($(TARGET), hibyr1)\n"
+        "    CHOST?=mipsel-linux-gnu\n"
+        "else " + TARGET, 1)
+    defs = defs.replace(FLAGS,
+        "ifeq ($(TARGET), hibyr1)\n"
+        "    TARGET_CFLAGS:=-march=mips32r2 -mabi=32\n"
+        "else " + FLAGS, 1)
+    path.write_text(defs)
+    make_dir = root / "make"
+    (make_dir / "hibyr1.mk").write_text(
+        "# HiBy R1 user-space KOReader port. No flash target is provided.\n"
+        "update-prepare: all\n"
+        "\tfile --dereference $(INSTALL_DIR)/koreader/luajit | grep MIPS\n"
+        ".PHONY: update-prepare\n"
+    )
+    after = sorted(p.name for p in (root / "plugins").glob("*.koplugin"))
+    if after != initial:
+        parser.error("KOReader plugin tree was modified unexpectedly")
+    print(f"Prepared upstream KOReader device port with {len(after)} original plugin folders")
+    print("No music/game launcher, flash, bootloader or firmware update target")
+
+
+if __name__ == "__main__":
+    main()
