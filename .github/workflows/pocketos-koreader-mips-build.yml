@@ -48,7 +48,7 @@ jobs:
           grep -q MIPS mips-luajit/elf.txt
           timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu mips-luajit/luajit -v
           timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
-            mips-luajit/luajit -e 'assert(jit.arch == "mips"); assert(type(require("ffi")) == "table"); print("MIPS32 LuaJIT FFI: PASS")'
+            mips-luajit/luajit -e 'print("MIPS32 target:", jit.arch, jit.os); assert(jit.arch:match("^mips")); local ok, mod=pcall(require,"ffi"); assert(ok and type(mod)=="table", tostring(mod)); print("MIPS32 LuaJIT FFI: PASS")'
           cp luajit-compile.log mips-luajit/
           sha256sum mips-luajit/luajit > mips-luajit/SHA256SUMS
           echo 'MIPS32 LuaJIT research binary only. Native KOReader C libraries and hardware boot are not validated; NOT FIRMWARE.' > mips-luajit/README.txt
