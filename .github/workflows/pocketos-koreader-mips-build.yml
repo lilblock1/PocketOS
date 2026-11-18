@@ -64,7 +64,6 @@ jobs:
 
   koreader-mips:
     name: Attempt complete native KOReader cross-build
-    needs: mips-luajit
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -79,7 +78,8 @@ jobs:
             binutils-mipsel-linux-gnu qemu-user cmake ninja-build \
             git make curl wget patch unzip zip python3 python3-pip \
             pkg-config gettext autoconf automake libtool \
-            libtool-bin libssl-dev libjpeg-dev zlib1g-dev
+            libtool-bin libssl-dev libjpeg-dev zlib1g-dev \
+            libc6-dev-i386 lib32gcc-13-dev
       - name: Checkout pinned full KOReader and required submodules
         run: |
           set -euo pipefail
