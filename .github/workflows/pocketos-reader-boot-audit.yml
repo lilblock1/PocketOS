@@ -1,0 +1,90 @@
+name: PocketOS Reader Edition - Offline boot readiness audit (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-reader-boot-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-reader-offline-boot-audit
+  cancel-in-progress: true
+jobs:
+  boot-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install offline SquashFS and MIPS tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools binutils-mipsel-linux-gnu
+      - name: Download pinned, successfully built unsigned reader candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
+          run-id: 44415673018
+          github-token: ${{ github.token }}
+          path: reviewed
+      - name: Inspect actual init chain, runtime loader and ABI without device access
+        run: |
+          set -euo pipefail
+          mkdir -p root runtime report
+          echo 'b750c2b8f215ec8bb651fab86d69b8dbd624ba2816bee46d11f377920015b892  reviewed/reader-rootfs.squashfs' | sha256sum -c -
+          echo '22d223901f1a855085dc99f39d4295187bf01ac525ffeb724b516e4033db13cb  reviewed/KOReader-R1-SD-PAYLOAD.tar.gz' | sha256sum -c -
+          unsquashfs -no-progress -d root reviewed/reader-rootfs.squashfs >report/unsquashfs.log
+          tar -xzf reviewed/KOReader-R1-SD-PAYLOAD.tar.gz -C runtime --no-same-owner --no-same-permissions
+          for file in etc/inittab etc/init.d/rcS etc/init.d/S95pocketos usr/bin/pocketos-start; do
+            if [ -f "root/$file" ]; then
+              echo "== $file ==" | tee -a report/startup.txt
+              sed -n '1,160p' "root/$file" | tee -a report/startup.txt
+            else
+              echo "MISSING boot file: $file" | tee -a report/startup.txt
+            fi
+          done
+          test -f root/etc/init.d/S95pocketos
+          if ! grep -Fq pocketos-start root/etc/init.d/S95pocketos; then
+            echo 'BLOCKER: existing S95pocketos does not directly mention pocketos-start' | tee report/boot-blocker.txt
+          fi
+          test -f runtime/koreader/luajit
+          readelf -h runtime/koreader/luajit > report/luajit-elf.txt
+          readelf -l runtime/koreader/luajit > report/luajit-program-headers.txt
+          readelf -d runtime/koreader/luajit > report/luajit-dynamic.txt
+          readelf -V runtime/koreader/luajit > report/luajit-version-info.txt
+          interpreter=$(sed -n 's/.*Requesting program interpreter: \([^]]*\).*/\1/p' report/luajit-program-headers.txt)
+          echo "ELF_INTERPRETER=$interpreter" | tee report/abi-summary.txt
+          grep 'Shared library:' report/luajit-dynamic.txt | tee -a report/abi-summary.txt
+          grep -oE 'GLIBC_[0-9]+\.[0-9]+' report/luajit-version-info.txt | sort -Vu | tee -a report/abi-summary.txt
+          if [ -z "$interpreter" ] || [ ! -e "root$interpreter" ]; then
+            echo "BLOCKER: existing rootfs lacks native LuaJIT interpreter $interpreter" | tee -a report/abi-summary.txt
+            exit 1
+          fi
+          # Even if a loader exists, inspect the rootfs libc symbol versions.
+          for libc in root/lib/libc.so.6 root/usr/lib/libc.so.6; do
+            if [ -e "$libc" ]; then
+              readelf -V "$libc" >report/rootfs-libc-version-info.txt || true
+            fi
+          done
+          test -s report/rootfs-libc-version-info.txt || {
+            echo 'BLOCKER: unable to verify glibc compatibility in rootfs' | tee -a report/abi-summary.txt
+            exit 1
+          }
+          required=$(grep -oE 'GLIBC_[0-9]+\.[0-9]+' report/luajit-version-info.txt | sort -Vu | tail -1)
+          echo "Highest KOReader LuaJIT symbol requirement: $required" | tee -a report/abi-summary.txt
+          grep -Fq "$required" report/rootfs-libc-version-info.txt || {
+            echo "BLOCKER: rootfs glibc does not export required version $required" | tee -a report/abi-summary.txt
+            exit 1
+          }
+          test ! -e report/boot-blocker.txt
+          echo 'Offline boot audit passed (not a physical boot)' | tee -a report/abi-summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-BOOT-READINESS-AUDIT-NOT-FIRMWARE
+          path: report/
+          if-no-files-found: warn
+          retention-days: 14
