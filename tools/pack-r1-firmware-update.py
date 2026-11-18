@@ -73,10 +73,10 @@ def main():
             p.error("Reader-only launcher does not start full KOReader on R1")
         if not any("0.1.0-reader." in line for line in release):
             p.error("Reader-only rootfs identity missing")
-        plugins = {Path(name).parts[2] for name in paths
+        plugins = {Path(name).parts[3] for name in paths
                    if name.startswith("opt/koreader/plugins/") and
-                   len(Path(name).parts) >= 4 and
-                   Path(name).parts[2].endswith(".koplugin")}
+                   len(Path(name).parts) >= 5 and
+                   Path(name).parts[3].endswith(".koplugin")}
         if len(plugins) < 20:
             p.error("Reader-only firmware must retain the complete KOReader plugins")
     else:
