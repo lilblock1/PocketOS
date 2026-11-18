@@ -1,0 +1,146 @@
+name: PocketOS Reader Edition - Native KOReader MIPS Build
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - 'reader/koreader/**'
+      - '.github/workflows/pocketos-koreader-mips-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-koreader-r1-native-mips
+  cancel-in-progress: true
+env:
+  LUAJIT_SHA: 63c8f1a9b479ba5518cf6a170ff7729178bc3cfd
+  KOREADER_SHA: 21cc368d388378b6fc8ecdbfc879d8f89c17eca1
+jobs:
+  mips-luajit:
+    name: Cross-build native MIPS LuaJIT
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cross-compiler and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+      - name: Fetch pinned upstream LuaJIT and compile for R1 MIPS32 little-endian
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git luajit-src
+          git -C luajit-src checkout --detach "$LUAJIT_SHA"
+          test "$(git -C luajit-src rev-parse HEAD)" = "$LUAJIT_SHA"
+          make -C luajit-src -j2 HOST_CC=gcc CROSS=mipsel-linux-gnu- \
+            TARGET_SYS=Linux TARGET_FLAGS='-march=mips32r2 -mabi=32' \
+            > luajit-compile.log 2>&1 || {
+              tail -n 160 luajit-compile.log
+              exit 1
+            }
+          mkdir -p mips-luajit
+          cp luajit-src/src/luajit mips-luajit/luajit
+          cp luajit-src/COPYRIGHT mips-luajit/COPYRIGHT
+          cp luajit-src/src/libluajit.so* mips-luajit/ 2>/dev/null || true
+          mipsel-linux-gnu-readelf -h mips-luajit/luajit > mips-luajit/elf.txt
+          grep -q ELF32 mips-luajit/elf.txt
+          grep -q 'little endian' mips-luajit/elf.txt
+          grep -q MIPS mips-luajit/elf.txt
+          timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu mips-luajit/luajit -v
+          timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
+            mips-luajit/luajit -e 'assert(jit.arch == "mips"); assert(type(require("ffi")) == "table"); print("MIPS32 LuaJIT FFI: PASS")'
+          cp luajit-compile.log mips-luajit/
+          sha256sum mips-luajit/luajit > mips-luajit/SHA256SUMS
+          echo 'MIPS32 LuaJIT research binary only. Native KOReader C libraries and hardware boot are not validated; NOT FIRMWARE.' > mips-luajit/README.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-MIPS-LuaJIT-PROTOTYPE-NOT-FIRMWARE
+          path: |
+            mips-luajit/
+            luajit-compile.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  koreader-mips:
+    name: Attempt complete native KOReader cross-build
+    needs: mips-luajit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS toolchain and KOReader host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
+            binutils-mipsel-linux-gnu qemu-user cmake ninja-build \
+            git make curl wget patch unzip zip python3 python3-pip \
+            pkg-config gettext autoconf automake libtool \
+            libtool-bin libssl-dev libjpeg-dev zlib1g-dev
+      - name: Checkout pinned full KOReader and required submodules
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/koreader/koreader.git native-koreader
+          git -C native-koreader checkout --detach "$KOREADER_SHA"
+          test "$(git -C native-koreader rev-parse HEAD)" = "$KOREADER_SHA"
+          git -C native-koreader submodule update --init --depth 1 --jobs 2 \
+            base l10n resources/fonts
+          test -f native-koreader/base/Makefile.defs
+          test -d native-koreader/plugins
+          python3 reader/koreader/prepare-upstream.py \
+            --upstream native-koreader \
+            --overlay reader/koreader/overlay
+      - name: Attempt native MIPS32 build of KOReader runtime and document engines
+        run: |
+          set -euo pipefail
+          mkdir -p build-diagnostics
+          # A failure here is useful porting evidence; never classify a
+          # frontend-only Lua package as full KOReader or signed firmware.
+          set +e
+          timeout 1900 make -C native-koreader TARGET=hibyr1 \
+            CHOST=mipsel-linux-gnu USE_NO_CCACHE=1 \
+            PARALLEL_JOBS=2 CI=1 all \
+            > build-diagnostics/native-build.log 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > build-diagnostics/native-build.exit
+          tail -n 180 build-diagnostics/native-build.log
+          if [ "$rc" -ne 0 ]; then
+            echo "KOReader MIPS full native dependencies are not ready (exit $rc)."
+            echo "No installable device firmware was created."
+            exit "$rc"
+          fi
+      - name: Verify actual KOReader executable, full plugin tree and MIPS libraries
+        if: success()
+        run: |
+          set -euo pipefail
+          package=$(find native-koreader -path '*/koreader/luajit' -type f -print -quit)
+          test -n "$package"
+          app_dir=$(dirname "$package")
+          mipsel-linux-gnu-readelf -h "$package" | grep -q MIPS
+          test -f "$app_dir/reader.lua"
+          test -f "$app_dir/frontend/device/hibyr1/device.lua"
+          test -f "$app_dir/frontend/device.lua"
+          test -d "$app_dir/plugins"
+          test "$(find "$app_dir/plugins" -maxdepth 1 -name '*.koplugin' -type d | wc -l)" -ge 20
+          # Test Lua CLI without touching target framebuffer/input devices.
+          timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
+            "$package" -e 'assert(jit.arch=="mips"); print("KOReader R1 native Lua: PASS")'
+          mkdir -p native-output
+          (cd "$app_dir"/.. && tar -czf "$GITHUB_WORKSPACE/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz" koreader)
+          cp reader/koreader/boot/pocketos-reader-start.sh native-output/
+          cp reader/koreader/r1-touch-probe.c native-output/
+          echo 'Experimental user-space prototype. No installed device ABI, physical boot or recovered firmware verified. DO NOT FLASH.' > native-output/README.txt
+          (cd native-output && sha256sum KOReader-R1-MIPS-PROTOTYPE.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
+          path: |
+            build-diagnostics/
+            native-output/
+          if-no-files-found: warn
+          retention-days: 14
