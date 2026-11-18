@@ -239,6 +239,10 @@ jobs:
             --output reader-candidate --sequence 4 \
             --source-commit "$GITHUB_SHA"
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+                  .sd_runtime_required==true and
+                  .sd_runtime_path=="/mnt/sd_0/PocketOS/KOReaderRuntime/koreader" and
+                  .sd_manifest_file_count>100 and
+                  .sd_payload_bytes>0 and
                   .removed_other_user_interfaces==true and
                   .bootloader_payload==false and .recovery_payload==false and
                   .userdata_payload==false and .kernel_modified==false and
@@ -248,6 +252,11 @@ jobs:
                     etc/pocketos-release | grep '^UPDATE_SEQUENCE=')" = 'UPDATE_SEQUENCE=4'
           test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
                     usr/bin/pocketos-start | grep -Fc 'exec ./luajit ./reader.lua')" -ge 1
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
+                    usr/bin/pocketos-start | grep -Fc 'sha256sum -c "$manifest"')" -ge 1
+          test -s reader-candidate/KOReader-R1-SD-PAYLOAD.tar.gz
+          echo "$(jq -r '.sd_payload_sha256' reader-candidate/reader-edition-report.json)  reader-candidate/KOReader-R1-SD-PAYLOAD.tar.gz" | sha256sum -c -
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs etc/pocketos/koreader-sd.sha256 | wc -l)" -gt 100
           # No older user-facing applications may survive.
           for path in usr/bin/pocketos-shell usr/bin/pocketos-music usr/bin/pocketos-game; do
             if unsquashfs -ls reader-candidate/reader-rootfs.squashfs |

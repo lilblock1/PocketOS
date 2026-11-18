@@ -45,6 +45,9 @@ jobs:
           grep -Fq 'DISALLOWED_FRONTENDS' "$base/build-reader-rootfs.py"
           grep -Fq '"only_visible_ui": "KOReader"' "$base/build-reader-rootfs.py"
           grep -Fq 'MAX_ROOTFS_BYTES = 16 * 1024 * 1024' "$base/build-reader-rootfs.py"
+          grep -Fq 'sd_runtime_required' "$base/build-reader-rootfs.py"
+          grep -Fq 'make_sd_manifest' "$base/build-reader-rootfs.py"
+          grep -Fq 'sha256sum -c "$manifest"' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'export KO_HOME=' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'exec ./luajit ./reader.lua' "$base/boot/pocketos-reader-start.sh"
           ! grep -Eq 'sonix_player|pocketos-shell|pocketos-music|pocketos-game|pocketos-doom|mount -|mtd[0-9]|flash_erase' \

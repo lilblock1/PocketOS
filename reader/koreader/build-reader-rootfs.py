@@ -53,6 +53,25 @@ def check_mips(path):
         raise ValueError(f"Not an R1-compatible MIPS32 ELF: {path}")
 
 
+def make_sd_manifest(koreader):
+    """Pin the entire external runtime with hashes stored inside trusted rootfs."""
+    entries = []
+    for item in sorted(koreader.rglob("*")):
+        if item.is_symlink():
+            raise ValueError(f"Unsafe runtime symlink: {item}")
+        if item.is_dir():
+            continue
+        if not item.is_file():
+            raise ValueError(f"Unexpected runtime inode: {item}")
+        relative = item.relative_to(koreader).as_posix()
+        if any(ch in relative for ch in ("\n", "\r", "\\")):
+            raise ValueError(f"Unsafe manifest filename: {relative!r}")
+        entries.append(f"{sha(item)}  {relative}")
+    if len(entries) < 100 or not any(x.endswith("  luajit") for x in entries):
+        raise ValueError("KOReader SD payload is incomplete")
+    return "\n".join(entries) + "\n", len(entries)
+
+
 def stage(baseline, koreader, probe, launcher, output, sequence, source):
     for name in (baseline, probe, launcher):
         checked_file(name)
@@ -112,10 +131,20 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
                 raise ValueError(f"Unsafe symlink at frontend path: {rel}")
             if dest.is_file():
                 dest.unlink()
+        # The full native KOReader tree is ~200 MB uncompressed and must never
+        # be embedded in the R1's 16 MiB internal rootfs partition. Stage it
+        # as a separate SD payload and pin EVERY file hash in the protected
+        # rootfs. Missing/modified SD files cause the only reader UI to fail
+        # closed; the signed updater and recovery stay on internal flash.
         system_ko = root / "opt/koreader"
         if system_ko.exists() or system_ko.is_symlink():
             raise ValueError("Unexpected existing KOReader runtime")
-        shutil.copytree(koreader, system_ko, symlinks=False)
+        manifest, sd_file_count = make_sd_manifest(koreader)
+        manifest_path = root / "etc/pocketos/koreader-sd.sha256"
+        if manifest_path.exists() or manifest_path.is_symlink():
+            raise ValueError("Unexpected existing KOReader SD manifest")
+        manifest_path.write_text(manifest)
+        manifest_path.chmod(0o444)
         startup = root / "usr/bin/pocketos-start"
         checked_file(startup)
         shutil.copy2(launcher, startup)
@@ -143,11 +172,11 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         for name, expected_hash in protected_hashes.items():
             if sha(root / name) != expected_hash:
                 raise ValueError("Independent updater or recovery component modified")
-        check_mips(root / "opt/koreader/luajit")
         check_mips(root / "usr/bin/pocketos-r1-touch-probe")
-        if any(p.is_symlink() for p in system_ko.rglob("*")):
-            raise ValueError("KOReader payload must be self-contained, no symlink escapes")
-
+        if system_ko.exists() or system_ko.is_symlink():
+            raise ValueError("KOReader binary must not be inside internal rootfs")
+        if manifest_path.read_text() != manifest:
+            raise ValueError("Pinned SD manifest changed during staging")
         image = work / "reader-rootfs.squashfs"
         subprocess.run(["mksquashfs", str(root), str(image), "-noappend",
                         "-all-root", "-comp", "lzo", "-processors", "2",
@@ -156,8 +185,22 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         if not 0 < size <= MAX_ROOTFS_BYTES:
             raise ValueError(f"Reader rootfs {size} exceeds {MAX_ROOTFS_BYTES} internal budget; "
                              "evaluate an SD split rather than writing beyond flash capacity")
+        sd_payload = work / "KOReader-R1-SD-PAYLOAD.tar.gz"
+        # The input tree was validated to contain regular files and dirs only.
+        # The archive always contains a top-level 'koreader/' directory.
+        subprocess.run(["tar", "-czf", str(sd_payload),
+                        "-C", str(koreader.parent), koreader.name], check=True)
+        if not sd_payload.is_file() or sd_payload.stat().st_size == 0:
+            raise ValueError("Missing SD payload")
         report = {
             "reader_edition": True, "only_visible_ui": "KOReader",
+            "sd_runtime_required": True,
+            "sd_runtime_path": "/mnt/sd_0/PocketOS/KOReaderRuntime/koreader",
+            "sd_manifest_rootfs_path": "/etc/pocketos/koreader-sd.sha256",
+            "sd_manifest_file_count": sd_file_count,
+            "sd_manifest_sha256": sha(manifest_path),
+            "sd_payload_bytes": sd_payload.stat().st_size,
+            "sd_payload_sha256": sha(sd_payload),
             "source_commit": source, "sequence": sequence,
             "installed_koreader_plugin_count": len(plugins),
             "rootfs_bytes": size, "rootfs_sha256": sha(image),
@@ -172,10 +215,14 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         }
         output.mkdir(parents=True)
         shutil.copy2(image, output / image.name)
+        shutil.copy2(sd_payload, output / sd_payload.name)
         (output / "reader-edition-report.json").write_text(json.dumps(report, indent=2) + "\n")
         (output / "NOT-FIRMWARE.txt").write_text(
-            "Unsigned offline KOReader-only rootfs. Do not flash. "
-            "Native runtime, device input, recovery and signing need separate verification.\n")
+            "Unsigned offline KOReader-only rootfs with separate SD runtime. "
+            "Requires manual placement of KOReader-R1-SD-PAYLOAD.tar.gz contents "
+            "under /mnt/sd_0/PocketOS/KOReaderRuntime before any device trial. "
+            "Do not flash. Runtime ABI, input, recovery and signing need "
+            "physical verification.\n")
         print(json.dumps(report, indent=2))
 
 

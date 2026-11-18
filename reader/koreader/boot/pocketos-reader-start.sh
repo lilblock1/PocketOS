@@ -12,13 +12,38 @@ if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
 fi
 [ "$#" -eq 0 ] || exit 2
 
-ko=/opt/koreader
+# Store the full native runtime on the removable SD card; never overflow
+# the tiny internal system partition or execute an unverified SD tree.
+ko=/mnt/sd_0/PocketOS/KOReaderRuntime/koreader
+manifest=/etc/pocketos/koreader-sd.sha256
 probe=/usr/bin/pocketos-r1-touch-probe
 fail() { printf 'PocketOS Reader: %s\n' "$*" >&2; exit 1; }
 
 # No Sonix or PocketOS music/game launcher on ordinary boot. A missing
 # dependency results in a clean failure, not a mystery second home screen.
-[ -d "$ko" ] && [ ! -L "$ko" ] || fail "KOReader runtime missing"
+# Refuse to execute removable media unless it is really mounted and the
+# read-only internal rootfs contains the exact expected file checksums.
+[ -d /mnt/sd_0 ] && [ ! -L /mnt/sd_0 ] &&
+    awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "SD card is not mounted"
+[ -f "$manifest" ] && [ ! -L "$manifest" ] || fail "Trusted SD manifest missing"
+[ -d "$ko" ] && [ ! -L "$ko" ] || fail "KOReader SD runtime missing"
+[ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] ||
+    fail "Unsafe SD root directory"
+[ -d /mnt/sd_0/PocketOS/KOReaderRuntime ] &&
+    [ ! -L /mnt/sd_0/PocketOS/KOReaderRuntime ] ||
+    fail "Unsafe SD runtime directory"
+# Never follow malicious symlinks, special inodes, or unlisted plugins.
+[ -z "$(find "$ko" -type l -print -quit)" ] ||
+    fail "KOReader SD payload contains symlinks"
+[ -z "$(find "$ko" ! -type f ! -type d -print -quit)" ] ||
+    fail "KOReader SD payload contains unsupported inode types"
+cd "$ko"
+expected=$(wc -l < "$manifest")
+actual=$(find . -type f | wc -l)
+[ "$actual" -eq "$expected" ] || fail "KOReader SD file count mismatch"
+sha256sum -c "$manifest" >/dev/null 2>&1 ||
+    fail "KOReader SD runtime integrity check failed"
 [ -f "$ko/reader.lua" ] && [ ! -L "$ko/reader.lua" ] || fail "KOReader entry point missing"
 [ -x "$ko/luajit" ] && [ ! -L "$ko/luajit" ] || fail "MIPS LuaJIT runtime missing"
 [ -f "$ko/frontend/device/hibyr1/device.lua" ] || fail "R1 KOReader backend missing"
@@ -60,7 +85,7 @@ mkdir -p "$state"
 export KO_HOME="$state"
 export STARDICT_DATA_DIR="$state/data/dict"
 
-# Runtime contains the genuine upstream KOReader application and plugins.
+# Verified SD runtime contains genuine upstream KOReader and all its plugins.
 # No custom home UI, music service or games service is invoked here.
 cd "$ko"
 if [ -d /mnt/sd_0/Books ] && [ ! -L /mnt/sd_0/Books ]; then
