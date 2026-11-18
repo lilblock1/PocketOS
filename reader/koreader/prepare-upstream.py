@@ -10,8 +10,8 @@ import shutil
 
 UPSTREAM = "21cc368d388378b6fc8ecdbfc879d8f89c17eca1"
 DISPATCH = '        elseif platform:sub(1, #"kobo") == "kobo" then'
-TARGET = 'ifeq ($(TARGET), arm-generic)'
-FLAGS = 'ifeq ($(TARGET), kobo)'
+TARGET = 'ifeq ($(TARGET), arm-generic)\n\tCHOST?=arm-linux-gnueabi'
+FLAGS = 'ifeq ($(TARGET), kobo)\n\t# NOTE: If we only care about Kobos w/ a Touch screen, we\'re good.'
 
 
 def main():
@@ -52,11 +52,11 @@ def main():
         parser.error("Upstream build selectors changed; refusing unsafe patch")
     defs = defs.replace(TARGET,
         "ifeq ($(TARGET), hibyr1)\n"
-        "    CHOST?=mipsel-linux-gnu\n"
+        "\tCHOST?=mipsel-linux-gnu\n"
         "else " + TARGET, 1)
     defs = defs.replace(FLAGS,
         "ifeq ($(TARGET), hibyr1)\n"
-        "    TARGET_CFLAGS:=-march=mips32r2 -mabi=32\n"
+        "\tTARGET_CFLAGS:=-march=mips32r2 -mabi=32\n"
         "else " + FLAGS, 1)
     # Meson upstream does not recognize MIPS in its platform matrix.
     meson_anchor = "else ifneq (,$(filter i686-%,$(TARGET_MACHINE)))"
