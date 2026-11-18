@@ -1,0 +1,82 @@
+name: PocketOS Reader Edition - KOReader R1 device port preflight
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - 'reader/koreader/**'
+      - '.github/workflows/pocketos-koreader-r1-port.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pocketos-r1-koreader-port-preflight
+  cancel-in-progress: true
+jobs:
+  port-scaffold:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install host Lua compiler and MIPS tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1 gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+      - name: Validate genuine KOReader device dispatch and no-media launcher
+        run: |
+          set -euo pipefail
+          base=reader/koreader
+          sh -n "$base/boot/pocketos-reader-start.sh"
+          sh "$base/boot/pocketos-reader-start.sh" --self-test |
+            grep -Fx "PocketOS Reader Edition: KOReader-only launcher v1"
+          luac5.1 -p "$base/overlay/frontend/device.lua"
+          luac5.1 -p "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'platform == "hibyr1"' "$base/overlay/frontend/device.lua"
+          grep -Fq 'require("device/hibyr1/device")' "$base/overlay/frontend/device.lua"
+          grep -Fq 'require("device/generic/device")' "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'require("ffi/framebuffer_linux")' "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'KO_R1_TOUCH_DEV' "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'hasEinkScreen = no' "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'hasColorScreen = yes' "$base/overlay/frontend/device/hibyr1/device.lua"
+          grep -Fq 'export KO_HOME=' "$base/boot/pocketos-reader-start.sh"
+          grep -Fq 'exec ./luajit ./reader.lua' "$base/boot/pocketos-reader-start.sh"
+          ! grep -Eq 'sonix_player|pocketos-shell|pocketos-music|pocketos-game|pocketos-doom|mount -|mtd[0-9]|flash_erase' \
+            "$base/boot/pocketos-reader-start.sh"
+      - name: Compile native MIPS32 little-endian touchscreen probe and run with QEMU
+        run: |
+          set -euo pipefail
+          mkdir -p review
+          mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
+            reader/koreader/r1-touch-probe.c -o review/pocketos-r1-touch-probe
+          mipsel-linux-gnu-readelf -h review/pocketos-r1-touch-probe > review/elf.txt
+          grep -q 'ELF32' review/elf.txt
+          grep -q 'little endian' review/elf.txt
+          grep -q 'MIPS' review/elf.txt
+          timeout 30 qemu-mipsel review/pocketos-r1-touch-probe --self-test |
+            grep -Fx 'PocketOS KOReader R1 touch probe v1'
+          # Never test real framebuffer/input on GitHub host runner.
+          # A missing device must fail safely rather than invent event indexes.
+          if timeout 30 qemu-mipsel review/pocketos-r1-touch-probe >/dev/null 2>&1; then
+            echo 'Probe incorrectly accepted a device on the CI runner' >&2
+            exit 1
+          fi
+      - name: Report what has and has not been tested
+        run: |
+          cat > review/README.txt <<'EOF'
+          PocketOS Reader Edition KOReader R1 native port PREFLIGHT.
+          PASS: Lua 5.1 grammar, KOReader hardware dispatch, KOReader-only
+          boot script syntax and safety gates, MIPS32 little-endian static
+          touch detector build and QEMU probe self-test.
+          NOT DONE: native LuaJIT + KOReader C libraries build, plugin
+          execution, graphical LCD drawing, real R1 touchscreen, full OS
+          image construction, signing, physical cold boot, recovery safety.
+          NOT FIRMWARE. DO NOT FLASH.
+          The current PocketOS Wi-Fi update channel is unchanged.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KOReader-R1-MIPS-PORT-PREFLIGHT-NOT-FIRMWARE
+          path: review/
+          retention-days: 14
+          if-no-files-found: error
