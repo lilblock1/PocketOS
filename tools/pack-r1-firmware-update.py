@@ -18,6 +18,8 @@ def main():
     p.add_argument("--key", type=Path, required=True)
     p.add_argument("--sequence", type=int, required=True)
     p.add_argument("--channel", choices=("stable", "test"), default="test")
+    p.add_argument("--reader-only", action="store_true",
+                   help="Require real KOReader as only UI; reject legacy PocketOS shell/music/games")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if not 1 <= a.sequence <= 999999999:
@@ -51,9 +53,37 @@ def main():
     forbidden = {"sonix_player", "sonix_launch", "sys_server", "recoveryd"}
     if any(Path(name).name in forbidden for name in paths):
         p.error("Sonix userspace or recovery daemon present in primary rootfs")
-    for name in ("usr/bin/pocketos-shell", "usr/bin/pocketos-start",
-                 "usr/bin/pocketos-update", "usr/sbin/pocketos-recovery-arm",
-                 "etc/init.d/S95pocketos"):
+    if a.reader_only:
+        required = ("usr/bin/pocketos-start", "usr/bin/pocketos-update",
+                    "usr/bin/pocketos-r1-touch-probe", "usr/sbin/pocketos-recovery-arm",
+                    "etc/init.d/S95pocketos", "opt/koreader/luajit",
+                    "opt/koreader/reader.lua", "opt/koreader/frontend/device.lua",
+                    "opt/koreader/frontend/device/hibyr1/device.lua",
+                    "etc/pocketos/reader-edition-source")
+        prohibited = ("usr/bin/pocketos-shell", "usr/bin/pocketos-music",
+                      "usr/bin/pocketos-game", "usr/bin/pocketos-decoder",
+                      "etc/pocketos/games-enable", "etc/pocketos/doom.sha256",
+                      "etc/pocketos/classic-ui-enable")
+        if any(name in paths for name in prohibited):
+            p.error("Reader-only image contains a legacy PocketOS, music, or game GUI")
+        startup = read_image_file("usr/bin/pocketos-start").decode()
+        if ("exec ./luajit ./reader.lua" not in startup or
+            "export KO_PLATFORM=hibyr1" not in startup or
+            "export KO_HOME=" not in startup):
+            p.error("Reader-only launcher does not start full KOReader on R1")
+        if not any("0.1.0-reader." in line for line in release):
+            p.error("Reader-only rootfs identity missing")
+        plugins = {Path(name).parts[2] for name in paths
+                   if name.startswith("opt/koreader/plugins/") and
+                   len(Path(name).parts) >= 4 and
+                   Path(name).parts[2].endswith(".koplugin")}
+        if len(plugins) < 20:
+            p.error("Reader-only firmware must retain the complete KOReader plugins")
+    else:
+        required = ("usr/bin/pocketos-shell", "usr/bin/pocketos-start",
+                    "usr/bin/pocketos-update", "usr/sbin/pocketos-recovery-arm",
+                    "etc/init.d/S95pocketos")
+    for name in required:
         if name not in paths:
             p.error("Missing independent PocketOS service: " + name)
     if not {"NAME=PocketOS", "TARGET=hiby-r1"}.issubset(release):
