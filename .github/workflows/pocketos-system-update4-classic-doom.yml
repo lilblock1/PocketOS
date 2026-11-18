@@ -92,9 +92,9 @@ jobs:
           set -euo pipefail
           mkdir -p original previous
           gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original \
-            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig
+            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig --pattern data-r1-report.json
           gh release download pocketos-test-3 --repo "$GITHUB_REPOSITORY" --dir previous \
-            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig
+            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig --pattern data-r1-report.json
           echo "$BASE_UPT_SHA  original/pocketos-r1.upt" | sha256sum -c -
           echo "$PREVIOUS_UPT_SHA  previous/pocketos-r1.upt" | sha256sum -c -
           test "$(head -n 1 previous/manifest)" = 'POCKETOS-R1-SYSTEM-1 test r1-mipsel 3'
