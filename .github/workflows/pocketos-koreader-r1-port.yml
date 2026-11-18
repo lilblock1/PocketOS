@@ -39,6 +39,10 @@ jobs:
           grep -Fq 'KO_R1_TOUCH_DEV' "$base/overlay/frontend/device/hibyr1/device.lua"
           grep -Fq 'hasEinkScreen = no' "$base/overlay/frontend/device/hibyr1/device.lua"
           grep -Fq 'hasColorScreen = yes' "$base/overlay/frontend/device/hibyr1/device.lua"
+          python3 -m py_compile "$base/prepare-upstream.py" "$base/build-reader-rootfs.py"
+          grep -Fq 'DISALLOWED_FRONTENDS' "$base/build-reader-rootfs.py"
+          grep -Fq '"only_visible_ui": "KOReader"' "$base/build-reader-rootfs.py"
+          grep -Fq 'MAX_ROOTFS_BYTES = 16 * 1024 * 1024' "$base/build-reader-rootfs.py"
           grep -Fq 'export KO_HOME=' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'exec ./luajit ./reader.lua' "$base/boot/pocketos-reader-start.sh"
           ! grep -Eq 'sonix_player|pocketos-shell|pocketos-music|pocketos-game|pocketos-doom|mount -|mtd[0-9]|flash_erase' \
