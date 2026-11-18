@@ -152,7 +152,7 @@ jobs:
             usr/bin/pocketos-shell > extracted-shell
           cmp app-binaries/pocketos-shell extracted-shell
           rm extracted-shell
-          sha256sum update4/pocketos-rootfs.squashfs base/xImage > update4/UNSIGNED-SHA256SUMS
+          # Generate the portable artifact checksums after copying the kernel.
       - name: Package verified optional SD Doom binary and complete GPL source
         run: |
           set -euo pipefail
@@ -174,6 +174,7 @@ jobs:
           (cd publish; sha256sum PocketOS-R1-Doom-SD.zip \
             pocketos-doom-source.tar.gz COPYING SOURCE.json > DOOM-SHA256SUMS)
           cp base/xImage update4/verified-original-kernel-xImage
+          (cd update4 && sha256sum pocketos-rootfs.squashfs verified-original-kernel-xImage > UNSIGNED-SHA256SUMS)
           cp base/trusted-public.pem update4/device-trusted-public.pem
       - name: Upload non-flashable unsigned build and optional Doom SD contents
         uses: actions/upload-artifact@v4
