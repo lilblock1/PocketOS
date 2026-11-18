@@ -31,6 +31,8 @@ jobs:
           sh "$base/boot/pocketos-reader-start.sh" --self-test |
             grep -Fx "PocketOS Reader Edition: KOReader-only launcher v1"
           luac5.1 -p "$base/overlay/frontend/device.lua"
+          luac5.1 -p tools/test-koreader-r1-dispatch.lua
+          KO_PLATFORM=hibyr1 lua5.1 tools/test-koreader-r1-dispatch.lua             "$base/overlay/frontend/device.lua"
           luac5.1 -p "$base/overlay/frontend/device/hibyr1/device.lua"
           grep -Fq 'platform == "hibyr1"' "$base/overlay/frontend/device.lua"
           grep -Fq 'require("device/hibyr1/device")' "$base/overlay/frontend/device.lua"
