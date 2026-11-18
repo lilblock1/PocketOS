@@ -144,3 +144,95 @@ jobs:
             native-output/
           if-no-files-found: warn
           retention-days: 14
+
+  reader-rootfs-candidate:
+    name: Assemble KOReader-only replacement rootfs (unsigned, no flash)
+    needs: koreader-mips
+    if: success()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install verified R1 rootfs inspection and MIPS tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full squashfs-tools \
+            gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+      - uses: actions/download-artifact@v4
+        with:
+          name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
+          path: compiled
+      - name: Extract complete KOReader runtime from same successful build
+        run: |
+          set -euo pipefail
+          test -f compiled/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz
+          mkdir -p full-reader
+          tar -xzf compiled/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz \
+            -C full-reader --no-same-owner --no-same-permissions
+          test -f full-reader/koreader/reader.lua
+          test -f full-reader/koreader/frontend/device/hibyr1/device.lua
+          test -d full-reader/koreader/plugins
+          test "$(find full-reader/koreader/plugins -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20
+      - name: Download and pin independently booted PocketOS system 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p original original-iso baseline
+          gh release download pocketos-test-2 \
+            --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
+          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' |
+            sha256sum -c -
+          7z x -y -ooriginal-iso original/pocketos-r1.upt >/dev/null
+          python3 tools/extract-r1-system-upt.py \
+            --extracted original-iso \
+            --rootfs baseline/pocketos-rootfs.squashfs \
+            --kernel baseline/xImage \
+            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
+            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+      - name: Cross-build native touch probe and verify ABI
+        run: |
+          set -euo pipefail
+          mkdir -p tool-output
+          mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
+            reader/koreader/r1-touch-probe.c -o tool-output/pocketos-r1-touch-probe
+          timeout 30 qemu-mipsel tool-output/pocketos-r1-touch-probe --self-test |
+            grep -Fx 'PocketOS KOReader R1 touch probe v1'
+      - name: Replace old user interface with KOReader inside candidate rootfs
+        run: |
+          set -euo pipefail
+          python3 reader/koreader/build-reader-rootfs.py \
+            --baseline baseline/pocketos-rootfs.squashfs \
+            --koreader full-reader/koreader \
+            --probe tool-output/pocketos-r1-touch-probe \
+            --launcher reader/koreader/boot/pocketos-reader-start.sh \
+            --output reader-candidate --sequence 4 \
+            --source-commit "$GITHUB_SHA"
+          jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+                  .removed_other_user_interfaces==true and
+                  .bootloader_payload==false and .recovery_payload==false and
+                  .userdata_payload==false and .kernel_modified==false and
+                  .signed==false and .safe_to_flash==false and
+                  .rootfs_bytes<=16777216' reader-candidate/reader-edition-report.json
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
+                    etc/pocketos-release | grep '^UPDATE_SEQUENCE=')" = 'UPDATE_SEQUENCE=4'
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
+                    usr/bin/pocketos-start | grep -Fc 'exec ./luajit ./reader.lua')" -ge 1
+          # No older user-facing applications may survive.
+          for path in usr/bin/pocketos-shell usr/bin/pocketos-music usr/bin/pocketos-game; do
+            if unsquashfs -ls reader-candidate/reader-rootfs.squashfs |
+               grep -Fqx "squashfs-root/$path"; then
+              echo "Old UI or media executable survived: $path" >&2
+              exit 1
+            fi
+          done
+          echo 'Candidate is UNSIGNED and NOT SAFE TO FLASH; signing and hardware verification remain separately required.'
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
+          path: reader-candidate/
+          retention-days: 14
+          if-no-files-found: error
