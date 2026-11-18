@@ -38,6 +38,7 @@ case "$touch" in
 esac
 [ -c "$touch" ] || fail "Touchscreen device node unavailable"
 export KO_R1_TOUCH_DEV="$touch"
+export KO_PLATFORM=hibyr1
 
 # Use a writable data location for settings, reading progress, annotations
 # and extra plugins. Never write to the immutable firmware partition.
