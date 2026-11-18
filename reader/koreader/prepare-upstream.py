@@ -85,6 +85,29 @@ def main():
         simd_anchor + "ifeq ($(TARGET), hibyr1)\n"
         "  WANT_SIMD=\n"
         "endif\n", 1)
+    # On 32-bit MIPS with 64-bit time_t, Linux input_event uses __sec
+    # and __usec instead of the timeval member. The kernel header
+    # supplies portable input_event_sec/input_event_usec aliases.
+    input_path = root / "base/input/input.c"
+    input_source = input_path.read_text()
+    ev_anchor = "    struct input_event ev = { 0 };\n"
+    timestamp_anchor = "    gettimeofday(&ev.time, NULL);\n"
+    if (input_source.count(ev_anchor) != 1 or
+            input_source.count(timestamp_anchor) != 10 or
+            input_source.count("input->time.tv_sec") != 1 or
+            input_source.count("input->time.tv_usec") != 1):
+        parser.error("Upstream input_event timestamp API changed")
+    input_source = input_source.replace(ev_anchor,
+        ev_anchor + "    struct timeval event_time;\n", 1)
+    input_source = input_source.replace(timestamp_anchor,
+        "    gettimeofday(&event_time, NULL);\n"
+        "    ev.input_event_sec = event_time.tv_sec;\n"
+        "    ev.input_event_usec = event_time.tv_usec;\n")
+    input_source = input_source.replace("input->time.tv_sec",
+        "input->input_event_sec", 1)
+    input_source = input_source.replace("input->time.tv_usec",
+        "input->input_event_usec", 1)
+    input_path.write_text(input_source)
     path.write_text(defs)
     make_dir = root / "make"
     (make_dir / "hibyr1.mk").write_text(
