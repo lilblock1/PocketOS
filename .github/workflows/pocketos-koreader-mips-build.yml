@@ -25,14 +25,14 @@ jobs:
       - name: Install cross-compiler and QEMU
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user gcc-multilib libc6-dev-i386
       - name: Fetch pinned upstream LuaJIT and compile for R1 MIPS32 little-endian
         run: |
           set -euo pipefail
           git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git luajit-src
           git -C luajit-src checkout --detach "$LUAJIT_SHA"
           test "$(git -C luajit-src rev-parse HEAD)" = "$LUAJIT_SHA"
-          make -C luajit-src -j2 HOST_CC=gcc CROSS=mipsel-linux-gnu- \
+          make -C luajit-src -j2 HOST_CC="gcc -m32" CROSS=mipsel-linux-gnu- \
             TARGET_SYS=Linux TARGET_FLAGS='-march=mips32r2 -mabi=32' \
             > luajit-compile.log 2>&1 || {
               tail -n 160 luajit-compile.log
