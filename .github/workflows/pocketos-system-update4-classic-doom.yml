@@ -71,7 +71,9 @@ jobs:
           file app-binaries/pocketos-shell app-binaries/pocketos-start doom-binaries/pocketos-doom
           readelf -h app-binaries/pocketos-shell | grep -q 'MIPS'
           readelf -h doom-binaries/pocketos-doom | grep -q 'MIPS'
-          (cd doom-binaries && sha256sum -c pocketos-doom.sha256)
+          expected_doom=$(tr -d '\r\n' < doom-binaries/pocketos-doom.sha256)
+          [[ "$expected_doom" =~ ^[a-f0-9]{64}$ ]]
+          test "$(sha256sum doom-binaries/pocketos-doom | cut -d' ' -f1)" = "$expected_doom"
           test -s doom-binaries/COPYING
           test -s doom-binaries/SOURCE.json
           test -s doom-binaries/pocketos-doom-source.tar.gz
