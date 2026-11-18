@@ -43,8 +43,10 @@ def inventory(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("baseline", "apps", "kernel", "key", "output"):
+    for name in ("baseline", "apps", "kernel", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--key", type=Path, help="Original trusted signing key (required unless --unsigned)")
+    parser.add_argument("--unsigned", action="store_true", help="Only assemble and test unsigned rootfs; never publish as firmware")
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--sequence", type=int, required=True)
     parser.add_argument("--doom", type=Path, help="Reviewed optional SD game executable; only its digest enters the system")
@@ -55,7 +57,11 @@ def main():
         parser.error("Use a new output directory")
     if not args.baseline.is_file() or digest(args.baseline) != BASELINE_SHA:
         parser.error("Baseline must be the verified, installed PocketOS update-2 rootfs")
-    if (not args.key.is_file() or args.key.is_symlink() or
+    if not args.unsigned and args.key is None:
+        parser.error("Signing requires the retained trusted key")
+    if args.unsigned and args.key is not None:
+        parser.error("Do not supply a signing key to an unsigned build")
+    if args.key is not None and (not args.key.is_file() or args.key.is_symlink() or
             args.key.resolve().is_relative_to(REPO) or
             args.key.resolve().is_relative_to(args.output.resolve())):
         parser.error("Keep the retained signing key outside repository and output")
@@ -133,12 +139,14 @@ def main():
                                         "primary_target": "/dev/mtd2 (rootfs)",
                                         "kernel_reused": True, "build_id": build_id}))
         signed = work / "signed"
-        subprocess.run([sys.executable, str(REPO / "tools/pack-r1-firmware-update.py"),
-                        "--rootfs", str(image), "--candidate", str(candidate),
-                        "--kernel", str(args.kernel.resolve()), "--key", str(args.key.resolve()),
-                        "--sequence", str(args.sequence), "--channel", "test", "--output", str(signed)], check=True)
+        if not args.unsigned:
+            subprocess.run([sys.executable, str(REPO / "tools/pack-r1-firmware-update.py"),
+                            "--rootfs", str(image), "--candidate", str(candidate),
+                            "--kernel", str(args.kernel.resolve()), "--key", str(args.key.resolve()),
+                            "--sequence", str(args.sequence), "--channel", "test", "--output", str(signed)], check=True)
         args.output.mkdir()
-        shutil.copytree(signed, args.output / "signed")
+        if not args.unsigned:
+            shutil.copytree(signed, args.output / "signed")
         shutil.copyfile(image, args.output / image.name)
         shutil.copyfile(candidate, args.output / candidate.name)
         (args.output / "source-report.json").write_text(json.dumps({
@@ -148,7 +156,7 @@ def main():
             "kernel_replaced": False, "bootloader_payload": False,
             "recovery_payload": False, "userdata_payload": False,
             "device_installation_performed": False}, indent=2) + "\n")
-        print("Signed offline Classic UI system update prepared; no device write or publication.")
+        print(("Unsigned" if args.unsigned else "Signed") + " offline Classic/Doom update prepared; no device write or publication.")
 
 
 if __name__ == "__main__":
