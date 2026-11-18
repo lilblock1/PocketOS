@@ -1,0 +1,349 @@
+name: PocketOS R1 update 4 - Classic iPod UI, modes and SD Doom
+on:
+  push:
+    branches: [phase6-ui-review]
+    paths:
+      - '.github/workflows/pocketos-system-update4-classic-doom.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: pocketos-r1-independent-update-4
+  cancel-in-progress: false
+env:
+  APP_RUN: '44208157676'
+  APP_SHA: 4cc85e2f8422f702856c3525ae2c39d9180c4a0b
+  APP_ARTIFACT_DIGEST: sha256:b8c57c107b6273ef9e32a0c67718f59b8eb2ea929167827f60edf6ea19128190
+  DOOM_ARTIFACT_DIGEST: sha256:c251410541df9200c78bbe326a3767dd038868b41bdb7052469e1225c52611ad
+  BASE_UPT_SHA: 1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80
+  BASE_ROOT_SHA: fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a
+  KERNEL_SHA: 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+  PREVIOUS_UPT_SHA: 994cd5ed069acb1077ee5785ec46b59233a95165d33fa7718e0f291568ec1485
+  SEQUENCE: '4'
+jobs:
+  unsigned:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install trusted local firmware inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full squashfs-tools genisoimage unzip zip qemu-user
+      - name: Verify previously tested app and Doom build identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN" > build-run.json
+          jq -e --arg sha "$APP_SHA" --arg repo "$GITHUB_REPOSITORY" '
+            .head_sha==$sha and .conclusion=="success" and .status=="completed"
+            and .head_repository.full_name==$repo and
+            .head_branch=="phase6-ui-review" and
+            .path==".github/workflows/pocketos-apps.yml"
+          ' build-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$APP_RUN/artifacts?per_page=100" > build-artifacts.json
+          jq -e --arg app "$APP_ARTIFACT_DIGEST" --arg doom "$DOOM_ARTIFACT_DIGEST" '
+            ([.artifacts[]|select(.name=="PocketOS-applications-NOT-FIRMWARE" and
+              .expired==false and .digest==$app)]|length)==1 and
+            ([.artifacts[]|select(.name=="PocketOS-DOOM-SD-DEVELOPMENT-NOT-FIRMWARE" and
+              .expired==false and .digest==$doom)]|length)==1
+          ' build-artifacts.json
+          python3 -m py_compile tools/extract-r1-system-upt.py tools/build-r1-classic-update.py
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-applications-NOT-FIRMWARE
+          run-id: 44208157676
+          github-token: ${{ github.token }}
+          path: app-binaries
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-DOOM-SD-DEVELOPMENT-NOT-FIRMWARE
+          run-id: 44208157676
+          github-token: ${{ github.token }}
+          path: doom-binaries
+      - name: Verify native MIPS app and Doom outputs
+        run: |
+          set -euo pipefail
+          file app-binaries/pocketos-shell app-binaries/pocketos-start doom-binaries/pocketos-doom
+          readelf -h app-binaries/pocketos-shell | grep -q 'MIPS'
+          readelf -h doom-binaries/pocketos-doom | grep -q 'MIPS'
+          (cd doom-binaries && sha256sum -c pocketos-doom.sha256)
+          test -s doom-binaries/COPYING
+          test -s doom-binaries/SOURCE.json
+          test -s doom-binaries/pocketos-doom-source.tar.gz
+          test -x app-binaries/pocketos-shell
+          timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
+            app-binaries/pocketos-shell --self-test 2>/dev/null || {
+              echo 'Host QEMU lacked target libc; the successful pinned original SDK test is the authorization source.'
+            }
+      - name: Retrieve and verify installed independent PocketOS system 2 and signed system 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p original previous
+          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original \
+            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig
+          gh release download pocketos-test-3 --repo "$GITHUB_REPOSITORY" --dir previous \
+            --pattern pocketos-r1.upt --pattern manifest --pattern manifest.sig
+          echo "$BASE_UPT_SHA  original/pocketos-r1.upt" | sha256sum -c -
+          echo "$PREVIOUS_UPT_SHA  previous/pocketos-r1.upt" | sha256sum -c -
+          test "$(head -n 1 previous/manifest)" = 'POCKETOS-R1-SYSTEM-1 test r1-mipsel 3'
+          (cd previous; tail -n +2 manifest |
+            awk '{print $1 "  " $3}' | sha256sum -c -)
+      - name: Extract and hash-check original deployed rootfs and proven kernel
+        run: |
+          set -euo pipefail
+          mkdir -p original-iso base
+          7z x -y -ooriginal-iso original/pocketos-r1.upt >/dev/null
+          python3 tools/extract-r1-system-upt.py \
+            --extracted original-iso --rootfs base/pocketos-rootfs.squashfs \
+            --kernel base/xImage --rootfs-sha256 "$BASE_ROOT_SHA" \
+            --kernel-sha256 "$KERNEL_SHA"
+          test "$(stat -c%s base/xImage)" -eq 2940992
+          unsquashfs -cat base/pocketos-rootfs.squashfs etc/pocketos/update-public.pem \
+            > base/trusted-public.pem
+          openssl pkey -pubin -in base/trusted-public.pem -noout
+          openssl dgst -sha256 -verify base/trusted-public.pem \
+            -signature original/manifest.sig original/manifest
+          openssl dgst -sha256 -verify base/trusted-public.pem \
+            -signature previous/manifest.sig previous/manifest
+          unsquashfs -cat base/pocketos-rootfs.squashfs etc/pocketos-release |
+            grep -Fx 'UPDATE_SEQUENCE=2'
+          unsquashfs -cat base/pocketos-rootfs.squashfs etc/pocketos-release |
+            grep -Fx 'BUILD_ID=3b57c9b46524dc6d'
+          test "$(head -n 1 original/manifest)" = 'POCKETOS-R1-SYSTEM-1 test r1-mipsel 2'
+      - name: Build unsigned Update 4 from trusted system 2 baseline
+        run: |
+          set -euo pipefail
+          python3 tools/build-r1-classic-update.py \
+            --baseline base/pocketos-rootfs.squashfs \
+            --apps app-binaries --doom doom-binaries/pocketos-doom \
+            --kernel base/xImage --source-commit "$APP_SHA" \
+            --sequence 4 --unsigned --output update4
+          jq -e --arg sha "$APP_SHA" '
+            .source_commit==$sha and .sequence==4 and .kernel_replaced==false
+            and .bootloader_payload==false and .recovery_payload==false
+            and .userdata_payload==false and
+            ([.changed_rootfs_files[]|select(.=="usr/bin/pocketos-game")]|length)==1 and
+            ([.changed_rootfs_files[]|select(.=="etc/pocketos/doom.sha256")]|length)==1 and
+            ([.changed_rootfs_files[]|select(.=="etc/pocketos/games-enable")]|length)==1
+          ' update4/source-report.json
+          test ! -e update4/signed
+          unsquashfs -cat update4/pocketos-rootfs.squashfs etc/pocketos-release |
+            grep -Fx 'UPDATE_SEQUENCE=4'
+          unsquashfs -cat update4/pocketos-rootfs.squashfs \
+            etc/pocketos/doom.sha256 > doom-pinned.sha256
+          test "$(cat doom-pinned.sha256)" = "$(sha256sum doom-binaries/pocketos-doom | cut -d' ' -f1)"
+          unsquashfs -cat update4/pocketos-rootfs.squashfs \
+            etc/pocketos/classic-ui-enable | grep -Fx 'POCKETOS-R1-CLASSIC-1'
+          unsquashfs -cat update4/pocketos-rootfs.squashfs \
+            etc/pocketos/games-enable | grep -Fx 'POCKETOS-R1-GAMES-1'
+          unsquashfs -cat update4/pocketos-rootfs.squashfs \
+            usr/bin/pocketos-shell > extracted-shell
+          cmp app-binaries/pocketos-shell extracted-shell
+          rm extracted-shell
+          sha256sum update4/pocketos-rootfs.squashfs base/xImage > update4/UNSIGNED-SHA256SUMS
+      - name: Package verified optional SD Doom binary and complete GPL source
+        run: |
+          set -euo pipefail
+          mkdir -p sd-root/PocketOS/Games/doom publish
+          cp doom-binaries/pocketos-doom sd-root/PocketOS/Games/doom/
+          cat > sd-root/PocketOS/Games/doom/README.txt <<'EOF'
+          PocketOS Doom: copy the original verified doom1.wad you own
+          beside pocketos-doom, inside PocketOS/Games/doom on microSD.
+          The game binary is SHA256-pinned in PocketOS system update 4.
+          No shareware WAD is included. The first port has no sound.
+          Doom complete GPL source and license are separate release assets.
+          EOF
+          (cd sd-root && zip -qr ../publish/PocketOS-R1-Doom-SD.zip .)
+          cp doom-binaries/pocketos-doom-source.tar.gz publish/
+          cp doom-binaries/COPYING doom-binaries/SOURCE.json publish/
+          test "$(unzip -Z1 publish/PocketOS-R1-Doom-SD.zip |
+            grep -Fc PocketOS/Games/doom/pocketos-doom)" -eq 1
+          ! unzip -Z1 publish/PocketOS-R1-Doom-SD.zip | grep -iq '\.wad$'
+          (cd publish; sha256sum PocketOS-R1-Doom-SD.zip \
+            pocketos-doom-source.tar.gz COPYING SOURCE.json > DOOM-SHA256SUMS)
+          cp base/xImage update4/verified-original-kernel-xImage
+          cp base/trusted-public.pem update4/device-trusted-public.pem
+      - name: Upload non-flashable unsigned build and optional Doom SD contents
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOS-R1-Update4-UNSIGNED-REVIEW
+          path: |
+            update4/
+            publish/
+          retention-days: 14
+          if-no-files-found: error
+
+  signed_release:
+    needs: unsigned
+    if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/phase6-ui-review'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment: pocketos-release
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INDEPENDENT_KEY: ${{ secrets.POCKETOS_INDEPENDENT_RELEASE_KEY }}
+      LEGACY_RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install offline R1 packaging and validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full squashfs-tools genisoimage unzip
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-Update4-UNSIGNED-REVIEW
+          path: downloaded
+      - name: Check source provenance and match original device signing trust
+        run: |
+          set -euo pipefail
+          test -f downloaded/update4/pocketos-rootfs.squashfs
+          test -f downloaded/update4/verified-original-kernel-xImage
+          test -f downloaded/update4/device-trusted-public.pem
+          (cd downloaded/update4; sha256sum -c UNSIGNED-SHA256SUMS)
+          echo "$KERNEL_SHA  downloaded/update4/verified-original-kernel-xImage" | sha256sum -c -
+          jq -e --arg sha "$APP_SHA" '.sequence==4 and .source_commit==$sha and
+              .bootloader_payload==false and .recovery_payload==false and
+              .userdata_payload==false' downloaded/update4/source-report.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/pocketos-test-3" > prev-release.json
+          jq -e '.prerelease==true and .draft==false' prev-release.json
+          if gh release view pocketos-test-4 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Version 4 already exists; refusing to replace a signed release.'
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/pocketos-private"
+          chmod 700 "$RUNNER_TEMP/pocketos-private"
+          signing_key="$RUNNER_TEMP/pocketos-private/key.pem"
+          trap 'rm -f "$signing_key"' EXIT
+          # Try the dedicated independent key first, then legacy environment
+          # release key. Never sign with a mismatched key or generate a new one.
+          matched=0
+          for var in INDEPENDENT_KEY LEGACY_RELEASE_KEY; do
+            if [ "$var" = INDEPENDENT_KEY ]; then material="$INDEPENDENT_KEY"
+            else material="$LEGACY_RELEASE_KEY"; fi
+            [ -n "$material" ] || continue
+            printf '%s\n' "$material" > "$signing_key"
+            chmod 600 "$signing_key"
+            if ! openssl pkey -in "$signing_key" -noout >/dev/null 2>&1; then
+              continue
+            fi
+            openssl pkey -in "$signing_key" -pubout -outform DER \
+              > "$RUNNER_TEMP/pocketos-private/candidate-public.der"
+            openssl pkey -pubin -in downloaded/update4/device-trusted-public.pem \
+              -pubout -outform DER > "$RUNNER_TEMP/pocketos-private/trusted.der"
+            if cmp -s "$RUNNER_TEMP/pocketos-private/candidate-public.der" \
+                "$RUNNER_TEMP/pocketos-private/trusted.der"; then
+              matched=1
+              break
+            fi
+          done
+          unset material
+          if [ "$matched" -ne 1 ]; then
+            echo 'BLOCKED: neither configured release signing secret matches the independent PocketOS device trusted public key.'
+            exit 1
+          fi
+          python3 tools/pack-r1-firmware-update.py \
+            --rootfs downloaded/update4/pocketos-rootfs.squashfs \
+            --candidate downloaded/update4/candidate.json \
+            --kernel downloaded/update4/verified-original-kernel-xImage \
+            --key "$signing_key" --sequence 4 --channel test \
+            --output signed
+          openssl dgst -sha256 -verify downloaded/update4/device-trusted-public.pem \
+            -signature signed/manifest.sig signed/manifest
+          test "$(head -n 1 signed/manifest)" = 'POCKETOS-R1-SYSTEM-1 test r1-mipsel 4'
+          (cd signed; tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          jq -e '.kernel_payload==true and .kernel_unchanged==true and
+            .stock_recovery_monitor_compatible==true and
+            .kernel_target_when_in_software_recovery=="/dev/mtd1" and
+            .rootfs_target_when_in_software_recovery=="/dev/mtd2" and
+            .bootloader_payload==false and .recovery_payload==false and
+            .userdata_payload==false' signed/data-r1-report.json
+          printf '%s\n' 'OK: Update4 uses original independent PocketOS signer, exact kernel, and no protected-partition payloads.'
+          rm -f "$signing_key"
+        env:
+          INDEPENDENT_KEY: ${{ secrets.POCKETOS_INDEPENDENT_RELEASE_KEY }}
+          LEGACY_RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      - name: Publish immutable PocketOS system update 4 and SD Doom
+        run: |
+          set -euo pipefail
+          mkdir -p publish
+          cp signed/{manifest,manifest.sig,pocketos-r1.upt,data-r1-report.json} publish/
+          cp downloaded/update4/source-report.json publish/
+          cp downloaded/publish/{PocketOS-R1-Doom-SD.zip,pocketos-doom-source.tar.gz,COPYING,SOURCE.json,DOOM-SHA256SUMS} publish/
+          cat > publish/README.txt <<'EOF'
+          PocketOS system update 4 - iPod Classic, Light/Dark and Doom.
+
+          This is for the independently booted PocketOS R1 only. Not Sonix
+          and not the old hybrid test-latest channel. It contains the Classic
+          wheel UI, Light/Dark mode and Games -> Doom launcher.
+
+          The Doom engine is optional SD content (PocketOS-R1-Doom-SD.zip);
+          you must separately place your original verified shareware DOOM1.WAD
+          in SD/PocketOS/Games/doom. The game port is currently silent.
+
+          Existing primary kernel is byte-for-byte unchanged. OTA package
+          targets only primary kernel and rootfs; no bootloader, recovery or
+          userdata payload is included. The recovery monitor requires the
+          existing-kernel completion marker, so this UPT includes the identical
+          known-good primary kernel image.
+
+          This update has not yet been cold-boot verified after installation.
+          Release publication never flashes a device automatically. Charge
+          the R1 and use the installed PocketOS Test update screen to
+          confirm download and firmware installation.
+          EOF
+          (cd publish && sha256sum manifest manifest.sig pocketos-r1.upt \
+            data-r1-report.json source-report.json PocketOS-R1-Doom-SD.zip \
+            pocketos-doom-source.tar.gz COPYING SOURCE.json > SHA256SUMS)
+          (cd publish; sha256sum -c SHA256SUMS)
+          gh release create pocketos-test-4 \
+            publish/manifest publish/manifest.sig publish/pocketos-r1.upt \
+            publish/data-r1-report.json publish/source-report.json \
+            publish/PocketOS-R1-Doom-SD.zip publish/pocketos-doom-source.tar.gz \
+            publish/COPYING publish/SOURCE.json publish/DOOM-SHA256SUMS \
+            publish/SHA256SUMS publish/README.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$APP_SHA" \
+            --prerelease --latest=false \
+            --title 'PocketOS R1 Update 4 - iPod Classic, Light/Dark and Doom' \
+            --notes-file publish/README.txt
+      - name: Verify public signed release then update separate PocketOS Test pointer
+        run: |
+          set -euo pipefail
+          mkdir -p public
+          gh release download pocketos-test-4 --repo "$GITHUB_REPOSITORY" --dir public \
+            --pattern manifest --pattern manifest.sig --pattern pocketos-r1.upt \
+            --pattern data-r1-report.json
+          for name in manifest manifest.sig pocketos-r1.upt data-r1-report.json; do
+            cmp "signed/$name" "public/$name"
+          done
+          openssl dgst -sha256 -verify downloaded/update4/device-trusted-public.pem \
+            -signature public/manifest.sig public/manifest
+          (cd public; tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          gh api "repos/$GITHUB_REPOSITORY/contents/channels/test?ref=phase5-pocketos-only-updater" > pointer.json
+          current=$(jq -r .content pointer.json | base64 -d)
+          [ "$current" = 'pocketos-test-3' ] || {
+            echo 'Refusing to overwrite unexpected independent Test channel pointer.'
+            exit 1
+          }
+          sha=$(jq -r .sha pointer.json)
+          data=$(printf 'pocketos-test-4\n' | base64 -w0)
+          gh api -X PUT "repos/$GITHUB_REPOSITORY/contents/channels/test" \
+            -f branch=phase5-pocketos-only-updater -f sha="$sha" \
+            -f content="$data" \
+            -f message='Point independent PocketOS R1 Test update channel to verified signed update 4' \
+            > pointer-update.json
+          gh api "repos/$GITHUB_REPOSITORY/contents/channels/test?ref=phase5-pocketos-only-updater" |
+            jq -r .content | base64 -d | grep -Fx 'pocketos-test-4'
+          echo 'Published PocketOS update 4, verified signed public assets, and activated only the independent PocketOS Test channel.'
