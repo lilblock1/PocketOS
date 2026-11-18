@@ -240,8 +240,13 @@ jobs:
             --source-commit "$GITHUB_SHA"
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
                   .sd_runtime_required==true and
-                  .sd_runtime_path=="/mnt/sd_0/PocketOS/KOReaderRuntime/koreader" and
-                  .sd_manifest_file_count>100 and
+                  .sd_runtime_path=="/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs" and
+                  .sd_runtime_mount_path=="/run/pocketos-reader" and
+                  .sd_runtime_format=="read-only-squashfs-lzo" and
+                  .sd_mount_noexec_preserved==true and
+                  .requires_kernel_loop_support==true and
+                  .sd_runtime_file_count>100 and
+                  .sd_manifest_file_count==1 and
                   .sd_payload_bytes>0 and
                   .removed_other_user_interfaces==true and
                   .bootloader_payload==false and .recovery_payload==false and
@@ -254,9 +259,16 @@ jobs:
                     usr/bin/pocketos-start | grep -Fc 'exec ./luajit ./reader.lua')" -ge 1
           test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
                     usr/bin/pocketos-start | grep -Fc 'sha256sum -c "$manifest"')" -ge 1
-          test -s reader-candidate/KOReader-R1-SD-PAYLOAD.tar.gz
-          echo "$(jq -r '.sd_payload_sha256' reader-candidate/reader-edition-report.json)  reader-candidate/KOReader-R1-SD-PAYLOAD.tar.gz" | sha256sum -c -
-          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs etc/pocketos/koreader-sd.sha256 | wc -l)" -gt 100
+          test -s reader-candidate/KOReader-R1-SD-RUNTIME.squashfs
+          echo "$(jq -r '.sd_payload_sha256' reader-candidate/reader-edition-report.json)  reader-candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs etc/pocketos/koreader-sd.sha256 | wc -l)" -eq 1
+          test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs etc/pocketos/koreader-runtime-files.sha256 | wc -l)" -gt 100
+          unsquashfs -cat reader-candidate/reader-rootfs.squashfs etc/pocketos/koreader-sd.sha256 | grep -Fq '/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs'
+          unsquashfs -ls reader-candidate/KOReader-R1-SD-RUNTIME.squashfs > reader-candidate/SD-IMAGE-CONTENTS.txt
+          grep -Fq 'squashfs-root/luajit' reader-candidate/SD-IMAGE-CONTENTS.txt
+          grep -Fq 'squashfs-root/frontend/device/hibyr1/device.lua' reader-candidate/SD-IMAGE-CONTENTS.txt
+          test "$(grep -c '\.koplugin' reader-candidate/SD-IMAGE-CONTENTS.txt)" -gt 20
+          unsquashfs -cat reader-candidate/reader-rootfs.squashfs usr/bin/pocketos-start | grep -Fq 'mount -t squashfs -o ro,nosuid,nodev,loop,exec'
           # No older user-facing applications may survive.
           for path in usr/bin/pocketos-shell usr/bin/pocketos-music usr/bin/pocketos-game; do
             if unsquashfs -ls reader-candidate/reader-rootfs.squashfs |

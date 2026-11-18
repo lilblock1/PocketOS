@@ -12,38 +12,48 @@ if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
 fi
 [ "$#" -eq 0 ] || exit 2
 
-# Store the full native runtime on the removable SD card; never overflow
-# the tiny internal system partition or execute an unverified SD tree.
-ko=/mnt/sd_0/PocketOS/KOReaderRuntime/koreader
+# SD stays mounted noexec. The pinned immutable KOReader SquashFS is
+# separately mounted read-only, only AFTER its exact checksum is checked.
+# This avoids copying ~30 MiB of executable code into 64 MiB of R1 RAM.
+ko=/run/pocketos-reader
+sd_image=/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs
 manifest=/etc/pocketos/koreader-sd.sha256
 probe=/usr/bin/pocketos-r1-touch-probe
 fail() { printf 'PocketOS Reader: %s\n' "$*" >&2; exit 1; }
 
 # No Sonix or PocketOS music/game launcher on ordinary boot. A missing
 # dependency results in a clean failure, not a mystery second home screen.
-# Refuse to execute removable media unless it is really mounted and the
-# read-only internal rootfs contains the exact expected file checksums.
+# Refuse untrusted SD layouts and preserve its existing noexec policy.
 [ -d /mnt/sd_0 ] && [ ! -L /mnt/sd_0 ] &&
-    awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "SD card is not mounted"
-[ -f "$manifest" ] && [ ! -L "$manifest" ] || fail "Trusted SD manifest missing"
-[ -d "$ko" ] && [ ! -L "$ko" ] || fail "KOReader SD runtime missing"
+    awk '$2=="/mnt/sd_0" && $3=="vfat" &&
+         $4 ~ /(^|,)noexec(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "Protected SD card (vfat,noexec) is not mounted"
 [ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] ||
     fail "Unsafe SD root directory"
 [ -d /mnt/sd_0/PocketOS/KOReaderRuntime ] &&
     [ ! -L /mnt/sd_0/PocketOS/KOReaderRuntime ] ||
     fail "Unsafe SD runtime directory"
-# Never follow malicious symlinks, special inodes, or unlisted plugins.
-[ -z "$(find "$ko" -type l -print -quit)" ] ||
-    fail "KOReader SD payload contains symlinks"
-[ -z "$(find "$ko" ! -type f ! -type d -print -quit)" ] ||
-    fail "KOReader SD payload contains unsupported inode types"
-cd "$ko"
-expected=$(wc -l < "$manifest")
-actual=$(find . -type f | wc -l)
-[ "$actual" -eq "$expected" ] || fail "KOReader SD file count mismatch"
+[ -f "$sd_image" ] && [ ! -L "$sd_image" ] ||
+    fail "Pinned KOReader runtime image missing"
+[ -f "$manifest" ] && [ ! -L "$manifest" ] ||
+    fail "Trusted SD runtime hash missing"
+# Authenticate the entire immutable disk image before executing anything.
 sha256sum -c "$manifest" >/dev/null 2>&1 ||
-    fail "KOReader SD runtime integrity check failed"
+    fail "KOReader runtime image hash mismatch"
+# Existing first-boot service provides /run as tmpfs; it remains RAM-only.
+[ -d /run ] && [ ! -L /run ] &&
+    awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "Safe /run tmpfs is unavailable"
+[ ! -e "$ko" ] && [ ! -L "$ko" ] ||
+    fail "Reader runtime mountpoint is already present"
+mkdir -m 0700 "$ko" || fail "Cannot create reader mountpoint"
+# Mount only the hash-verified SquashFS, never remount /mnt/sd_0 or NAND.
+# Kernel loop support is NOT YET verified on physical HiBy R1 hardware.
+mount -t squashfs -o ro,nosuid,nodev,loop,exec "$sd_image" "$ko" ||
+    fail "Verified reader SquashFS loop mount unsupported"
+awk '$2=="/run/pocketos-reader" && $3=="squashfs" &&
+     $4 ~ /(^|,)ro(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "Reader mount is not read-only SquashFS"
 [ -f "$ko/reader.lua" ] && [ ! -L "$ko/reader.lua" ] || fail "KOReader entry point missing"
 [ -x "$ko/luajit" ] && [ ! -L "$ko/luajit" ] || fail "MIPS LuaJIT runtime missing"
 [ -f "$ko/frontend/device/hibyr1/device.lua" ] || fail "R1 KOReader backend missing"
@@ -67,7 +77,7 @@ export KO_PLATFORM=hibyr1
 
 # Use a writable data location for settings, reading progress, annotations
 # and extra plugins. Never write to the immutable firmware partition.
-# Do not mount, remount, format or alter partitions.
+# Never remount/format SD or internal partitions; only the trusted RO loop image is mounted.
 if [ -d /mnt/sd_0 ] && [ ! -L /mnt/sd_0 ] &&
    awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts &&
    [ -w /mnt/sd_0 ]; then

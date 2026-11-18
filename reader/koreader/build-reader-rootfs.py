@@ -19,6 +19,8 @@ import tempfile
 BASELINE_SHA256 = "fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a"
 BASELINE_BUILD_ID = "3b57c9b46524dc6d"
 MAX_ROOTFS_BYTES = 16 * 1024 * 1024
+SD_IMAGE_PATH = "/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+MOUNT_PATH = "/run/pocketos-reader"
 DISALLOWED_FRONTENDS = (
     "usr/bin/pocketos-shell",
     "usr/bin/pocketos-music",
@@ -103,6 +105,16 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
     with tempfile.TemporaryDirectory(prefix="reader-r1-") as tmp:
         work = Path(tmp)
         root = work / "root"
+        # SD is intentionally mounted noexec. Build a separate, immutable
+        # read-only SquashFS to be hash-verified *before* a dedicated loop
+        # mount. Keep the primary rootfs small and never relax SD noexec.
+        sd_payload = work / "KOReader-R1-SD-RUNTIME.squashfs"
+        subprocess.run(["mksquashfs", str(koreader), str(sd_payload),
+                        "-noappend", "-all-root", "-comp", "lzo",
+                        "-processors", "2", "-no-progress"], check=True)
+        if not sd_payload.is_file() or sd_payload.stat().st_size == 0:
+            raise ValueError("Missing SD SquashFS runtime image")
+        sd_image_hash = sha(sd_payload)
         subprocess.run(["unsquashfs", "-no-progress", "-d", str(root),
                         str(baseline)], check=True)
         release = root / "etc/pocketos-release"
@@ -140,11 +152,18 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         if system_ko.exists() or system_ko.is_symlink():
             raise ValueError("Unexpected existing KOReader runtime")
         manifest, sd_file_count = make_sd_manifest(koreader)
+        # One trusted image checksum authenticates *all* inner KOReader files.
+        # The complete per-file listing remains in the immutable rootfs for
+        # audit, but need not be hashed one-by-one on every cold boot.
         manifest_path = root / "etc/pocketos/koreader-sd.sha256"
-        if manifest_path.exists() or manifest_path.is_symlink():
+        file_manifest_path = root / "etc/pocketos/koreader-runtime-files.sha256"
+        if (manifest_path.exists() or manifest_path.is_symlink() or
+                file_manifest_path.exists() or file_manifest_path.is_symlink()):
             raise ValueError("Unexpected existing KOReader SD manifest")
-        manifest_path.write_text(manifest)
+        manifest_path.write_text(sd_image_hash + "  " + SD_IMAGE_PATH + "\n")
+        file_manifest_path.write_text(manifest)
         manifest_path.chmod(0o444)
+        file_manifest_path.chmod(0o444)
         startup = root / "usr/bin/pocketos-start"
         checked_file(startup)
         shutil.copy2(launcher, startup)
@@ -175,8 +194,10 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         check_mips(root / "usr/bin/pocketos-r1-touch-probe")
         if system_ko.exists() or system_ko.is_symlink():
             raise ValueError("KOReader binary must not be inside internal rootfs")
-        if manifest_path.read_text() != manifest:
-            raise ValueError("Pinned SD manifest changed during staging")
+        if manifest_path.read_text() != sd_image_hash + "  " + SD_IMAGE_PATH + "\n":
+            raise ValueError("Pinned SD image manifest changed during staging")
+        if file_manifest_path.read_text() != manifest:
+            raise ValueError("KOReader source file manifest changed during staging")
         image = work / "reader-rootfs.squashfs"
         subprocess.run(["mksquashfs", str(root), str(image), "-noappend",
                         "-all-root", "-comp", "lzo", "-processors", "2",
@@ -185,19 +206,18 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         if not 0 < size <= MAX_ROOTFS_BYTES:
             raise ValueError(f"Reader rootfs {size} exceeds {MAX_ROOTFS_BYTES} internal budget; "
                              "evaluate an SD split rather than writing beyond flash capacity")
-        sd_payload = work / "KOReader-R1-SD-PAYLOAD.tar.gz"
-        # The input tree was validated to contain regular files and dirs only.
-        # The archive always contains a top-level 'koreader/' directory.
-        subprocess.run(["tar", "-czf", str(sd_payload),
-                        "-C", str(koreader.parent), koreader.name], check=True)
-        if not sd_payload.is_file() or sd_payload.stat().st_size == 0:
-            raise ValueError("Missing SD payload")
         report = {
             "reader_edition": True, "only_visible_ui": "KOReader",
             "sd_runtime_required": True,
-            "sd_runtime_path": "/mnt/sd_0/PocketOS/KOReaderRuntime/koreader",
+            "sd_runtime_path": SD_IMAGE_PATH,
+            "sd_runtime_mount_path": MOUNT_PATH,
+            "sd_runtime_format": "read-only-squashfs-lzo",
+            "sd_mount_noexec_preserved": True,
+            "requires_kernel_loop_support": True,
             "sd_manifest_rootfs_path": "/etc/pocketos/koreader-sd.sha256",
-            "sd_manifest_file_count": sd_file_count,
+            "sd_manifest_file_count": 1,
+            "sd_runtime_file_count": sd_file_count,
+            "sd_file_manifest_rootfs_path": "/etc/pocketos/koreader-runtime-files.sha256",
             "sd_manifest_sha256": sha(manifest_path),
             "sd_payload_bytes": sd_payload.stat().st_size,
             "sd_payload_sha256": sha(sd_payload),
@@ -219,9 +239,10 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
         (output / "reader-edition-report.json").write_text(json.dumps(report, indent=2) + "\n")
         (output / "NOT-FIRMWARE.txt").write_text(
             "Unsigned offline KOReader-only rootfs with separate SD runtime. "
-            "Requires manual placement of KOReader-R1-SD-PAYLOAD.tar.gz contents "
-            "under /mnt/sd_0/PocketOS/KOReaderRuntime before any device trial. "
-            "Do not flash. Runtime ABI, input, recovery and signing need "
+            "Copy KOReader-R1-SD-RUNTIME.squashfs unmodified to "
+            "/mnt/sd_0/PocketOS/KOReaderRuntime/ on a FAT32 card. "
+            "A hash-verified RO loop mount requires physical R1 kernel support. "
+            "DO NOT FLASH. Runtime ABI, input, recovery and signing need "
             "physical verification.\n")
         print(json.dumps(report, indent=2))
 

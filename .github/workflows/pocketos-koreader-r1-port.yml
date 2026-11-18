@@ -46,11 +46,14 @@ jobs:
           grep -Fq '"only_visible_ui": "KOReader"' "$base/build-reader-rootfs.py"
           grep -Fq 'MAX_ROOTFS_BYTES = 16 * 1024 * 1024' "$base/build-reader-rootfs.py"
           grep -Fq 'sd_runtime_required' "$base/build-reader-rootfs.py"
+          grep -Fq 'requires_kernel_loop_support' "$base/build-reader-rootfs.py"
+          grep -Fq 'mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$base/boot/pocketos-reader-start.sh"
+          grep -Fq 'noexec(,|$)' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'make_sd_manifest' "$base/build-reader-rootfs.py"
           grep -Fq 'sha256sum -c "$manifest"' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'export KO_HOME=' "$base/boot/pocketos-reader-start.sh"
           grep -Fq 'exec ./luajit ./reader.lua' "$base/boot/pocketos-reader-start.sh"
-          ! grep -Eq 'sonix_player|pocketos-shell|pocketos-music|pocketos-game|pocketos-doom|mount -|mtd[0-9]|flash_erase' \
+          ! grep -Eq 'sonix_player|pocketos-shell|pocketos-music|pocketos-game|pocketos-doom|mount -t vfat|remount|mtd[0-9]|flash_erase' \
             "$base/boot/pocketos-reader-start.sh"
       - name: Compile native MIPS32 little-endian touchscreen probe and run with QEMU
         run: |
