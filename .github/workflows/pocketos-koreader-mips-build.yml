@@ -126,20 +126,27 @@ jobs:
           # Upstream's 'make all' stages binaries, Lua files and plugins as
           # symlinks. Plain 'find -type f' excludes the luajit symlink, and
           # packaging those symlinks would leave a broken standalone runtime.
-          package=$(find -L native-koreader -path '*/koreader/luajit' -type f -print -quit)
-          if [ -z "$package" ]; then
-            echo 'No staged KOReader LuaJIT binary found:' >&2
+          # The exact stage directory is defined by upstream Makefile as
+          # koreader-$(TARGET)-$(TARGET_MACHINE); avoid traversing symlinked
+          # build trees or selecting another nested luajit executable.
+          app_dir="native-koreader/koreader-hibyr1-mipsel-linux-gnu/koreader"
+          package="$app_dir/luajit"
+          test -d "$app_dir"
+          if [ ! -f "$package" ]; then
+            echo "::error::Missing staged MIPS LuaJIT at $package" >&2
             find native-koreader -maxdepth 4 -name luajit -ls >&2
             exit 1
           fi
-          app_dir=$(dirname "$package")
           test -x "$package"
           mipsel-linux-gnu-readelf -h "$package" | grep -q MIPS
           test -f "$app_dir/reader.lua"
           test -f "$app_dir/frontend/device/hibyr1/device.lua"
           test -f "$app_dir/frontend/device.lua"
           test -d "$app_dir/plugins"
-          test "$(find "$app_dir/plugins" -maxdepth 1 -name '*.koplugin' -type d | wc -l)" -ge 20
+          # 'plugins' is a symlink in the upstream install tree.
+          plugin_count=$(find -L "$app_dir/plugins" -maxdepth 1 -type d -name '*.koplugin' | wc -l)
+          echo "Upstream KOReader plugin directories: $plugin_count"
+          test "$plugin_count" -ge 20
           # Test Lua CLI without touching target framebuffer/input devices.
           timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
             "$package" -e 'assert(jit.arch:match("^mips")); assert(type(require("ffi"))=="table"); print("KOReader R1 native Lua: PASS")'
@@ -147,8 +154,11 @@ jobs:
           # Dereference upstream staging links so the extracted prototype
           # does not depend on paths in the CI checkout.
           (cd "$app_dir"/.. && tar --dereference -czf "$GITHUB_WORKSPACE/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz" koreader)
-          tar -tzf native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz | grep -Fxq koreader/reader.lua
-          tar -tzf native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz | grep -Fxq koreader/luajit
+          # Materialize the listing once: grep -q on a tar pipe can fail
+          # spuriously under pipefail when tar receives SIGPIPE.
+          tar -tzf native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz > native-output/archive-entries.txt
+          grep -Fxq koreader/reader.lua native-output/archive-entries.txt
+          grep -Fxq koreader/luajit native-output/archive-entries.txt
           cp reader/koreader/boot/pocketos-reader-start.sh native-output/
           cp reader/koreader/r1-touch-probe.c native-output/
           echo 'Experimental user-space prototype. No installed device ABI, physical boot or recovered firmware verified. DO NOT FLASH.' > native-output/README.txt
