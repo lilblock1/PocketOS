@@ -1,0 +1,98 @@
+name: Publish PocketOS Update 4 development preview (NO FIRMWARE)
+on:
+  push:
+    branches: [phase6-ui-review]
+    paths:
+      - '.github/workflows/pocketos-update4-preview-release.yml'
+permissions:
+  contents: write
+  actions: read
+jobs:
+  preview:
+    if: github.repository == 'lilblock1/PocketOS'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_RUN: '44215919080'
+      ARTIFACT_DIGEST: sha256:77bbaaae27bee41f96577cf3d4fdd9087b573339daf57f0cae53e5173d157b3e
+      SOURCE_SHA: 4cc85e2f8422f702856c3525ae2c39d9180c4a0b
+    steps:
+      - name: Verify successful unsigned build and immutable artifact digest
+        run: |
+          set -euo pipefail
+          if gh release view pocketos-update4-development --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo 'Preview release already exists; refuse to overwrite'
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/jobs?per_page=100" > jobs.json
+          jq -e '[.jobs[]|select(.name=="unsigned" and .conclusion=="success")]|length==1' jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN/artifacts?per_page=100" > artifacts.json
+          jq -e --arg digest "$ARTIFACT_DIGEST" '
+            [.artifacts[]|select(.name=="PocketOS-R1-Update4-UNSIGNED-REVIEW" and
+              .digest==$digest and .expired==false)]|length==1
+          ' artifacts.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-Update4-UNSIGNED-REVIEW
+          run-id: 44215919080
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Verify package and publish development-only release
+        run: |
+          set -euo pipefail
+          jq -e --arg sha "$SOURCE_SHA" '
+            .sequence==4 and .source_commit==$sha and
+            .bootloader_payload==false and .recovery_payload==false and
+            .userdata_payload==false and
+            ([.changed_rootfs_files[]|select(.=="usr/bin/pocketos-game")]|length)==1
+          ' candidate/update4/source-report.json
+          (cd candidate/publish; sha256sum -c DOOM-SHA256SUMS)
+          unzip -tq candidate/publish/PocketOS-R1-Doom-SD.zip
+          test -s candidate/publish/pocketos-doom-source.tar.gz
+          tar -tzf candidate/publish/pocketos-doom-source.tar.gz >/dev/null
+          cat > README.txt <<'EOF'
+          POCKETOS UPDATE 4 - DEVELOPMENT-ONLY PREVIEW
+          NOT SIGNED FIRMWARE. NOT A WIFI INSTALLER. DO NOT FLASH.
+
+          The latest PocketOS Classic wheel UI, Light/Dark modes and Doom
+          integration compile and passed the offline image checks.
+          The full system update has been BUILT but requires the ORIGINAL
+          independent PocketOS signing private key, matching the R1's installed
+          trusted public key. The GitHub environment currently has only the
+          unrelated older/hybrid release key. Publishing a replacement signed
+          system update with that key would be rejected by the R1.
+
+          This preview contains only OPTIONAL Doom executable, GPL source and
+          license, plus the offline image audit; no firmware/UPT asset.
+          It contains no shareware WAD. The game binary may be placed under
+          SD/PocketOS/Games/doom alongside the owner's verified doom1.wad,
+          but the installed PocketOS system requires Update 4 to enable its
+          new Games menu and Doom trust fingerprint.
+          Doom currently has no audio.
+
+          The full unsigned firmware image is available only in the linked
+          GitHub Actions artifact. It is NOT installable or trusted by the
+          device and is NOT a replacement for a signed image.
+
+          SOURCE:
+          https://github.com/lilblock1/PocketOS/tree/phase6-ui-review
+          BUILT:
+          https://github.com/lilblock1/PocketOS/actions/runs/44215919080
+          REMAINING:
+          Configure POCKETOS_INDEPENDENT_RELEASE_KEY as an environment secret
+          in GitHub Environments -> pocketos-release, with the RETAINED key
+          that signed pocketos-test-2 and pocketos-test-3, then rerun the
+          signed release job; never paste private keys in issues or chat.
+          EOF
+          gh release create pocketos-update4-development \
+            candidate/publish/PocketOS-R1-Doom-SD.zip \
+            candidate/publish/pocketos-doom-source.tar.gz \
+            candidate/publish/COPYING candidate/publish/SOURCE.json \
+            candidate/publish/DOOM-SHA256SUMS \
+            candidate/update4/source-report.json README.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" \
+            --prerelease --latest=false \
+            --title 'PocketOS Update 4 - Classic iPod UI and Doom (development preview; no firmware)' \
+            --notes-file README.txt
+          gh release view pocketos-update4-development --repo "$GITHUB_REPOSITORY" --json url,isPrerelease
