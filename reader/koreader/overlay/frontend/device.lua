@@ -2,7 +2,7 @@ local util = require("ffi/util")
 local Version = require("version")
 
 local function probeDevice()
-    local platform = Version:getCurrentPlatform()
+    local platform = os.getenv("KO_PLATFORM") == "hibyr1" and "hibyr1" or Version:getCurrentPlatform()
     if platform then
         if platform:sub(1, #"android") == "android" then
             return require("device/android/device")
