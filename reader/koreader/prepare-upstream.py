@@ -76,6 +76,15 @@ def main():
         "\nifeq ($(TARGET), hibyr1)\n"
         "  HOSTCFLAGS+=-isystem /usr/include/x86_64-linux-gnu\n"
         "endif", 1)
+    # libjpeg-turbo has no SIMD/ASM implementation for the R1 MIPS32 CPU.
+    # Retain its portable C JPEG decoder; turn off SIMD only for hibyr1.
+    simd_anchor = "WANT_SIMD=1\n"
+    if defs.count(simd_anchor) != 1:
+        parser.error("Upstream SIMD selector changed; refusing unsafe patch")
+    defs = defs.replace(simd_anchor,
+        simd_anchor + "ifeq ($(TARGET), hibyr1)\n"
+        "  WANT_SIMD=\n"
+        "endif\n", 1)
     path.write_text(defs)
     make_dir = root / "make"
     (make_dir / "hibyr1.mk").write_text(
