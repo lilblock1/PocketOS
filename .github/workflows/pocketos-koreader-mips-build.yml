@@ -32,7 +32,7 @@ jobs:
           git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git luajit-src
           git -C luajit-src checkout --detach "$LUAJIT_SHA"
           test "$(git -C luajit-src rev-parse HEAD)" = "$LUAJIT_SHA"
-          make -C luajit-src -j2 HOST_CC="gcc -m32" CROSS=mipsel-linux-gnu- \
+          make -C luajit-src -j2 HOST_CC="gcc -m32 -isystem /usr/include/x86_64-linux-gnu" CROSS=mipsel-linux-gnu- \
             TARGET_SYS=Linux TARGET_FLAGS='-march=mips32r2 -mabi=32' \
             > luajit-compile.log 2>&1 || {
               tail -n 160 luajit-compile.log
