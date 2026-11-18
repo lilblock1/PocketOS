@@ -10,7 +10,7 @@ permissions:
   actions: read
 concurrency:
   group: pocketos-r1-independent-update-4
-  cancel-in-progress: false
+  cancel-in-progress: true
 env:
   APP_RUN: '44208157676'
   APP_SHA: 4cc85e2f8422f702856c3525ae2c39d9180c4a0b
