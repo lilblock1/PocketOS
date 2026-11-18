@@ -58,6 +58,24 @@ def main():
         "ifeq ($(TARGET), hibyr1)\n"
         "    TARGET_CFLAGS:=-march=mips32r2 -mabi=32\n"
         "else " + FLAGS, 1)
+    # Meson upstream does not recognize MIPS in its platform matrix.
+    meson_anchor = "else ifneq (,$(filter i686-%,$(TARGET_MACHINE)))"
+    if defs.count(meson_anchor) != 1:
+        parser.error("Upstream Meson CPU family selectors changed")
+    defs = defs.replace(meson_anchor,
+        "else ifneq (,$(filter mipsel-% mips-%,$(TARGET_MACHINE)))\n"
+        "  MESON_CROSS_CPU_FAMILY = mips\n"
+        + meson_anchor, 1)
+    # LuaJIT's target is 32-bit, so its host-side buildvm also compiles as
+    # 32-bit on GitHub's amd64 runner. Ubuntu's split asm include directory
+    # is required on that runner; it is not passed to the target MIPS CC.
+    host_anchor = "HOSTCFLAGS:=$(BASE_CFLAGS) $(QFLAGS)"
+    if defs.count(host_anchor) != 1:
+        parser.error("Upstream host flags changed")
+    defs = defs.replace(host_anchor, host_anchor +
+        "\nifeq ($(TARGET), hibyr1)\n"
+        "  HOSTCFLAGS+=-isystem /usr/include/x86_64-linux-gnu\n"
+        "endif", 1)
     path.write_text(defs)
     make_dir = root / "make"
     (make_dir / "hibyr1.mk").write_text(
