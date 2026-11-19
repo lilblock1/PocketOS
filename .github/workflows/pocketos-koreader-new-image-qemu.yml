@@ -1,0 +1,107 @@
+name: PocketOS R1 - execute corrected standard KOReader MIPS image (QEMU; NO FLASH)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-koreader-new-image-qemu.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  corrected-koreader-qemu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install only missing MIPS emulator with bounded retries
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          if ! command -v qemu-mipsel >/dev/null; then
+            timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=75 \
+              install -y --no-install-recommends qemu-user
+          fi
+          for cmd in qemu-mipsel unsquashfs readelf sha256sum jq; do command -v "$cmd"; done
+      - name: Authenticate exact successful corrected standard KOReader source and image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44459966936" |
+            jq -e '.status=="completed" and .conclusion=="success" and
+                   .head_branch=="reader-edition-koreader" and
+                   .head_sha=="149479d03417e34223a851cabb45dc32968f7dc9" and
+                   .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44459966936/artifacts" |
+            jq -e '[.artifacts[]|select(
+                .id==14499696478 and
+                .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
+                .digest=="sha256:c9111460d5b3bcb935166482294d7711df16ba70096c81ea0bd23196f7f5f1b5" and
+                .expired==false)]|length==1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
+          run-id: 44459966936
+          github-token: ${{ github.token }}
+          path: verified
+      - name: Validate authentic KOReader-only image and unpack rootfs + SD runtime
+        run: |
+          set -euo pipefail
+          mkdir -p root runtime report
+          jq -e '.only_visible_ui=="KOReader" and .sequence==6 and
+                 .signed==false and .safe_to_flash==false and
+                 .physical_boot_verified==false and
+                 .rootfs_bytes<=16777216 and
+                 .installed_koreader_plugin_count>=20 and
+                 .removed_other_user_interfaces==true and
+                 .bootloader_payload==false and .recovery_payload==false and
+                 .userdata_payload==false and .kernel_modified==false' \
+            verified/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 verified/candidate/reader-edition-report.json)  verified/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 verified/candidate/reader-edition-report.json)  verified/candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d root verified/candidate/reader-rootfs.squashfs >report/root-unpack.txt
+          unsquashfs -no-progress -d runtime verified/candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-unpack.txt
+          test "$(grep -c 'linux_gnu_mipsel=' runtime/ffi/posix_h.lua)" -eq 1
+          test ! -e runtime/plugins/gzreader.koplugin
+          test ! -e runtime/plugins/zenos.koplugin
+          test "$(grep -c 'UPDATE_SEQUENCE=6' root/etc/pocketos-release)" -eq 1
+          test "$(cat root/etc/pocketos/koreader-sd.sha256)" = \
+            "$(jq -r .sd_payload_sha256 verified/candidate/reader-edition-report.json)  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+      - name: Test entire native KOReader boot dependencies and RGB565 with QEMU
+        run: |
+          set -euo pipefail
+          bash tools/koreader-r1-deep-offline-test.sh root runtime report
+      - name: Execute original upstream reader.lua help command under MIPS QEMU
+        run: |
+          set -euo pipefail
+          (
+            cd runtime
+            export KO_PLATFORM=hibyr1
+            export KO_HOME="$GITHUB_WORKSPACE/KOReader-QEMU-Profile"
+            export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            mkdir -p "$KO_HOME"
+            timeout 75 qemu-mipsel -L "$GITHUB_WORKSPACE/root" ./luajit ./reader.lua -h
+          ) 2>&1 | tee report/real-reader-entry-help.txt
+          grep -Eq 'usage:|Usage:|Read all the books' report/real-reader-entry-help.txt
+          echo 'PASS: original KOReader reader.lua ran through initialization and help under MIPS QEMU, without LCD.' >>report/summary.log
+      - name: Record missing physical HiBy R1 boot gates
+        if: always()
+        run: |
+          mkdir -p report
+          cat >report/NO-FLASH.txt <<'EOF'
+          Verified standard KOReader corrected GNU MIPS ABI and native runtime.
+          QEMU USER-mode runs original KOReader without access to physical R1.
+          No device framebuffer pixels, touch events, microSD loop mounting,
+          64MB RAM ceiling, cold start, signed firmware or rollback tested.
+          Original running PocketOS OTA/signing/recovery is unchanged.
+          This unsigned rootfs/SD bundle IS NOT INSTALLABLE FIRMWARE.
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-CORRECTED-MIPS-QEMU-BOOT-REPORT-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
