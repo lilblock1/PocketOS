@@ -37,6 +37,7 @@ PY
   timeout 90 qemu-mipsel -L "$R" "$K/luajit" -e '
     package.path = "./?.lua;./?/init.lua;./frontend/?.lua;./frontend/?/init.lua;" .. package.path
     package.cpath = "./libs/?.so;./libs/lib?.so;./?.so;" .. package.cpath
+    require("setupkoenv") -- Match genuine KOReader boot: installs ffi.loadlib and correct require paths.
     for _, name in ipairs({
       "ffi/posix_h", "ffi/blitbuffer", "ffi/framebuffer_linux",
       "device/generic/device", "device/input", "device/hibyr1/device",
