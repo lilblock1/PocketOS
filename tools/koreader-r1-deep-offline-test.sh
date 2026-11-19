@@ -66,6 +66,7 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
   timeout 90 qemu-mipsel -L "$R" "$K/luajit" -e '
     package.path = "./?.lua;./?/init.lua;./frontend/?.lua;./frontend/?/init.lua;" .. package.path
     package.cpath = "./libs/?.so;./libs/lib?.so;./?.so;" .. package.cpath
+    require("setupkoenv") -- Match genuine KOReader boot: installs ffi.loadlib and correct require paths.
     assert(jit.arch:match("^mips"), "Not native MIPS")
     assert(type(require("ffi")) == "table", "LuaJIT FFI missing")
     local modules = {"ffi/blitbuffer", "ffi/framebuffer_linux", "device/generic/device", "device/input", "device/hibyr1/device"}
