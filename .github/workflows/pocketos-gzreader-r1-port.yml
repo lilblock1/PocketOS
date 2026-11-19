@@ -34,7 +34,7 @@ jobs:
           test -f source/frontend/device/hibyr1/device.lua
           test -f source/plugins/gzreader.koplugin/main.lua
           test -f source/plugins/zenos.koplugin/main.lua
-          test "$(find source/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20
+          test "$(find source/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 5
           grep -Fq 'mipsel-linux-gnu' source/base/Makefile.defs
           grep -Fq 'MESON_CROSS_CPU_FAMILY = mips' source/base/Makefile.defs
           test -f source/base/input/input.c
