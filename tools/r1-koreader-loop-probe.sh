@@ -109,13 +109,14 @@ awk -v m="$mountpoint" '$2==m && $3=="squashfs" &&
     $4 ~ /(^|,)ro(,|$)/ {ok=1} END{exit !ok}' /proc/mounts ||
     fail 'Mount is not confirmed read-only SquashFS'
 for file in reader.lua luajit frontend/device/hibyr1/device.lua \
-            plugins/koreader.koplugin/main.lua plugins/zenos.koplugin/main.lua \
-            ffi/posix_h.lua; do
+            frontend/device.lua ffi/posix_h.lua; do
     [ -f "$mountpoint/$file" ] || fail "KOReader runtime missing $file"
 done
 [ -x "$mountpoint/luajit" ] || fail 'MIPS LuaJIT cannot be executed'
 plugins=$(find "$mountpoint/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
 [ "$plugins" -ge 20 ] || fail 'KOReader full plugin tree incomplete'
+[ ! -e "$mountpoint/plugins/zenos.koplugin" ] || fail 'ZenOS must not be in standard KOReader'
+[ ! -e "$mountpoint/plugins/gzreader.koplugin" ] || fail 'GZreader must not be in standard KOReader'
 "$mountpoint/luajit" -v || fail 'Native MIPS LuaJIT could not execute on physical R1'
 echo "PASS: real R1 kernel mounted verified $actual SD SquashFS read-only, $plugins plugins, MIPS LuaJIT executed"
 echo 'NOT TESTED: LCD graphics, actual touch input, full KOReader GUI, RAM pressure, boot/recovery/rollback. DO NOT FLASH.'
