@@ -6,6 +6,8 @@ on:
       - '.github/workflows/pocketos-reader-boot-candidate.yml'
       - 'reader/koreader/build-reader-rootfs.py'
       - 'reader/koreader/boot/**'
+      - 'tools/r1-koreader-loop-probe.sh'
+      - 'tools/pack-r1-firmware-update.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -65,7 +67,11 @@ jobs:
           set -euo pipefail
           mkdir -p tool-output
           sh -n reader/koreader/boot/pocketos-reader-start.sh
-          python3 -m py_compile reader/koreader/build-reader-rootfs.py
+          sh -n tools/r1-koreader-loop-probe.sh
+          sh tools/r1-koreader-loop-probe.sh --self-test |
+            grep -Fx 'KOReader R1 SD loop mount smoke-test v1'
+          python3 -m py_compile reader/koreader/build-reader-rootfs.py tools/pack-r1-firmware-update.py
+          python3 tools/pack-r1-firmware-update.py --help | grep -Fq -- '--sd-runtime'
           mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
             reader/koreader/r1-touch-probe.c -o tool-output/pocketos-r1-touch-probe
           timeout 30 qemu-mipsel tool-output/pocketos-r1-touch-probe --self-test |
@@ -87,8 +93,25 @@ jobs:
           unsquashfs -ls reader-candidate/KOReader-R1-SD-RUNTIME.squashfs > reader-candidate/SD-IMAGE-CONTENTS.txt
           grep -Fq squashfs-root/luajit reader-candidate/SD-IMAGE-CONTENTS.txt
           grep -Fq squashfs-root/frontend/device/hibyr1/device.lua reader-candidate/SD-IMAGE-CONTENTS.txt
-          unsquashfs -cat reader-candidate/reader-rootfs.squashfs usr/bin/pocketos-start |
-            grep -Fq 'mount -t squashfs -o ro,nosuid,nodev,loop,exec'
+          unsquashfs -cat reader-candidate/reader-rootfs.squashfs usr/bin/pocketos-start >reader-candidate/launcher-reviewed.sh
+          sh -n reader-candidate/launcher-reviewed.sh
+          test "$(grep -Fc 'mount -t squashfs -o ro,nosuid,nodev,loop,exec' reader-candidate/launcher-reviewed.sh)" -eq 1
+          test "$(grep -Fc 'mknod -m 0600 /dev/loop0 b 7 0' reader-candidate/launcher-reviewed.sh)" -eq 1
+          cp tools/r1-koreader-loop-probe.sh reader-candidate/
+          cat >reader-candidate/READ-THIS-BEFORE-BOOT.txt <<'EOF'
+          KOReader R1: unsigned offline boot candidate; NOT firmware.
+          No flash is safe without an independently signed system package,
+          confirmed hardware boot smoke test and recovery validation.
+          To test ONLY the SD loop runtime on your existing PocketOS:
+          1. Copy KOReader-R1-SD-RUNTIME.squashfs to the FAT32 SD folder
+             PocketOS/KOReaderRuntime/ (do not extract the image).
+          2. Using ADB, push r1-koreader-loop-probe.sh to /tmp.
+          3. From report JSON, copy the sd_payload_sha256 value.
+          4. Run as root: sh /tmp/r1-koreader-loop-probe.sh SHA256
+          The test only makes temporary /dev and /run nodes, tests LuaJIT,
+          cleans up, and never changes firmware, OTA, or update trust.
+          Do not install reader-rootfs.squashfs directly.
+          EOF
           echo 'Offline image and launch path PASS. Physical R1 loop mount, 64 MB RAM, display and touch UNVERIFIED.'
       - uses: actions/upload-artifact@v4
         if: success()
