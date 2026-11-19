@@ -30,8 +30,19 @@ jobs:
             '44430582561 dcc5f05164ee5ef57018abdf4a30a80be363cf0a PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE 14487360020 sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3'; do
             read -r run sha name artifact digest <<<"$spec"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
-              jq -e --arg sha "$sha" '.status=="completed" and .conclusion=="success" and
-                                             .head_branch=="reader-edition-koreader" and .head_sha==$sha'
+              jq -e --arg sha "$sha" '
+                .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+                (.status=="completed" and .conclusion=="success" or
+                 (.id==44457942480 and .status=="in_progress"))'
+            if [ "$run" = 44457942480 ]; then
+              # The successful native-build job published its immutable
+              # artifact already, while an unrelated downstream image
+              # packaging job may still be installing dependencies.
+              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" |
+                jq -e '[.jobs[]|select(
+                  .name=="Attempt complete native KOReader cross-build" and
+                  .status=="completed" and .conclusion=="success")] | length==1'
+            fi
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" |
               jq -e --arg name "$name" --argjson id "$artifact" --arg digest "$digest" \
                  '[.artifacts[]|select(.id==$id and .name==$name and .digest==$digest and .expired==false)]|length==1'
