@@ -1,0 +1,111 @@
+name: PocketOS Reader Edition - QEMU boot-chain validation (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-reader-qemu-boot-test.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  qemu-userspace-and-init-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS user-mode emulator and SquashFS inspection
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user squashfs-tools binutils-mipsel-linux-gnu file
+      - name: Verify reviewed artifact and immutable source revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
+            jq -e '.conclusion == "success" and .head_sha == "dcc5f05164ee5ef57018abdf4a30a80be363cf0a"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
+            jq -e '[.artifacts[] | select(.id == 14487360020 and
+              .name == "PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
+              .digest == "sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
+              .expired == false)] | length == 1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
+          run-id: 44430582561
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Inspect real rootfs init chain and run native KOReader LuaJIT under QEMU
+        run: |
+          set -euo pipefail
+          mkdir -p extracted/root extracted/runtime report
+          sha_root=$(jq -r '.rootfs_sha256' candidate/reader-edition-report.json)
+          sha_sd=$(jq -r '.sd_payload_sha256' candidate/reader-edition-report.json)
+          printf '%s  %s\n' "$sha_root" candidate/reader-rootfs.squashfs | sha256sum -c -
+          printf '%s  %s\n' "$sha_sd" candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
+          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
+          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
+          R="$PWD/extracted/root"
+          K="$PWD/extracted/runtime"
+          {
+            echo "PocketOS Reader Edition offline QEMU userspace boot readiness check"
+            echo "Source artifact: GitHub Actions run 44430582561, commit dcc5f05164ee5ef57018abdf4a30a80be363cf0a"
+            echo "NOT full-board boot emulation; physical LCD, evdev, kernel loop mount and OTA remain unverified"
+          } | tee report/README.txt
+          for file in etc/inittab etc/init.d/rcS etc/init.d/S95pocketos usr/bin/pocketos-start usr/sbin/pocketos-r1-boot; do
+            if test -f "$R/$file"; then
+              echo "=== $file ===" >> report/boot-chain.txt
+              sed -n '1,180p' "$R/$file" >> report/boot-chain.txt
+            else
+              echo "::error::Missing init-chain file: $file" | tee -a report/boot-chain.txt
+              exit 1
+            fi
+          done
+          if ! grep -Fq '/usr/bin/pocketos-start' "$R/etc/init.d/S95pocketos" &&
+             ! grep -Fq '/usr/bin/pocketos-start' "$R/usr/sbin/pocketos-r1-boot"; then
+            echo "::error::No known boot supervisor invokes KOReader launcher" | tee report/BLOCKER.txt
+            exit 1
+          fi
+          test -f "$R/etc/pocketos/autostart" || {
+            echo "::error::S95pocketos autostart marker absent; KOReader may never launch" | tee report/BLOCKER.txt
+            exit 1
+          }
+          test -x "$R/usr/bin/pocketos-start"
+          sh -n "$R/etc/init.d/S95pocketos"
+          sh -n "$R/usr/bin/pocketos-start"
+          test ! -e "$R/usr/bin/pocketos-shell"
+          test ! -e "$R/usr/bin/pocketos-music"
+          test ! -e "$R/usr/bin/pocketos-game"
+          readelf -h "$K/luajit" >report/luajit-elf.txt
+          readelf -l "$K/luajit" >report/luajit-program-headers.txt
+          readelf -d "$K/luajit" >report/luajit-dependencies.txt
+          grep -Fq 'Machine:                           MIPS R3000' report/luajit-elf.txt ||
+            grep -Eq 'Machine:.*MIPS' report/luajit-elf.txt
+          loader=$(sed -n 's/.*Requesting program interpreter: \([^]]*\).*/\1/p' report/luajit-program-headers.txt)
+          test -n "$loader" && test -e "$R$loader" || {
+            echo "::error::Native KOReader ELF interpreter missing from rootfs: $loader" | tee report/BLOCKER.txt
+            exit 1
+          }
+          echo "QEMU MIPS32: native runtime version and FFI against installed rootfs" | tee report/qemu.txt
+          timeout 40 qemu-mipsel -L "$R" "$K/luajit" -v 2>&1 | tee -a report/qemu.txt
+          (cd "$K" &&
+            timeout 40 qemu-mipsel -L "$R" "$K/luajit" -e '
+              assert(jit.arch:match("^mips"), "Not MIPS LuaJIT");
+              assert(type(require("ffi")) == "table", "Missing LuaJIT FFI");
+              assert(type(loadfile("reader.lua")) == "function", "KOReader entry cannot compile");
+              local f = assert(io.open("frontend/device/hibyr1/device.lua", "r"));
+              f:close();
+              print("QEMU: KOReader native LuaJIT, FFI, entry parser and R1 backend PASS")
+            ' 2>&1 | tee -a "$GITHUB_WORKSPACE/report/qemu.txt")
+          echo "QEMU user-mode checks PASS. No claim of a bootable physical R1 firmware." | tee -a report/README.txt
+      - name: Publish diagnostic report even on failure
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-QEMU-BOOT-CHAIN-REPORT-NOT-FIRMWARE
+          path: report/
+          if-no-files-found: warn
+          retention-days: 14
