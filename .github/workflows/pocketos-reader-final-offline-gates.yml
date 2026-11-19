@@ -20,15 +20,22 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Install host tools with bounded retries (no firmware writers)
+      - name: Install only missing host tools with bounded retries (no firmware writers)
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          timeout 300 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
-          timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
-            install -y --no-install-recommends qemu-user squashfs-tools binutils-mipsel-linux-gnu util-linux
+          need_install=0
+          for cmd in qemu-mipsel unsquashfs readelf mount jq gh; do
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+              need_install=1
+            fi
+          done
+          if [ "$need_install" -eq 1 ]; then
+            timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+              install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux jq gh
+          fi
+          for cmd in qemu-mipsel unsquashfs readelf mount jq gh; do command -v "$cmd"; done
       - name: Authenticate exact corrected KOReader candidate, QEMU run and boot audit
         env:
           GH_TOKEN: ${{ github.token }}
