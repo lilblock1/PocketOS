@@ -1,0 +1,109 @@
+name: PocketOS KOReader R1 - final offline hardware-preflight gates (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-reader-final-offline-gates.yml'
+      - 'tools/koreader-r1-deep-offline-test.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  offline-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact reader-edition branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install host tools (no firmware writers)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user squashfs-tools binutils-mipsel-linux-gnu util-linux
+      - name: Authenticate pinned completed KOReader candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
+            jq -e '.status=="completed" and .conclusion=="success" and .head_sha=="dcc5f05164ee5ef57018abdf4a30a80be363cf0a"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
+            jq -e '[.artifacts[]|select(.id==14487360020 and
+                     .name=="PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
+                     .digest=="sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
+                     .expired==false)]|length==1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
+          run-id: 44430582561
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Verify original rootfs/SD hashes and extract authentic images
+        run: |
+          set -euo pipefail
+          mkdir -p extracted/root extracted/runtime report
+          sha_root=$(jq -r '.rootfs_sha256' candidate/reader-edition-report.json)
+          sha_sd=$(jq -r '.sd_payload_sha256' candidate/reader-edition-report.json)
+          printf '%s  %s\n' "$sha_root" candidate/reader-rootfs.squashfs | sha256sum -c -
+          printf '%s  %s\n' "$sha_sd" candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
+          jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+                  .physical_boot_verified==false and .safe_to_flash==false and
+                  .signed==false and .sd_runtime_required==true and
+                  .bootloader_payload==false and .recovery_payload==false and
+                  .userdata_payload==false and .rootfs_bytes<=16777216' candidate/reader-edition-report.json
+          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/root-extract.txt
+          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-extract.txt
+          printf '%s  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs\n' "$sha_sd" |
+            cmp - extracted/root/etc/pocketos/koreader-sd.sha256
+          echo "PASS: signed-update trust remains separate; pinned candidate images and protected SD manifest match"
+      - name: Deep MIPS ABI / graphical module / boot-chain tests under QEMU user mode
+        run: |
+          set -euo pipefail
+          bash tools/koreader-r1-deep-offline-test.sh extracted/root extracted/runtime report
+      - name: Attempt read-only SquashFS loop mount on GitHub runner (NOT an R1 test)
+        if: always()
+        run: |
+          set -u
+          mkdir -p report host-loop-mount
+          if [ ! -f candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
+            echo "NOT RUN: candidate missing" | tee report/host-loop.txt
+            exit 0
+          fi
+          if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
+            if grep -Fq ' /host-loop-mount ' /proc/mounts; then
+              echo 'GitHub runner mounted read-only image (different kernel and loop implementation)' | tee report/host-loop.txt
+            else
+              echo 'GitHub runner mounted image; verifying mountpoint' | tee report/host-loop.txt
+            fi
+            test -f host-loop-mount/reader.lua || echo 'WARNING: reader.lua missing in host loop mount' | tee -a report/host-loop.txt
+            sudo umount host-loop-mount
+          else
+            echo "UNVERIFIED: GitHub runner does not permit image loop mount; this is not an R1 failure" | tee report/host-loop.txt
+          fi
+      - name: State unresolved real-hardware gates and save complete report
+        if: always()
+        run: |
+          mkdir -p report
+          cat > report/REAL-HARDWARE-REQUIRED.txt <<'EOF'
+          Experimental KOReader R1 image: NOT SAFE TO FLASH.
+          Offline QEMU tests are USERSPACE tests, NOT MIPS board/kernel boot.
+          A host Ubuntu loop mount does not validate kernel 4.4.94-sonix.
+          Still need physical checks on EXISTING working PocketOS over ADB:
+          - SquashFS and loop support, read-only loop mount, MIPS runtime run
+          - /dev/fb0 RGB pixel format, framebuffer mmap and drawing
+          - touchscreen event identity and axis mapping, hardware keys
+          - RAM and storage pressure, repeated cold start, EPUB/PDF/CBZ/plugins
+          - signed update package, correct partition layout, recovery and rollback
+          DO NOT INSTALL reader-rootfs.squashfs or SD SquashFS as firmware.
+          No update-channel or recovery changes are performed by this CI.
+          EOF
+      - name: Upload even if tests uncover a blocker
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOReader-R1-FINAL-OFFLINE-GATES-REPORT-NOT-FIRMWARE
+          path: report/
+          if-no-files-found: warn
+          retention-days: 14
