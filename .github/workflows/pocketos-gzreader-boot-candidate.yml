@@ -1,0 +1,141 @@
+name: PocketOS R1 - GZreader-only cold-boot candidate (UNSIGNED; NOT FIRMWARE)
+on:
+  workflow_dispatch:
+    inputs:
+      native_run:
+        description: Successful GZreader native MIPS build GitHub Actions run ID
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  reader-system-candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install SquashFS, legacy update container, emulator and cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y squashfs-tools p7zip-full qemu-user \
+            gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu
+      - name: Verify successful native build source and artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.native_run }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .status=="completed" and .conclusion=="success" and
+            .head_branch=="reader-edition-gzreader" and
+            .head_repository.full_name==$repo and
+            .path==".github/workflows/pocketos-gzreader-mips-build.yml"' run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > artifacts.json
+          jq -e '[.artifacts[] | select(.name=="GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE" and .expired==false)] | length==1' artifacts.json
+          echo "SOURCE_SHA=$(jq -er .head_sha run.json)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE
+          run-id: ${{ inputs.native_run }}
+          github-token: ${{ github.token }}
+          path: compiled
+      - name: Inspect GZreader binary, ZenOS plugins and original licensed source
+        run: |
+          set -euo pipefail
+          mkdir -p reader-source original original-iso baseline probe-output report
+          (cd compiled/output; sha256sum -c SHA256SUMS)
+          tar -xzf compiled/output/GZreader-R1-MIPS-PROTOTYPE.tar.gz -C reader-source --no-same-owner --no-same-permissions
+          test -f reader-source/koreader/reader.lua
+          test -x reader-source/koreader/luajit
+          test -f reader-source/koreader/plugins/gzreader.koplugin/main.lua
+          test -f reader-source/koreader/plugins/zenos.koplugin/main.lua
+          test -f reader-source/koreader/frontend/device/hibyr1/device.lua
+          mipsel-linux-gnu-readelf -h reader-source/koreader/luajit | grep -q MIPS
+          test "$(find reader-source/koreader/plugins -mindepth 1 -maxdepth 1 -name '*.koplugin' -type d | wc -l)" -ge 5
+          sh -n reader/gzreader/boot/pocketos-reader-start.sh
+          python3 -m py_compile reader/gzreader/build-reader-rootfs.py
+      - name: Download independently proven, byte-pinned R1 PocketOS system
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
+          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' | sha256sum -c -
+          7z x -y -ooriginal-iso original/pocketos-r1.upt >/dev/null
+          python3 tools/extract-r1-system-upt.py --extracted original-iso \
+            --rootfs baseline/pocketos-rootfs.squashfs \
+            --kernel baseline/xImage \
+            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
+            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+      - name: Produce only GZreader+ZenOS system and immutable SD runtime
+        run: |
+          set -euo pipefail
+          mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
+            reader/koreader/r1-touch-probe.c -o probe-output/pocketos-r1-touch-probe
+          timeout 20 qemu-mipsel probe-output/pocketos-r1-touch-probe --self-test |
+            grep -Fx 'PocketOS KOReader R1 touch probe v1'
+          python3 reader/gzreader/build-reader-rootfs.py \
+            --baseline baseline/pocketos-rootfs.squashfs \
+            --gzreader reader-source/koreader \
+            --probe probe-output/pocketos-r1-touch-probe \
+            --launcher reader/gzreader/boot/pocketos-reader-start.sh \
+            --output candidate --sequence 6 --source-commit "$SOURCE_SHA"
+          jq -e '
+            .only_visible_ui=="GZreader" and .ui_shell=="ZenOS" and
+            .source_application=="GZreader" and
+            .source_application_sha=="936f66b753e2a65427595920c4e8f36c10ec29e5" and
+            .installed_gzreader_plugin_count>=5 and .sequence==6 and
+            .rootfs_bytes<=16777216 and .signed==false and .safe_to_flash==false and
+            .bootloader_payload==false and .recovery_payload==false and
+            .userdata_payload==false and .kernel_modified==false and
+            .removed_other_user_interfaces==true' candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/GZreader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -cat candidate/reader-rootfs.squashfs usr/bin/pocketos-start | grep -Fq 'GZreader-R1-SD-RUNTIME.squashfs'
+          test "$(unsquashfs -cat candidate/reader-rootfs.squashfs etc/pocketos-release | grep '^UPDATE_SEQUENCE=')" = 'UPDATE_SEQUENCE=6'
+          echo 'GZreader-only firmware assembly complete. UNSIGNED, NON-FLASHABLE.' | tee report/build.txt
+      - name: Test native graphics dependency without LCD
+        run: |
+          set -euo pipefail
+          mkdir -p extracted/root extracted/runtime
+          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs > report/extract-root.txt
+          unsquashfs -no-progress -d extracted/runtime candidate/GZreader-R1-SD-RUNTIME.squashfs > report/extract-runtime.txt
+          (
+            cd extracted/runtime
+            KO_PLATFORM=hibyr1 timeout 40 qemu-mipsel -L "$GITHUB_WORKSPACE/extracted/root" ./luajit -e '
+              require("setupkoenv")
+              assert(type(require("ffi"))=="table")
+              require("ffi/posix_h")
+              require("ffi/blitbuffer")
+              assert(type(loadfile("reader.lua"))=="function")
+              assert(type(loadfile("plugins/gzreader.koplugin/main.lua"))=="function")
+              assert(type(loadfile("plugins/zenos.koplugin/main.lua"))=="function")
+              print("GZreader native MIPS graphics/ZenOS entry preflight PASS")
+            '
+          ) 2>&1 | tee report/qemu-gzreader.txt
+      - name: Add physical R1 warnings to unsigned diagnostic candidate
+        if: always()
+        run: |
+          mkdir -p report
+          cat > report/UNVERIFIED-HARDWARE.txt <<'EOF'
+          Unsigned GZreader / ZenOS R1 firmware candidate.
+          DO NOT FLASH this SquashFS. It is not a signed R1 .upt update.
+          Even successful native QEMU USER-mode tests cannot validate the
+          physical HiBy R1 kernel loop mount, RGB565 panel, event mapping,
+          ~57 MiB usable RAM, actual reader GUI startup, recovery or rollback.
+          Retain existing main/test-latest signed channel unchanged.
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE
+          path: |
+            report/
+            candidate/
+          retention-days: 14
+          if-no-files-found: warn
