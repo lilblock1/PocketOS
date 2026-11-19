@@ -86,6 +86,7 @@ jobs:
           aliases = {
               "__time_t": "__time64_t",
               "__off_t": "__off64_t",
+              "__ino_t": "__ino64_t",
               "__blkcnt_t": "__blkcnt64_t",
               "__fsblkcnt_t": "__fsblkcnt64_t",
               "__fsfilcnt_t": "__fsfilcnt64_t",
