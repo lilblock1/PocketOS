@@ -33,7 +33,7 @@ def main():
     if not (root / "plugins").is_dir():
         parser.error("Missing full upstream plugin tree")
     initial = sorted(p.name for p in (root / "plugins").glob("*.koplugin"))
-    if len(initial) < 20:
+    if len(initial) < 37:
         parser.error("Upstream plugin tree is incomplete")
     source = (root / "frontend/device.lua").read_text()
     patched = (overlay / "frontend/device.lua").read_text()
