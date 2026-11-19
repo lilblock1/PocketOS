@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install cross-compiler and QEMU
         run: |
           sudo apt-get update
@@ -52,7 +52,7 @@ jobs:
           cp luajit-compile.log mips-luajit/
           sha256sum mips-luajit/luajit > mips-luajit/SHA256SUMS
           echo 'MIPS32 LuaJIT research binary only. Native KOReader C libraries and hardware boot are not validated; NOT FIRMWARE.' > mips-luajit/README.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: KOReader-R1-MIPS-LuaJIT-PROTOTYPE-NOT-FIRMWARE
@@ -67,7 +67,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Checkout pinned full KOReader and required submodules
@@ -163,7 +163,7 @@ jobs:
           cp reader/koreader/r1-touch-probe.c native-output/
           echo 'Experimental user-space prototype. No installed device ABI, physical boot or recovered firmware verified. DO NOT FLASH.' > native-output/README.txt
           (cd native-output && sha256sum KOReader-R1-MIPS-PROTOTYPE.tar.gz > SHA256SUMS)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
@@ -180,7 +180,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install verified R1 rootfs inspection and MIPS tools
@@ -188,7 +188,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y p7zip-full squashfs-tools \
             gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
           path: compiled
@@ -278,7 +278,7 @@ jobs:
             fi
           done
           echo 'Candidate is UNSIGNED and NOT SAFE TO FLASH; signing and hardware verification remain separately required.'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
