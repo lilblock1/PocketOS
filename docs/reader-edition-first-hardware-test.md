@@ -15,14 +15,15 @@ does not emulate the R1's actual kernel, LCD, touchscreen or memory budget.
 - Preserve a known-working recovery or restore firmware.
 - A failed probe is a **stop** signal, not a reason to bypass checks.
 
-For the historical, byte-pinned non-firmware KOReader candidate, open:
-https://github.com/lilblock1/PocketOS/actions/runs/44430582561
+For the **corrected, QEMU-tested** standard KOReader (not GZreader) candidate, open:
+https://github.com/lilblock1/PocketOS/actions/runs/44460649797
 
 Download the artifact named
-`PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE`
-under **Artifacts**. Extract it on your Windows PC. It should contain
-`KOReader-R1-SD-RUNTIME.squashfs` and `reader-edition-report.json` at the
-artifact root. Do **not** copy `reader-rootfs.squashfs` to the updater.
+`KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE`
+under **Artifacts**. Extract it on your Windows PC. The files are in the
+`candidate/` folder: `KOReader-R1-SD-RUNTIME.squashfs` and
+`reader-edition-report.json`. This exact image passed the MIPS QEMU
+startup/graphics/input test [#44460728655](https://github.com/lilblock1/PocketOS/actions/runs/44460728655). Do **not** copy `reader-rootfs.squashfs` to the updater.
 
 ## Windows PowerShell
 
@@ -32,7 +33,7 @@ artifact root. Do **not** copy `reader-rootfs.squashfs` to the updater.
 2. Save the repository script
    https://raw.githubusercontent.com/lilblock1/PocketOS/reader-edition-koreader/tools/r1-koreader-loop-probe.sh
    as `r1-koreader-loop-probe.sh` into the extracted artifact's directory.
-   This script is **not** included inside the older artifact ZIP.
+   This script is **not** included inside the artifact ZIP.
 3. Connect the already booted R1 over USB and run:
 
 ```powershell
@@ -40,7 +41,7 @@ adb devices
 adb shell id
 adb push .\r1-koreader-loop-probe.sh /tmp/r1-koreader-loop-probe.sh
 adb shell sh /tmp/r1-koreader-loop-probe.sh --audit
-$hash = (Get-Content .\reader-edition-report.json -Raw | ConvertFrom-Json).sd_payload_sha256
+$hash = (Get-Content .\candidate\reader-edition-report.json -Raw | ConvertFrom-Json).sd_payload_sha256
 adb shell sh /tmp/r1-koreader-loop-probe.sh $hash
 ```
 
