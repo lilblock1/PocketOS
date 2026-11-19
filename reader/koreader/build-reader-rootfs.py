@@ -93,7 +93,7 @@ def stage(baseline, koreader, probe, launcher, output, sequence, source):
     check_mips(koreader / "luajit")
     check_mips(probe)
     plugins = sorted((koreader / "plugins").glob("*.koplugin"))
-    if len(plugins) < 20 or any(not p.is_dir() or p.is_symlink() for p in plugins):
+    if len(plugins) < 37 or any(not p.is_dir() or p.is_symlink() for p in plugins):
         raise ValueError("KOReader's upstream plugin tree must be complete")
     if "exec ./luajit ./reader.lua" not in launcher.read_text():
         raise ValueError("Launcher must start genuine KOReader")
