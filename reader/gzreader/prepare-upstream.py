@@ -33,7 +33,9 @@ def main():
     if not (root / "plugins").is_dir():
         parser.error("Missing full upstream plugin tree")
     initial = sorted(p.name for p in (root / "plugins").glob("*.koplugin"))
-    if len(initial) < 20 or not {"gzreader.koplugin", "zenos.koplugin"}.issubset(set(initial)):
+    # GZreader intentionally ships a curated five-plugin tree instead of
+    # upstream KOReader's complete plugin collection. Keep it intact.
+    if len(initial) < 5 or not {"gzreader.koplugin", "zenos.koplugin"}.issubset(set(initial)):
         parser.error("GZreader and ZenOS plugin tree is incomplete")
     source = (root / "frontend/device.lua").read_text()
     patched = (overlay / "frontend/device.lua").read_text()
