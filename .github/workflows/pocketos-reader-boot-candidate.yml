@@ -25,8 +25,12 @@ jobs:
           persist-credentials: false
       - name: Install host inspection, SquashFS and MIPS tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools p7zip-full gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+          set -euo pipefail
+          # SquashFS and 7z are preinstalled on the GitHub Ubuntu image.
+          # Install only the MIPS target compiler/emulator, with a timeout.
+          timeout 180 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=1 \
+            install -y --no-install-recommends gcc-mipsel-linux-gnu \
+            binutils-mipsel-linux-gnu libc6-dev-mipsel-cross qemu-user
       - name: Verify immutable successful native MIPS provenance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,7 +73,7 @@ jobs:
           sh -n reader/koreader/boot/pocketos-reader-start.sh
           sh -n tools/r1-koreader-loop-probe.sh
           sh tools/r1-koreader-loop-probe.sh --self-test |
-            grep -Fx 'KOReader R1 SD loop mount smoke-test v1'
+            grep -Fx 'PocketOS KOReader R1 read-only hardware probe v1'
           python3 -m py_compile reader/koreader/build-reader-rootfs.py tools/pack-r1-firmware-update.py
           python3 tools/pack-r1-firmware-update.py --help | grep -Fq -- '--sd-runtime'
           mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
