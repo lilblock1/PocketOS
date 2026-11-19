@@ -30,21 +30,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44459966936" |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44460649797" |
             jq -e '.status=="completed" and .conclusion=="success" and
                    .head_branch=="reader-edition-koreader" and
-                   .head_sha=="149479d03417e34223a851cabb45dc32968f7dc9" and
+                   .head_sha=="f2ed849682cdd6ca076f7a5d2a954a179a7079cb" and
                    .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44459966936/artifacts" |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44460649797/artifacts" |
             jq -e '[.artifacts[]|select(
-                .id==14499696478 and
+                .id==14500046462 and
                 .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
-                .digest=="sha256:c9111460d5b3bcb935166482294d7711df16ba70096c81ea0bd23196f7f5f1b5" and
+                .digest=="sha256:e6115bb624cc19249fbcd5752ee21732620acb8b3437a9ce7c99c8ed1cfd787b" and
                 .expired==false)]|length==1'
       - uses: actions/download-artifact@v4
         with:
           name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
-          run-id: 44459966936
+          run-id: 44460649797
           github-token: ${{ github.token }}
           path: verified
       - name: Validate authentic KOReader-only image and unpack rootfs + SD runtime
