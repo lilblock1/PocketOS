@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 24
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Install MIPS cross compiler and host build tools
@@ -135,7 +135,7 @@ jobs:
           host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
           echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
           sha256sum generated/posix_h.lua generated/posix_h_linux_gnu_mipsel.lua >report/SHA256SUMS
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
