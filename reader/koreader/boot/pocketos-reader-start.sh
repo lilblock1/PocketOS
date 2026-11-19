@@ -46,6 +46,83 @@ sha256sum -c "$manifest" >/dev/null 2>&1 ||
     fail "Safe /run tmpfs is unavailable"
 [ ! -e "$ko" ] && [ ! -L "$ko" ] ||
     fail "Reader runtime mountpoint is already present"
+
+# Physical HiBy R1 has a registered loop block driver and /dev/loop-control,
+# but does not currently expose a /dev/loop0 block node. The existing boot
+# sequence mounts /dev as devtmpfs, so it is safe to create ONLY that one
+# temporary device node. This never writes to NAND or the SD filesystem.
+[ -d /dev ] && [ ! -L /dev ] &&
+    awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "Expected temporary /dev filesystem is unavailable"
+grep -Eq '^[[:space:]]*7[[:space:]]+loop
+# Kernel loop support is NOT YET verified on physical HiBy R1 hardware.
+mount -t squashfs -o ro,nosuid,nodev,loop,exec "$sd_image" "$ko" ||
+    fail "Verified reader SquashFS loop mount unsupported"
+awk '$2=="/run/pocketos-reader" && $3=="squashfs" &&
+     $4 ~ /(^|,)ro(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
+    fail "Reader mount is not read-only SquashFS"
+[ -f "$ko/reader.lua" ] && [ ! -L "$ko/reader.lua" ] || fail "KOReader entry point missing"
+[ -x "$ko/luajit" ] && [ ! -L "$ko/luajit" ] || fail "MIPS LuaJIT runtime missing"
+[ -f "$ko/frontend/device/hibyr1/device.lua" ] || fail "R1 KOReader backend missing"
+[ -f "$ko/frontend/device.lua" ] || fail "KOReader dispatcher missing"
+[ -d "$ko/plugins" ] || fail "Full KOReader plugin tree missing"
+[ -x "$probe" ] && [ ! -L "$probe" ] || fail "Touch detector missing"
+[ -c /dev/fb0 ] || fail "R1 framebuffer missing"
+
+touch=$("$probe") || fail "Touchscreen unavailable or ambiguous"
+case "$touch" in
+    /dev/input/event[0-9]*)
+        event=$(basename "$touch")
+        event=$(printf '%s' "$event" | sed 's/^event//')
+        case "$event" in ''|*[!0-9]*) fail "Invalid touchscreen node";; esac
+        ;;
+    *) fail "Invalid touchscreen node";;
+esac
+[ -c "$touch" ] || fail "Touchscreen device node unavailable"
+export KO_R1_TOUCH_DEV="$touch"
+export KO_PLATFORM=hibyr1
+
+# Use a writable data location for settings, reading progress, annotations
+# and extra plugins. Never write to the immutable firmware partition.
+# The only new mount is a read-only loop image; SD and internal partitions stay unchanged.
+if [ -d /mnt/sd_0 ] && [ ! -L /mnt/sd_0 ] &&
+   awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts &&
+   [ -w /mnt/sd_0 ]; then
+    state=/mnt/sd_0/KOReader
+elif [ -d /run/pocketos-data ] && [ ! -L /run/pocketos-data ] &&
+     awk '$2=="/run/pocketos-data" && $3=="ubifs" {ok=1} END {exit !ok}' /proc/mounts &&
+     [ -w /run/pocketos-data ]; then
+    state=/run/pocketos-data/KOReader
+else
+    fail "No safe writable state storage; refusing firmware writes"
+fi
+[ ! -L "$state" ] || fail "Unsafe settings directory symlink"
+mkdir -p "$state"
+[ -d "$state" ] && [ -w "$state" ] || fail "Settings directory not writable"
+export KO_HOME="$state"
+export STARDICT_DATA_DIR="$state/data/dict"
+
+# Verified SD runtime contains genuine upstream KOReader and all its plugins.
+# No custom home UI, music service or games service is invoked here.
+cd "$ko"
+if [ -d /mnt/sd_0/Books ] && [ ! -L /mnt/sd_0/Books ]; then
+    exec ./luajit ./reader.lua /mnt/sd_0/Books
+fi
+exec ./luajit ./reader.lua
+ /proc/devices ||
+    fail "Kernel loop driver major 7 is not registered"
+[ -c /dev/loop-control ] && [ ! -L /dev/loop-control ] ||
+    fail "Kernel loop-control node missing"
+if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
+    mknod -m 0600 /dev/loop0 b 7 0 ||
+        fail "Cannot create temporary /dev/loop0 block node"
+fi
+[ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] ||
+    fail "Unsafe or unavailable /dev/loop0 block node"
+# Reject any pre-existing block node with the wrong major/minor pair.
+[ "$(busybox stat -c '%t:%T' /dev/loop0)" = "7:0" ] ||
+    fail "Unexpected /dev/loop0 device identity"
+
 mkdir -m 0700 "$ko" || fail "Cannot create reader mountpoint"
 # The hash-verified SquashFS loop mount does not alter SD or NAND mounts.
 # Kernel loop support is NOT YET verified on physical HiBy R1 hardware.
