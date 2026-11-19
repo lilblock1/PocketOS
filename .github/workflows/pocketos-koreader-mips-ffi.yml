@@ -1,0 +1,127 @@
+name: PocketOS R1 - generate real standard KOReader MIPS glibc ABI (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-koreader-mips-ffi.yml'
+      - 'reader/koreader/normalize-mips-posix.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-mips-cdefs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS cross compiler and host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
+            gcc make git python3
+      - name: Check out exactly pinned upstream sources
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/koreader/koreader-base.git base-src
+          git -C base-src checkout --detach f64c3eb11049e9a75189f186d7345d97c07d87b9
+          test "$(git -C base-src rev-parse HEAD)" = f64c3eb11049e9a75189f186d7345d97c07d87b9
+          git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git host-luajit
+          git -C host-luajit checkout --detach 63c8f1a9b479ba5518cf6a170ff7729178bc3cfd
+          git clone --filter=blob:none https://github.com/tree-sitter/tree-sitter.git tree-sitter-src
+          git -C tree-sitter-src checkout --detach v0.27.0
+          git clone --filter=blob:none https://github.com/tree-sitter/tree-sitter-c.git tree-sitter-c-src
+          git -C tree-sitter-c-src checkout --detach 7fa1be1b694b6e763686793d97da01f36a0e5c12
+      - name: Compile pinned host LuaJIT and required tree-sitter C parser
+        run: |
+          set -euo pipefail
+          mkdir -p host-libs generated report
+          make -C host-luajit -j2 >report/luajit-build.log 2>&1 || { tail -n 80 report/luajit-build.log; exit 1; }
+          host-luajit/src/luajit -e 'assert(type(require("ffi"))=="table"); assert(type(require("string.buffer"))=="table"); print("LuaJIT 2.1 FFI host toolchain OK")'
+          gcc -std=gnu11 -O2 -fPIC -shared \
+            -I tree-sitter-src/lib/include -I tree-sitter-src/lib/src \
+            tree-sitter-src/lib/src/lib.c \
+            -Wl,-soname,libtree-sitter.so.0.26 \
+            -o host-libs/libtree-sitter.so.0.26
+          gcc -std=gnu11 -O2 -fPIC -shared \
+            -I tree-sitter-src/lib/include \
+            tree-sitter-c-src/src/parser.c \
+            -Wl,-soname,libtree-sitter-c.so.15.0 \
+            -o host-libs/libtree-sitter-c.so.15.0
+          file host-libs/libtree-sitter.so.0.26 host-libs/libtree-sitter-c.so.15.0 >report/host-elf.txt
+      - name: Generate native MIPS32 glibc cdefs from MIPS headers (NEVER substitute ARM)
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/host-libs"
+          # 32-bit MIPS glibc exposes 64-bit public time_t/off_t/blkcnt_t
+          # independently of its internal legacy __time_t/__off_t types.
+          # Upstream's replacements incorrectly assert that they are identical.
+          # Use the corresponding REAL glibc *64_t types, with the generator's
+          # existing strict __builtin_types_compatible_p checks still enabled.
+          # This source copy is never used by ARM/Kindle and does not disable
+          # or spoof any checks.
+          # Enforce the exact MIPS glibc typedef identities used below.
+          # Errors here are genuine ABI incompatibilities, not parse warnings.
+          mipsel-linux-gnu-gcc -march=mips32r2 -mabi=32 -x c -fsyntax-only - <<'C'
+          #define _DEFAULT_SOURCE 1
+          #define _XOPEN_SOURCE 800
+          #include <stdint.h>
+          #include <sys/types.h>
+          #include <sys/time.h>
+          _Static_assert(__builtin_types_compatible_p(__int64_t, int64_t), "MIPS __int64_t mismatch");
+          _Static_assert(__builtin_types_compatible_p(__uint64_t, uint64_t), "MIPS __uint64_t mismatch");
+          _Static_assert(__builtin_types_compatible_p(__suseconds64_t, int64_t), "MIPS __suseconds64_t mismatch");
+          C
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("base-src/ffi-cdecl/posix_cdecl.c")
+          s = p.read_text()
+          aliases = {
+              "__time_t": "__time64_t",
+              "__off_t": "__off64_t",
+              "__blkcnt_t": "__blkcnt64_t",
+              "__fsblkcnt_t": "__fsblkcnt64_t",
+              "__fsfilcnt_t": "__fsfilcnt64_t",
+          }
+          for old, new in aliases.items():
+              needle = f"cdecl_type_replace({old}, "
+              assert needle in s, (old, "upstream replacement missing")
+              s = s.replace(needle, f"cdecl_type_replace({new}, ")
+              s = s.replace(f"cdecl_type({old});", f"cdecl_type({new});")
+          p.write_text(s)
+          print("Cross-ABI fix: 64-bit glibc public aliases, strict type assertions preserved")
+          PY
+          (
+            cd base-src
+            "$GITHUB_WORKSPACE/host-luajit/src/luajit" ffi-cdecl/ffi-cdecl.lua \
+              -c mipsel-linux-gnu-gcc -f '-march=mips32r2,-mabi=32' \
+              -M -o "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" \
+              ffi-cdecl/posix_cdecl.c
+            test -s "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            grep -Fq 'cdecl_struct_timeval' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            grep -Fq 'cdecl_type_time_t' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            cp "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" ffi-cdecl/
+            python3 utils/gen_merged_cdecl_h.py \
+              "$GITHUB_WORKSPACE/generated/posix_h.lua" \
+              ffi-cdecl/posix_h_.lua platform ffi-cdecl \
+              android_arm android_arm64 android_x64 android_x86 \
+              linux_gnu_arm linux_gnu_arm64 linux_gnu_x64 linux_gnu_mipsel linux_musl_arm linux_musl_arm64 linux_musl_x64 macos
+          )
+          grep -Fq 'linux_gnu_mipsel=' generated/posix_h.lua
+          ! grep -Fq 'unsupported platform: linux_gnu_mipsel' generated/posix_h.lua
+          python3 -m py_compile reader/koreader/normalize-mips-posix.py
+          python3 reader/koreader/normalize-mips-posix.py --source generated/posix_h.lua --output generated/posix_h.lua
+          ! grep -Fq '__asm__("""' generated/posix_h.lua
+          host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
+          echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
+          sha256sum generated/posix_h.lua generated/posix_h_linux_gnu_mipsel.lua >report/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          path: |
+            generated/
+            report/
+          retention-days: 14
+          if-no-files-found: warn
