@@ -109,6 +109,18 @@ jobs:
             echo "::error::MIPS ABI generator changed beyond runner action versions; rebuild and retest."
             exit 1
           }
+          # The QEMU and boot-chain workflow definitions must still match the
+          # exact successful runs pinned above; otherwise repeat those gates.
+          git diff --quiet "$qemu_sha" "$GITHUB_SHA" -- \
+            .github/workflows/pocketos-koreader-new-image-qemu.yml || {
+              echo "::error::QEMU validation workflow changed after its pinned passing run."
+              exit 1
+            }
+          git diff --quiet "$audit_sha" "$GITHUB_SHA" -- \
+            .github/workflows/pocketos-koreader-upt-boot-audit.yml || {
+              echo "::error::boot-chain/UPT audit workflow changed after its pinned passing run."
+              exit 1
+            }
           # Do not re-label a stale candidate as current if any code that
           # affects its ABI, native runtime, rootfs or QEMU test changed later.
           git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
