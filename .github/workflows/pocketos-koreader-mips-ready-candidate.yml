@@ -1,0 +1,134 @@
+name: PocketOS R1 - standard KOReader corrected MIPS boot image assembly (UNSIGNED, NO FLASH)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-koreader-mips-ready-candidate.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  assemble-standard-reader:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 19
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify preinstalled image tools, avoid GitHub apt delays
+        run: |
+          set -euo pipefail
+          for cmd in python3 mksquashfs unsquashfs 7z readelf jq gh sha256sum tar; do command -v "$cmd"; done
+      - name: Verify successful standard KOReader native build and genuine GNU MIPS ABI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for spec in \
+            '44457942480 5583ff2f3d1e71e1afa6d45874087f8be71dd0c3 KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE 14498828705 sha256:705df2c1f9a511139db3af7471e1dce2eaf76c8609d7dcc22b33ce21f5ed337e' \
+            '44459237409 f5062b9f1e41cab8202ecf4c0ab8af7d9e54271c KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE 14499196861 sha256:67fb08f56f84b027c71e0fa27e35f311437e14014d95785a01354501b179f0fa' \
+            '44430582561 dcc5f05164ee5ef57018abdf4a30a80be363cf0a PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE 14487360020 sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3'; do
+            read -r run sha name artifact digest <<<"$spec"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
+              jq -e --arg sha "$sha" '.status=="completed" and .conclusion=="success" and
+                                             .head_branch=="reader-edition-koreader" and .head_sha==$sha'
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" |
+              jq -e --arg name "$name" --argjson id "$artifact" --arg digest "$digest" \
+                 '[.artifacts[]|select(.id==$id and .name==$name and .digest==$digest and .expired==false)]|length==1'
+          done
+      - uses: actions/download-artifact@v4
+        with:
+          name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
+          run-id: 44457942480
+          github-token: ${{ github.token }}
+          path: native
+      - uses: actions/download-artifact@v4
+        with:
+          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          run-id: 44459237409
+          github-token: ${{ github.token }}
+          path: ffi
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
+          run-id: 44430582561
+          github-token: ${{ github.token }}
+          path: previous-candidate
+      - name: Materialize verified complete original KOReader with corrected MIPS libc declarations
+        run: |
+          set -euo pipefail
+          mkdir -p full-reader tool-output report original original-iso baseline
+          (cd native/native-output && sha256sum -c SHA256SUMS)
+          tar -xzf native/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz \
+            -C full-reader --no-same-owner --no-same-permissions
+          (cd ffi && sha256sum -c report/SHA256SUMS)
+          test -f full-reader/koreader/ffi/posix_h.lua
+          grep -Fq 'linux_gnu_mipsel=' ffi/generated/posix_h.lua
+          ! grep -Fq 'linux_mipsel=' ffi/generated/posix_h.lua
+          cp ffi/generated/posix_h.lua full-reader/koreader/ffi/posix_h.lua
+          readelf -h full-reader/koreader/luajit | grep -q MIPS
+          test -f full-reader/koreader/frontend/device/hibyr1/device.lua
+          test -f full-reader/koreader/frontend/device.lua
+          test -f full-reader/koreader/reader.lua
+          [ "$(find full-reader/koreader/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20 ]
+          test ! -e full-reader/koreader/plugins/zenos.koplugin
+          test ! -e full-reader/koreader/plugins/gzreader.koplugin
+          echo "$(jq -r .rootfs_sha256 previous-candidate/reader-edition-report.json)  previous-candidate/reader-rootfs.squashfs" | sha256sum -c -
+          unsquashfs -cat previous-candidate/reader-rootfs.squashfs usr/bin/pocketos-r1-touch-probe >tool-output/pocketos-r1-touch-probe
+          chmod 755 tool-output/pocketos-r1-touch-probe
+          readelf -h tool-output/pocketos-r1-touch-probe | grep -q MIPS
+          sha256sum tool-output/pocketos-r1-touch-probe >report/touch-probe-reused-from-verified-KOReader.txt
+          sh -n reader/koreader/boot/pocketos-reader-start.sh
+          python3 -m py_compile reader/koreader/build-reader-rootfs.py
+      - name: Reuse exactly verified independent PocketOS rootfs and kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
+          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' | sha256sum -c -
+          7z x -y -ooriginal-iso original/pocketos-r1.upt >report/baseline-7zip.txt
+          python3 tools/extract-r1-system-upt.py --extracted original-iso \
+            --rootfs baseline/pocketos-rootfs.squashfs --kernel baseline/xImage \
+            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
+            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+      - name: Assemble unsigned corrected-MIPS KOReader-only rootfs and RO SD runtime
+        run: |
+          set -euo pipefail
+          python3 reader/koreader/build-reader-rootfs.py \
+            --baseline baseline/pocketos-rootfs.squashfs \
+            --koreader full-reader/koreader \
+            --probe tool-output/pocketos-r1-touch-probe \
+            --launcher reader/koreader/boot/pocketos-reader-start.sh \
+            --output candidate --sequence 6 --source-commit "$GITHUB_SHA" >report/assembly.json
+          jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and .sequence==6 and
+                 .rootfs_bytes<=16777216 and .installed_koreader_plugin_count>=20 and
+                 .removed_other_user_interfaces==true and
+                 .bootloader_payload==false and .recovery_payload==false and
+                 .userdata_payload==false and .kernel_modified==false and
+                 .physical_boot_verified==false and .signed==false and
+                 .safe_to_flash==false' candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -cat candidate/reader-rootfs.squashfs usr/bin/pocketos-start |
+            grep -Fq 'KOReader-R1-SD-RUNTIME.squashfs'
+          unsquashfs -cat candidate/KOReader-R1-SD-RUNTIME.squashfs ffi/posix_h.lua |
+            grep -Fq 'linux_gnu_mipsel='
+          cat >candidate/NOT-INSTALLABLE.txt <<'EOF'
+          This is STANDARD KOReader only. Unsigned offline image, NOT firmware.
+          Do NOT flash, use in Wi-Fi updater, or claim a hardware boot.
+          The original KOReader Lua/37+ plugins and compiled MIPS libraries are
+          preserved; GNU MIPS POSIX declarations were generated from cross ABI.
+          Real R1 kernel loop mount, framebuffer, touch, memory, and rollback
+          are UNTESTED. Preserve existing live PocketOS and signed OTA channel.
+          EOF
+          echo 'PASS: Original KOReader MIPS rootfs and protected immutable SD runtime, ABI corrected. NO FLASH.' > report/summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
+          path: |
+            candidate/
+            report/
+          retention-days: 14
+          if-no-files-found: warn
