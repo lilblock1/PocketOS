@@ -107,7 +107,7 @@ def main():
             p.error("Reader report does not match the actual built images")
         manifest = read_image_file("etc/pocketos/koreader-sd.sha256")
         image_location = "/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
-        if (manifest != (runtime_sha + "  " + image_location + "\\n").encode() or
+        if (manifest != (runtime_sha + "  " + image_location + "\n").encode() or
                 reader.get("sd_runtime_path") != image_location or
                 reader.get("sd_runtime_mount_path") != "/run/pocketos-reader" or
                 reader.get("sd_manifest_sha256") != hashlib.sha256(manifest).hexdigest()):
