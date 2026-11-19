@@ -1,13 +1,12 @@
-name: PocketOS Reader Edition - Fast RO-SD boot-candidate review (NOT FIRMWARE)
+name: PocketOS Reader Edition - verify QEMU-passing RO-SD candidate (NOT FIRMWARE)
 on:
   push:
     branches: [reader-edition-koreader]
     paths:
       - '.github/workflows/pocketos-reader-boot-candidate.yml'
-      - 'reader/koreader/build-reader-rootfs.py'
-      - 'reader/koreader/boot/**'
       - 'tools/r1-koreader-loop-probe.sh'
-      - 'tools/pack-r1-firmware-update.py'
+      - 'tools/koreader-r1-deep-offline-test.sh'
+      - 'docs/reader-edition-first-hardware-test.md'
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,109 +17,164 @@ concurrency:
 jobs:
   ro-sd-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Install host inspection, SquashFS and MIPS tools
+      - name: Install QEMU and image inspection tools with bounded retries
+        timeout-minutes: 10
         run: |
           set -euo pipefail
-          # SquashFS and 7z are preinstalled on the GitHub Ubuntu image.
-          # Install only the MIPS target compiler/emulator, with a timeout.
-          timeout 180 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=1 \
-            install -y --no-install-recommends gcc-mipsel-linux-gnu \
-            binutils-mipsel-linux-gnu libc6-dev-mipsel-cross qemu-user
-      - name: Verify immutable successful native MIPS provenance
+          if ! command -v qemu-mipsel >/dev/null; then
+            timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+              install -y --no-install-recommends qemu-user
+          fi
+          for cmd in qemu-mipsel unsquashfs readelf sha256sum jq gh; do command -v "$cmd"; done
+      - name: Authenticate the exact QEMU-tested standard KOReader candidate and boot audit
+        id: provenance
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44415673018" |
-            jq -e '.conclusion=="success" and .head_sha=="85d84796a4190087d7d5d215e09e190bf817797d"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44415673018/artifacts" |
-            jq -e '[.artifacts[]|select(.id==14480643143 and
-              .name=="KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE" and
-              .digest=="sha256:67b2bf8e248d2ca09d817a2a272861434fc334a5abde3c0c69d830813bd4bf4b"
-              and .expired==false)]|length==1'
-      - name: Download the successful, independently verified native KOReader runtime
-        uses: actions/download-artifact@v4
+          candidate_run=44460649797
+          candidate_sha=f2ed849682cdd6ca076f7a5d2a954a179a7079cb
+          qemu_run=44460728655
+          qemu_sha=672a18bec0e0512675e96c6bd24c16189667ba03
+          audit_run=44460896960
+          audit_sha=8e0662876f5c84b0f04210878e1c674b7e156506
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run" |
+            jq -e --arg sha "$candidate_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$qemu_run" |
+            jq -e --arg sha "$qemu_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-new-image-qemu.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$audit_run" |
+            jq -e --arg sha "$audit_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-upt-boot-audit.yml"'
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run/artifacts" |
+            jq -e '[.artifacts[]|select(
+              .id==14500046462 and
+              .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
+              .digest=="sha256:e6115bb624cc19249fbcd5752ee21732620acb8b3437a9ce7c99c8ed1cfd787b" and
+              .expired==false)]|length==1'
+
+          git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
+          # Do not re-label a stale candidate as current if any code that
+          # affects its ABI, native runtime, rootfs or QEMU test changed later.
+          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
+            .github/workflows/pocketos-koreader-mips-build.yml \
+            .github/workflows/pocketos-koreader-mips-ffi.yml \
+            .github/workflows/pocketos-koreader-mips-ready-candidate.yml \
+            reader/koreader/normalize-mips-posix.py \
+            reader/koreader/prepare-upstream.py \
+            reader/koreader/overlay \
+            reader/koreader/boot/pocketos-reader-start.sh \
+            reader/koreader/r1-touch-probe.c \
+            reader/koreader/build-reader-rootfs.py \
+            tools/koreader-r1-deep-offline-test.sh || {
+              echo "::error::The pinned QEMU candidate is stale relative to native/ABI sources; rebuild and retest before creating a hardware bundle."
+              exit 1
+            }
+          echo "Candidate, QEMU and boot-chain provenance verified; runtime source files unchanged." 
+      - uses: actions/download-artifact@v4
         with:
-          name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
-          run-id: 44415673018
+          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
+          run-id: 44460649797
           github-token: ${{ github.token }}
-          path: previous
-      - name: Download byte-pinned independent system 2 baseline
-        env:
-          GH_TOKEN: ${{ github.token }}
+          path: verified
+      - name: Verify candidate hashes, original KOReader identity and 16 MiB rootfs limit
         run: |
           set -euo pipefail
-          mkdir -p full-reader original original-iso baseline
-          tar -xzf previous/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz -C full-reader --no-same-owner --no-same-permissions
-          test -f full-reader/koreader/luajit
-          test -d full-reader/koreader/plugins
-          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
-          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' | sha256sum -c -
-          7z x -y -ooriginal-iso original/pocketos-r1.upt >/dev/null
-          python3 tools/extract-r1-system-upt.py --extracted original-iso \
-            --rootfs baseline/pocketos-rootfs.squashfs --kernel baseline/xImage \
-            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
-            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
-      - name: Build guarded reader-only rootfs and immutable SD SquashFS
-        run: |
-          set -euo pipefail
-          mkdir -p tool-output
-          sh -n reader/koreader/boot/pocketos-reader-start.sh
-          sh -n tools/r1-koreader-loop-probe.sh
-          sh tools/r1-koreader-loop-probe.sh --self-test |
-            grep -Fx 'PocketOS KOReader R1 read-only hardware probe v1'
-          python3 -m py_compile reader/koreader/build-reader-rootfs.py tools/pack-r1-firmware-update.py
-          python3 tools/pack-r1-firmware-update.py --help | grep -Fq -- '--sd-runtime'
-          mipsel-linux-gnu-gcc -static -Os -Wall -Wextra -Werror \
-            reader/koreader/r1-touch-probe.c -o tool-output/pocketos-r1-touch-probe
-          timeout 30 qemu-mipsel tool-output/pocketos-r1-touch-probe --self-test |
-            grep -Fx 'PocketOS KOReader R1 touch probe v1'
-          python3 reader/koreader/build-reader-rootfs.py \
-            --baseline baseline/pocketos-rootfs.squashfs --koreader full-reader/koreader \
-            --probe tool-output/pocketos-r1-touch-probe \
-            --launcher reader/koreader/boot/pocketos-reader-start.sh \
-            --output reader-candidate --sequence 4 --source-commit "$GITHUB_SHA"
+          mkdir -p root runtime report hardware-bundle
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
-                  .sd_runtime_required==true and .sd_mount_noexec_preserved==true and
-                  .requires_kernel_loop_support==true and
-                  .sd_runtime_mount_path=="/run/pocketos-reader" and
-                  .sd_runtime_file_count>100 and .installed_koreader_plugin_count>=20 and
-                  .rootfs_bytes<=16777216 and .bootloader_payload==false and
-                  .recovery_payload==false and .userdata_payload==false and
-                  .signed==false and .safe_to_flash==false' reader-candidate/reader-edition-report.json
-          echo "$(jq -r '.sd_payload_sha256' reader-candidate/reader-edition-report.json)  reader-candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
-          unsquashfs -ls reader-candidate/KOReader-R1-SD-RUNTIME.squashfs > reader-candidate/SD-IMAGE-CONTENTS.txt
-          grep -Fq squashfs-root/luajit reader-candidate/SD-IMAGE-CONTENTS.txt
-          grep -Fq squashfs-root/frontend/device/hibyr1/device.lua reader-candidate/SD-IMAGE-CONTENTS.txt
-          unsquashfs -cat reader-candidate/reader-rootfs.squashfs usr/bin/pocketos-start >reader-candidate/launcher-reviewed.sh
-          sh -n reader-candidate/launcher-reviewed.sh
-          test "$(grep -Fc 'mount -t squashfs -o ro,nosuid,nodev,loop,exec' reader-candidate/launcher-reviewed.sh)" -eq 1
-          test "$(grep -Fc 'mknod -m 0600 /dev/loop0 b 7 0' reader-candidate/launcher-reviewed.sh)" -eq 1
-          cp tools/r1-koreader-loop-probe.sh reader-candidate/
-          cat >reader-candidate/READ-THIS-BEFORE-BOOT.txt <<'EOF'
-          KOReader R1: unsigned offline boot candidate; NOT firmware.
-          No flash is safe without an independently signed system package,
-          confirmed hardware boot smoke test and recovery validation.
-          To test ONLY the SD loop runtime on your existing PocketOS:
-          1. Copy KOReader-R1-SD-RUNTIME.squashfs to the FAT32 SD folder
-             PocketOS/KOReaderRuntime/ (do not extract the image).
-          2. Using ADB, push r1-koreader-loop-probe.sh to /tmp.
-          3. From report JSON, copy the sd_payload_sha256 value.
-          4. Run as root: sh /tmp/r1-koreader-loop-probe.sh SHA256
-          The test only makes temporary /dev and /run nodes, tests LuaJIT,
-          cleans up, and never changes firmware, OTA, or update trust.
-          Do not install reader-rootfs.squashfs directly.
+                 .sequence==6 and .installed_koreader_plugin_count>=37 and
+                 .rootfs_bytes<=16777216 and .removed_other_user_interfaces==true and
+                 .physical_boot_verified==false and .signed==false and
+                 .safe_to_flash==false and .sd_runtime_required==true and
+                 .sd_mount_noexec_preserved==true and
+                 .bootloader_payload==false and .recovery_payload==false and
+                 .userdata_payload==false and .kernel_modified==false' \
+            verified/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 verified/candidate/reader-edition-report.json)  verified/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 verified/candidate/reader-edition-report.json)  verified/candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d root verified/candidate/reader-rootfs.squashfs >report/root-unpack.txt
+          unsquashfs -no-progress -d runtime verified/candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-unpack.txt
+          test "$(grep -c 'linux_gnu_mipsel=' runtime/ffi/posix_h.lua)" -eq 1
+          ! grep -Fq 'linux_mipsel=' runtime/ffi/posix_h.lua
+          ! grep -Fq 'unsupported platform: linux_gnu_mipsel' runtime/ffi/posix_h.lua
+          test ! -e runtime/plugins/gzreader.koplugin
+          test ! -e runtime/plugins/zenos.koplugin
+          test -f runtime/reader.lua
+          test -f runtime/frontend/device/hibyr1/device.lua
+          test -x root/usr/bin/pocketos-start
+          test "$(cat root/etc/pocketos/koreader-sd.sha256)" = \
+            "$(jq -r .sd_payload_sha256 verified/candidate/reader-edition-report.json)  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+          echo 'PASS: exact candidate hashes, GNU MIPS ABI key, original KOReader frontend, 37+ plugins, protected SD manifest, no GZreader/ZenOS.'
+      - name: Execute POSIX, framebuffer, input and RGB565 smoke under native MIPS QEMU
+        run: |
+          set -euo pipefail
+          bash tools/koreader-r1-deep-offline-test.sh root runtime report
+          (
+            cd runtime
+            export KO_PLATFORM=hibyr1
+            export KO_HOME="$GITHUB_WORKSPACE/KOReader-QEMU-Profile"
+            export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            mkdir -p "$KO_HOME"
+            timeout 75 qemu-mipsel -L "$GITHUB_WORKSPACE/root" ./luajit ./reader.lua -h
+          ) 2>&1 | tee report/real-reader-entry-help.txt
+          grep -Eq 'usage:|Usage:|Read all the books' report/real-reader-entry-help.txt
+          echo 'PASS: original KOReader reader.lua help under MIPS QEMU; this is not a physical R1 boot.' >>report/summary.log
+      - name: Package only the QEMU-verified candidate and safe read-only hardware probe
+        run: |
+          set -euo pipefail
+          cp verified/candidate/reader-rootfs.squashfs hardware-bundle/
+          cp verified/candidate/KOReader-R1-SD-RUNTIME.squashfs hardware-bundle/
+          cp verified/candidate/reader-edition-report.json hardware-bundle/
+          cp tools/r1-koreader-loop-probe.sh hardware-bundle/
+          cp docs/reader-edition-first-hardware-test.md hardware-bundle/
+          cat >hardware-bundle/READ-THIS-FIRST-NOT-FIRMWARE.txt <<'EOF'
+          QEMU-verified standard upstream KOReader R1 candidate.
+          UNSIGNED, NOT INSTALLABLE, NOT FIRMWARE. Do not flash either SquashFS.
+          Only the SD runtime is used for the safe read-only probe on an
+          already-booted independent PocketOS device. Keep the rootfs image
+          on the PC. Follow docs/reader-edition-first-hardware-test.md exactly.
+          The probe verifies the SD hash, requires FAT32 noexec to remain set,
+          mounts SquashFS read-only in volatile /run, runs only LuaJIT -v,
+          then cleans up its temporary loop node and mount.
+          No firmware, OTA channel, signature key or recovery data is changed.
+          QEMU does not test the real LCD, touch controller, kernel loop driver,
+          64 MiB RAM limit, physical cold boot, signing or rollback.
           EOF
-          echo 'Offline image and launch path PASS. Physical R1 loop mount, 64 MB RAM, display and touch UNVERIFIED.'
+          (cd hardware-bundle && sha256sum * >SHA256SUMS)
+          cat >report/PHYSICAL-GATES-REMAIN.txt <<'EOF'
+          QEMU POSIX, framebuffer module, input module, RGB565 software buffer,
+          and original reader.lua help passed.
+          Still unverified on hardware: cold boot, /dev/fb0 pixels, touch/key
+          mapping, kernel SquashFS+loop support, FAT32 noexec + read-only loop
+          mount, RAM pressure, signing identity, recovery and rollback.
+          No flash or OTA operation was performed.
+          EOF
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
-          path: reader-candidate/
+          name: KOReader-R1-QEMU-VERIFIED-RO-SD-PREFLIGHT-NOT-FIRMWARE
+          path: hardware-bundle/
           retention-days: 14
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-RO-SD-PREFLIGHT-REPORT-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
+          if-no-files-found: warn
