@@ -75,6 +75,8 @@ jobs:
           #include <sys/types.h>
           #include <sys/time.h>
           #include <sys/resource.h>
+          #include <sys/stat.h>
+          #include <sys/statvfs.h>
           #include <stddef.h>
           #include <limits.h>
           /* The legacy KOReader base leaks __priority_which_t in its
@@ -90,6 +92,26 @@ jobs:
           _Static_assert(__builtin_types_compatible_p(__int64_t, int64_t), "MIPS __int64_t mismatch");
           _Static_assert(__builtin_types_compatible_p(__uint64_t, uint64_t), "MIPS __uint64_t mismatch");
           _Static_assert(__builtin_types_compatible_p(__suseconds64_t, int64_t), "MIPS __suseconds64_t mismatch");
+          /* Assert every 64-bit alias used to normalize the generated POSIX
+           * declarations, including the public types exposed by these headers.
+           * Width-only checks are insufficient: LuaJIT FFI needs matching C
+           * type identity/alignment as well as the same byte count. */
+          #define ABI_TYPE_EQ(actual, expected, label) \
+            _Static_assert(sizeof(actual) == sizeof(expected), label " size mismatch"); \
+            _Static_assert(_Alignof(actual) == _Alignof(expected), label " alignment mismatch"); \
+            _Static_assert(__builtin_types_compatible_p(actual, expected), label " type mismatch")
+          ABI_TYPE_EQ(__time64_t, int64_t, "MIPS __time64_t");
+          ABI_TYPE_EQ(__off64_t, int64_t, "MIPS __off64_t");
+          ABI_TYPE_EQ(__ino64_t, uint64_t, "MIPS __ino64_t");
+          ABI_TYPE_EQ(__blkcnt64_t, int64_t, "MIPS __blkcnt64_t");
+          ABI_TYPE_EQ(__fsblkcnt64_t, uint64_t, "MIPS __fsblkcnt64_t");
+          ABI_TYPE_EQ(__fsfilcnt64_t, uint64_t, "MIPS __fsfilcnt64_t");
+          ABI_TYPE_EQ(time_t, __time64_t, "MIPS public time_t");
+          ABI_TYPE_EQ(off_t, __off64_t, "MIPS public off_t");
+          ABI_TYPE_EQ(ino_t, __ino64_t, "MIPS public ino_t");
+          ABI_TYPE_EQ(blkcnt_t, __blkcnt64_t, "MIPS public blkcnt_t");
+          ABI_TYPE_EQ(fsblkcnt_t, __fsblkcnt64_t, "MIPS public fsblkcnt_t");
+          ABI_TYPE_EQ(fsfilcnt_t, __fsfilcnt64_t, "MIPS public fsfilcnt_t");
           C
           python3 - <<'PY'
           from pathlib import Path
