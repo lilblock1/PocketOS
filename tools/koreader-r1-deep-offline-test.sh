@@ -30,7 +30,11 @@ grep -Fq 'exec ./luajit ./reader.lua' "$R/usr/bin/pocketos-start" || fail "KORea
 [ -f "$K/frontend/device/hibyr1/device.lua" ] || fail "R1 backend absent"
 [ -d "$K/plugins" ] || fail "Plugin directory missing"
 plugins=$(find "$K/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
-[ "$plugins" -ge 20 ] || fail "Incomplete plugin tree: $plugins"
+[ "$plugins" -ge 37 ] || fail "Incomplete upstream plugin tree: $plugins (need 37+)"
+grep -Fq 'linux_gnu_mipsel=' "$K/ffi/posix_h.lua" || fail "Compiler-generated GNU MIPS POSIX declarations missing"
+if grep -Fq 'linux_mipsel=' "$K/ffi/posix_h.lua"; then fail "Nonstandard MIPS POSIX platform key present"; fi
+[ ! -e "$K/plugins/zenos.koplugin" ] || fail "ZenOS plugin must not be packaged"
+[ ! -e "$K/plugins/gzreader.koplugin" ] || fail "GZreader plugin must not be packaged"
 echo "PASS: startup wiring, OS identity, no legacy UI, protected SD mount, $plugins plugins"
 readelf -h "$K/luajit" > "$REPORT/luajit-elf.txt"
 readelf -l "$K/luajit" > "$REPORT/luajit-program.txt"
