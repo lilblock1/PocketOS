@@ -1,0 +1,165 @@
+name: PocketOS R1 - GZreader cold-boot chain and UPT recovery layout audit (NO FLASH)
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - '.github/workflows/pocketos-gzreader-upt-boot-audit.yml'
+      - 'tools/r1-gzreader-hardware-probe.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  offline-bootchain-and-upt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use existing SquashFS tooling and obtain ISO generator (not a flasher)
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          for tool in unsquashfs 7z jq gh sha256sum openssl python3; do command -v "$tool"; done
+          if ! command -v genisoimage >/dev/null; then
+            timeout 180 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=25 \
+              install -y --no-install-recommends genisoimage
+          fi
+          command -v genisoimage
+      - name: Confirm exact verified GZreader artifact and immutable test-2 baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44451882960" |
+            jq -e '.status=="completed" and .conclusion=="success" and
+                   .head_branch=="reader-edition-gzreader" and
+                   .path==".github/workflows/pocketos-gzreader-boot-candidate.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44451882960/artifacts" |
+            jq -e '[.artifacts[] | select(
+              .id==14495364980 and
+              .digest=="sha256:2db2af996237ca4252ea0433619cf4b5441583e1b68692ea9bcc8fa2b5bc3749" and
+              .name=="GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE" and
+              .expired==false)] | length==1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE
+          run-id: 44451882960
+          github-token: ${{ github.token }}
+          path: pinned
+      - name: Verify hashes, init chain, GZreader-only visible frontend, signed recovery tools
+        run: |
+          set -euo pipefail
+          mkdir -p report root sd
+          jq -e '.only_visible_ui=="GZreader" and .ui_shell=="ZenOS" and
+                 .rootfs_bytes<=16777216 and .installed_gzreader_plugin_count>=5 and
+                 .bootloader_payload==false and .recovery_payload==false and
+                 .userdata_payload==false and .signed==false and
+                 .physical_boot_verified==false and .safe_to_flash==false' pinned/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 pinned/candidate/reader-edition-report.json)  pinned/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 pinned/candidate/reader-edition-report.json)  pinned/candidate/GZreader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d root pinned/candidate/reader-rootfs.squashfs >report/root-unpack.txt
+          unsquashfs -no-progress -d sd pinned/candidate/GZreader-R1-SD-RUNTIME.squashfs >report/sd-unpack.txt
+          test -f root/etc/inittab
+          test -f root/etc/init.d/rcS
+          test -f root/etc/init.d/S95pocketos
+          test -f root/etc/pocketos/autostart
+          test -x root/usr/bin/pocketos-start
+          test -x root/usr/sbin/pocketos-r1-boot
+          test -x root/usr/bin/pocketos-update
+          test -x root/usr/sbin/pocketos-recovery-arm
+          test -f root/etc/pocketos/update-public.pem
+          test -f root/etc/pocketos/gzreader-sd.sha256
+          test -f root/etc/pocketos/gzreader-runtime-files.sha256
+          grep -Fq '::sysinit:/etc/init.d/rcS' root/etc/inittab
+          grep -Fq '/usr/bin/pocketos-start' root/etc/init.d/S95pocketos
+          grep -Fq '/usr/bin/pocketos-start' root/usr/sbin/pocketos-r1-boot
+          grep -Fq 'GZreader-R1-SD-RUNTIME.squashfs' root/usr/bin/pocketos-start
+          grep -Fq 'exec ./luajit ./reader.lua' root/usr/bin/pocketos-start
+          grep -Fq 'KO_PLATFORM=hibyr1' root/usr/bin/pocketos-start
+          grep -Fq 'sha256sum -c "$manifest"' root/usr/bin/pocketos-start
+          grep -Fq 'mount -t squashfs -o ro,nosuid,nodev,loop,exec' root/usr/bin/pocketos-start
+          for old in pocketos-shell pocketos-music pocketos-game pocketos-decoder; do
+            test ! -e "root/usr/bin/$old"
+          done
+          test -f sd/plugins/gzreader.koplugin/main.lua
+          test -f sd/plugins/zenos.koplugin/main.lua
+          test -f sd/reader.lua
+          test -f sd/frontend/device/hibyr1/device.lua
+          grep -Fq 'linux_mipsel=' sd/ffi/posix_h.lua
+          [ "$(find sd/plugins -mindepth 1 -maxdepth 1 -name '*.koplugin' -type d | wc -l)" -ge 5 ]
+          sh -n root/usr/bin/pocketos-start
+          sh -n root/etc/init.d/S95pocketos
+          sh -n root/usr/sbin/pocketos-r1-boot
+          sh -n tools/r1-gzreader-hardware-probe.sh
+          test "$(sh tools/r1-gzreader-hardware-probe.sh --self-test)" = 'PocketOS GZreader R1 read-only hardware probe v1'
+          actual="$(cat root/etc/pocketos/gzreader-sd.sha256)"
+          expected="$(jq -r .sd_payload_sha256 pinned/candidate/reader-edition-report.json)  /mnt/sd_0/PocketOS/GZreaderRuntime/GZreader-R1-SD-RUNTIME.squashfs"
+          test "$actual" = "$expected"
+          echo 'PASS: packaged R1 init+autostart, GZreader/ZenOS sole UI, correct protected SD digest and recovery tools.' >report/bootchain.txt
+      - name: Extract pinned original kernel for simulated R1 legacy UPT packing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p original original-iso baseline
+          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
+          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' | sha256sum -c -
+          7z x -y -ooriginal-iso original/pocketos-r1.upt >report/baseline-extract.log
+          python3 tools/extract-r1-system-upt.py --extracted original-iso \
+            --rootfs baseline/pocketos-rootfs.squashfs --kernel baseline/xImage \
+            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
+            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+      - name: Build and inspect *unsigned*, offline-only UPT structure; do NOT publish UPT
+        run: |
+          set -euo pipefail
+          mkdir -p offline-upt report
+          python3 - <<'PY'
+          import importlib.util, json, pathlib
+          root = pathlib.Path.cwd()
+          spec = importlib.util.spec_from_file_location("upt", root/"tools/build-r1-upt.py")
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          report = json.loads((root/"pinned/candidate/reader-edition-report.json").read_text())
+          c = {"image":{"sha256":report["rootfs_sha256"]},
+               "primary_target":"/dev/mtd2 (rootfs)",
+               "kernel_reused":True,"build_id":report["source_commit"][:16]}
+          result = mod.package(
+              root/"pinned/candidate/reader-rootfs.squashfs", c,
+              root/"offline-upt/iso-stage",
+              root/"offline-upt/pocketos-r1.upt", root/"baseline/xImage")
+          assert result["kernel_payload"] is True
+          assert result["kernel_unchanged"] is True
+          assert result["kernel_target_when_in_software_recovery"] == "/dev/mtd1"
+          assert result["rootfs_target_when_in_software_recovery"] == "/dev/mtd2"
+          assert all(result[n] is False for n in ("bootloader_payload","recovery_payload","userdata_payload"))
+          (root/"report/unsigned-upt-layout.json").write_text(json.dumps(result,indent=2)+"\n")
+          print("PASS: offline ISO 9660 R1 kernel/rootfs payload layout; UNSIGNED, NEVER FLASH")
+          PY
+          7z x -y -ooffline-upt/verify offline-upt/pocketos-r1.upt >report/upt-list-extract.log
+          test -f offline-upt/verify/ota_v0/ota_update.in
+          grep -Fxq 'img_type=kernel' offline-upt/verify/ota_v0/ota_update.in
+          grep -Fxq 'img_type=rootfs' offline-upt/verify/ota_v0/ota_update.in
+          test "$(find offline-upt/verify/ota_v0 -name 'xImage.*' | wc -l)" -ge 2
+          test "$(find offline-upt/verify/ota_v0 -name 'rootfs.squashfs.*' | wc -l)" -ge 10
+          echo 'PASS: kernel/rootfs chunks present; original kernel hash is unchanged.' >>report/bootchain.txt
+      - name: State remaining physical/signing gates explicitly
+        if: always()
+        run: |
+          mkdir -p report
+          cat >report/NO-FLASH.txt <<'EOF'
+          This job inspects GZreader boot/init and a disposable legacy UPT layout.
+          UNSIGNED staging ISO is NEVER uploaded and is deleted with the runner.
+          It does not prove a physical R1 can boot GZreader.
+          Need: real R1 kernel loop + SquashFS, /dev/fb0 and touch tests,
+          ~57 MiB memory budget, signed update/recovery and confirmed rollback.
+          No Wi-Fi OTA or active firmware channel is touched.
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-COLD-BOOT-CHAIN-UPT-LAYOUT-REPORT-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
