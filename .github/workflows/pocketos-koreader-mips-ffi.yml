@@ -74,6 +74,19 @@ jobs:
           #include <stdint.h>
           #include <sys/types.h>
           #include <sys/time.h>
+          #include <sys/resource.h>
+          #include <stddef.h>
+          #include <limits.h>
+          /* The legacy KOReader base leaks __priority_which_t in its
+           * setpriority prototype. A MIPS enum passed as int must have the
+           * same size, alignment and compatible underlying type. */
+          _Static_assert(sizeof(__priority_which_t) == sizeof(int),
+                         "MIPS priority enum register width differs from int");
+          _Static_assert(_Alignof(__priority_which_t) == _Alignof(int),
+                         "MIPS priority enum alignment differs from int");
+          _Static_assert(__builtin_types_compatible_p(__priority_which_t, int) ||
+                         __builtin_types_compatible_p(__priority_which_t, unsigned int),
+                         "MIPS priority enum underlying ABI is not int");
           _Static_assert(__builtin_types_compatible_p(__int64_t, int64_t), "MIPS __int64_t mismatch");
           _Static_assert(__builtin_types_compatible_p(__uint64_t, uint64_t), "MIPS __uint64_t mismatch");
           _Static_assert(__builtin_types_compatible_p(__suseconds64_t, int64_t), "MIPS __suseconds64_t mismatch");
