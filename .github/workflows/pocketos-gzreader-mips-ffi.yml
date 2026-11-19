@@ -4,6 +4,7 @@ on:
     branches: [reader-edition-gzreader]
     paths:
       - '.github/workflows/pocketos-gzreader-mips-ffi.yml'
+      - 'reader/gzreader/normalize-mips-posix.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -60,6 +61,18 @@ jobs:
           # existing strict __builtin_types_compatible_p checks still enabled.
           # This source copy is never used by ARM/Kindle and does not disable
           # or spoof any checks.
+          # Enforce the exact MIPS glibc typedef identities used below.
+          # Errors here are genuine ABI incompatibilities, not parse warnings.
+          mipsel-linux-gnu-gcc -march=mips32r2 -mabi=32 -x c -fsyntax-only - <<'C'
+          #define _DEFAULT_SOURCE 1
+          #define _XOPEN_SOURCE 800
+          #include <stdint.h>
+          #include <sys/types.h>
+          #include <sys/time.h>
+          _Static_assert(__builtin_types_compatible_p(__int64_t, int64_t), "MIPS __int64_t mismatch");
+          _Static_assert(__builtin_types_compatible_p(__uint64_t, uint64_t), "MIPS __uint64_t mismatch");
+          _Static_assert(__builtin_types_compatible_p(__suseconds64_t, int64_t), "MIPS __suseconds64_t mismatch");
+          C
           python3 - <<'PY'
           from pathlib import Path
           p = Path("base-src/ffi-cdecl/posix_cdecl.c")
@@ -97,6 +110,9 @@ jobs:
           )
           grep -Fq 'linux_mipsel=' generated/posix_h.lua
           ! grep -Fq 'unsupported platform: linux_mipsel' generated/posix_h.lua
+          python3 -m py_compile reader/gzreader/normalize-mips-posix.py
+          python3 reader/gzreader/normalize-mips-posix.py --source generated/posix_h.lua --output generated/posix_h.lua
+          ! grep -Fq '__asm__("""' generated/posix_h.lua
           host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
           echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
           sha256sum generated/posix_h.lua generated/posix_h_linux_mipsel.lua >report/SHA256SUMS
