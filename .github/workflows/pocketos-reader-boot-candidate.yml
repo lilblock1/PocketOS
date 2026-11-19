@@ -138,17 +138,28 @@ jobs:
       - name: Package only the QEMU-verified candidate and safe read-only hardware probe
         run: |
           set -euo pipefail
-          cp verified/candidate/reader-rootfs.squashfs hardware-bundle/
-          cp verified/candidate/KOReader-R1-SD-RUNTIME.squashfs hardware-bundle/
-          cp verified/candidate/reader-edition-report.json hardware-bundle/
+          mkdir -p hardware-bundle/candidate
+          cp verified/candidate/reader-rootfs.squashfs hardware-bundle/candidate/
+          cp verified/candidate/KOReader-R1-SD-RUNTIME.squashfs hardware-bundle/candidate/
+          cp verified/candidate/reader-edition-report.json hardware-bundle/candidate/
           cp tools/r1-koreader-loop-probe.sh hardware-bundle/
           cp docs/reader-edition-first-hardware-test.md hardware-bundle/
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("hardware-bundle/reader-edition-first-hardware-test.md")
+          s = p.read_text()
+          old = "This script is **not** included inside the artifact ZIP."
+          assert old not in s
+          assert "Use the included `r1-koreader-loop-probe.sh`" in s
+          p.write_text(s)
+          PY
           cat >hardware-bundle/READ-THIS-FIRST-NOT-FIRMWARE.txt <<'EOF'
           QEMU-verified standard upstream KOReader R1 candidate.
           UNSIGNED, NOT INSTALLABLE, NOT FIRMWARE. Do not flash either SquashFS.
+          The candidate/ folder contains the exact tested images and report.
           Only the SD runtime is used for the safe read-only probe on an
           already-booted independent PocketOS device. Keep the rootfs image
-          on the PC. Follow docs/reader-edition-first-hardware-test.md exactly.
+          on the PC. Follow reader-edition-first-hardware-test.md exactly.
           The probe verifies the SD hash, requires FAT32 noexec to remain set,
           mounts SquashFS read-only in volatile /run, runs only LuaJIT -v,
           then cleans up its temporary loop node and mount.
@@ -156,7 +167,7 @@ jobs:
           QEMU does not test the real LCD, touch controller, kernel loop driver,
           64 MiB RAM limit, physical cold boot, signing or rollback.
           EOF
-          (cd hardware-bundle && sha256sum * >SHA256SUMS)
+          (cd hardware-bundle && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum >SHA256SUMS)
           cat >report/PHYSICAL-GATES-REMAIN.txt <<'EOF'
           QEMU POSIX, framebuffer module, input module, RGB565 software buffer,
           and original reader.lua help passed.
