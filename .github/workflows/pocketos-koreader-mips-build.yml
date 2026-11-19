@@ -32,7 +32,7 @@ jobs:
           git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git luajit-src
           git -C luajit-src checkout --detach "$LUAJIT_SHA"
           test "$(git -C luajit-src rev-parse HEAD)" = "$LUAJIT_SHA"
-          make -C luajit-src -j2 HOST_CC="gcc -m32 -isystem /usr/include/x86_64-linux-gnu" CROSS=mipsel-linux-gnu- \
+          make -C luajit-src -j2 HOST_CC="gcc -m32 -isystem /usr/include/i386-linux-gnu -isystem /usr/include/x86_64-linux-gnu" CROSS=mipsel-linux-gnu- \
             TARGET_SYS=Linux TARGET_FLAGS='-march=mips32r2 -mabi=32' \
             > luajit-compile.log 2>&1 || {
               tail -n 160 luajit-compile.log
@@ -187,7 +187,7 @@ jobs:
         run: |
           timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
           timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends p7zip-full squashfs-tools \
-            gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
+            gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu libc6-dev-mipsel-cross qemu-user
       - uses: actions/download-artifact@v8
         with:
           name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
