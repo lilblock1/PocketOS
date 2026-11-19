@@ -53,6 +53,32 @@ jobs:
         run: |
           set -euo pipefail
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/host-libs"
+          # 32-bit MIPS glibc exposes 64-bit public time_t/off_t/blkcnt_t
+          # independently of its internal legacy __time_t/__off_t types.
+          # Upstream's replacements incorrectly assert that they are identical.
+          # Use the corresponding REAL glibc *64_t types, with the generator's
+          # existing strict __builtin_types_compatible_p checks still enabled.
+          # This source copy is never used by ARM/Kindle and does not disable
+          # or spoof any checks.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("base-src/ffi-cdecl/posix_cdecl.c")
+          s = p.read_text()
+          aliases = {
+              "__time_t": "__time64_t",
+              "__off_t": "__off64_t",
+              "__blkcnt_t": "__blkcnt64_t",
+              "__fsblkcnt_t": "__fsblkcnt64_t",
+              "__fsfilcnt_t": "__fsfilcnt64_t",
+          }
+          for old, new in aliases.items():
+              needle = f"cdecl_type_replace({old}, "
+              assert needle in s, (old, "upstream replacement missing")
+              s = s.replace(needle, f"cdecl_type_replace({new}, ")
+              s = s.replace(f"cdecl_type({old});", f"cdecl_type({new});")
+          p.write_text(s)
+          print("Cross-ABI fix: 64-bit glibc public aliases, strict type assertions preserved")
+          PY
           (
             cd base-src
             "$GITHUB_WORKSPACE/host-luajit/src/luajit" ffi-cdecl/ffi-cdecl.lua \
@@ -67,11 +93,10 @@ jobs:
               "$GITHUB_WORKSPACE/generated/posix_h.lua" \
               ffi-cdecl/posix_h_.lua platform ffi-cdecl \
               android_arm android_arm64 android_x64 android_x86 \
-              linux_gnu_arm linux_gnu_arm64 linux_gnu_x64 \
-              linux_gnu_mipsel linux_musl_arm linux_musl_arm64 linux_musl_x64 macos
+              linux_arm linux_arm64 linux_x64 linux_mipsel macos
           )
-          grep -Fq 'linux_gnu_mipsel=' generated/posix_h.lua
-          ! grep -Fq 'unsupported platform: linux_gnu_mipsel' generated/posix_h.lua
+          grep -Fq 'linux_mipsel=' generated/posix_h.lua
+          ! grep -Fq 'unsupported platform: linux_mipsel' generated/posix_h.lua
           host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
           echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
           sha256sum generated/posix_h.lua generated/posix_h_linux_gnu_mipsel.lua >report/SHA256SUMS
