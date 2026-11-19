@@ -24,8 +24,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install cross-compiler and QEMU
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user libc6-dev-i386 lib32gcc-13-dev
+          timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+          timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user libc6-dev-i386 lib32gcc-13-dev
       - name: Fetch pinned upstream LuaJIT and compile for R1 MIPS32 little-endian
         run: |
           set -euo pipefail
@@ -91,8 +91,8 @@ jobs:
             --overlay reader/koreader/overlay
       - name: Install MIPS toolchain and KOReader host build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+          timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends \
             gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
             binutils-mipsel-linux-gnu qemu-user cmake ninja-build meson \
             git make curl wget patch unzip zip python3 python3-pip \
@@ -185,8 +185,8 @@ jobs:
           persist-credentials: false
       - name: Install verified R1 rootfs inspection and MIPS tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full squashfs-tools \
+          timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+          timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends p7zip-full squashfs-tools \
             gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu qemu-user
       - uses: actions/download-artifact@v8
         with:
