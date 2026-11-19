@@ -6,7 +6,11 @@ GitHub QEMU user-mode tests do not emulate the R1's kernel, actual loop driver, 
 
 ## Preconditions
 
-- Final offline CI has no blockers.
+- The **artifact checksum and protected SD manifest checks passed** in CI. The
+  current full KOReader runtime still has an UNSUPPORTED MIPS POSIX FFI blocker:
+  this read-only probe intentionally does NOT start the graphical reader.
+  You may collect this SD mount/LuaJIT diagnostic while the native ABI is being fixed;
+  never attempt a firmware flash or GUI boot with this build.
 - Device is already booted into independent PocketOS; root ADB works.
 - Back up the card and preserve a known-booting R1 recovery firmware image.
 
@@ -35,4 +39,4 @@ If a check reports BLOCKED, save the complete output and stop. Do not bypass it 
 - Running the full document engine, all desired plugins and fonts within ~57 MiB usable RAM.
 - Firmware signing, installer format, recovery and rollback path.
 
-An offline PASS does not authorize flashing. Hardware-specific recovery and signing remain separate gates.
+An offline PASS does not authorize flashing. KOReader itself is currently blocked by missing linux_gnu_mipsel POSIX FFI declarations, so no reader-only firmware installation is ready. Hardware-specific recovery and signing remain separate gates.
