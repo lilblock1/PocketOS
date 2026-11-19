@@ -1,0 +1,123 @@
+name: PocketOS R1 - standard KOReader true MIPS QEMU integration (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-koreader-verified-mips-integration.yml'
+      - 'tools/koreader-r1-deep-offline-test.sh'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  standard-koreader-mips:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install only MIPS QEMU emulator and host ELF inspection
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          command -v unsquashfs
+          command -v readelf
+          if ! command -v qemu-mipsel >/dev/null; then
+            timeout 520 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=75 \
+              install -y --no-install-recommends qemu-user
+          fi
+          command -v qemu-mipsel
+      - name: Discover latest fully verified KOReader-specific glibc MIPS FFI
+        id: ffi
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=reader-edition-koreader&per_page=100" >ffi-runs.json
+          run=$(jq -er --arg repo "$GITHUB_REPOSITORY" '
+            [.workflow_runs[]|select(
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and
+              .head_repository.full_name==$repo and
+              .path==".github/workflows/pocketos-koreader-mips-ffi.yml")] |
+            sort_by(.created_at) | last | .id' ffi-runs.json)
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" >ffi-artifacts.json
+          jq -e '[.artifacts[]|select(
+            .name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and
+            .expired==false and
+            (.digest|test("^sha256:[a-f0-9]{64}$")))] | length==1' ffi-artifacts.json
+          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
+          jq -r '.artifacts[]|select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE")|.digest' ffi-artifacts.json >ffi-artifact-digest.txt
+          echo "Native MIPS FFI source run: $run"
+      - name: Authenticate immutable original KOReader-only runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
+            jq -e '.status=="completed" and .conclusion=="success" and
+                   .head_branch=="reader-edition-koreader" and
+                   .head_sha=="dcc5f05164ee5ef57018abdf4a30a80be363cf0a"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
+            jq -e '[.artifacts[]|select(
+              .id==14487360020 and
+              .digest=="sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
+              .name=="PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
+              .expired==false)]|length==1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
+          run-id: 44430582561
+          github-token: ${{ github.token }}
+          path: candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          run-id: ${{ steps.ffi.outputs.run }}
+          github-token: ${{ github.token }}
+          path: ffi-artifact
+      - name: Check original 37+ KOReader plugins, protected rootfs, generated GNU MIPS ABI
+        run: |
+          set -euo pipefail
+          mkdir -p extracted/root extracted/runtime report
+          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          jq -e '.only_visible_ui=="KOReader" and
+                 .rootfs_bytes<=16777216 and .signed==false and
+                 .safe_to_flash==false and .installed_koreader_plugin_count>=20' candidate/reader-edition-report.json
+          (cd ffi-artifact && sha256sum -c report/SHA256SUMS)
+          grep -Fq 'linux_gnu_mipsel=' ffi-artifact/generated/posix_h.lua
+          ! grep -Fq 'linux_mipsel=' ffi-artifact/generated/posix_h.lua
+          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
+          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
+          plugins=$(find extracted/runtime/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
+          [ "$plugins" -ge 20 ]
+          test ! -e extracted/runtime/plugins/zenos.koplugin
+          test ! -e extracted/runtime/plugins/gzreader.koplugin
+          cp ffi-artifact/generated/posix_h.lua extracted/runtime/ffi/posix_h.lua
+          echo "PASS: $plugins original KOReader plugin folders; GNU MIPS FFI installed only into extracted CI runtime" > report/identity.txt
+      - name: Verify original KOReader native graphics, evdev, libc, RGB565 and startup in MIPS QEMU
+        run: |
+          set -euo pipefail
+          bash tools/koreader-r1-deep-offline-test.sh extracted/root extracted/runtime report
+      - name: Record that real HiBy R1 cold boot remains unverified
+        if: always()
+        run: |
+          mkdir -p report
+          cat >report/NO-BOOT-CLAIM.txt <<'EOF'
+          Standard upstream KOReader MIPS user-mode integration test only.
+          No GZreader or ZenOS interface is shipped or imported.
+          Tested: MIPS ABI / native modules / offscreen RGB565 / startup chain.
+          Not tested: physical R1 loop mount, /dev/fb0 pixels, touch events,
+          RAM pressure, whole reader UI, recovery, firmware signing and cold boot.
+          The original source artifact and update channels are unchanged.
+          NOT FLASHABLE, DO NOT INSTALL THE ROOTFS IMAGE.
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-TRUE-MIPS-NATIVE-GRAPHICS-INPUT-REPORT-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
