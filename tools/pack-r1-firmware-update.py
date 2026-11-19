@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Sign R1 PocketOS system + byte-identical proven kernel; never install/publish."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -19,7 +20,9 @@ def main():
     p.add_argument("--sequence", type=int, required=True)
     p.add_argument("--channel", choices=("stable", "test"), default="test")
     p.add_argument("--reader-only", action="store_true",
-                   help="Require real KOReader as only UI; reject legacy PocketOS shell/music/games")
+                   help="Require native KOReader as the only UI, with verified read-only SD runtime")
+    p.add_argument("--sd-runtime", type=Path,
+                   help="Complete immutable KOReader-R1-SD-RUNTIME.squashfs; mandatory with --reader-only")
     p.add_argument("--output", type=Path, required=True)
     a = p.parse_args()
     if not 1 <= a.sequence <= 999999999:
@@ -54,31 +57,85 @@ def main():
     if any(Path(name).name in forbidden for name in paths):
         p.error("Sonix userspace or recovery daemon present in primary rootfs")
     if a.reader_only:
+        # The native reader runtime exceeds the 16 MiB internal rootfs cap.
+        # It is stored in one pinned read-only SquashFS on the SD card; the
+        # trusted internal rootfs includes its digest and the only boot UI.
         required = ("usr/bin/pocketos-start", "usr/bin/pocketos-update",
                     "usr/bin/pocketos-r1-touch-probe", "usr/sbin/pocketos-recovery-arm",
-                    "etc/init.d/S95pocketos", "opt/koreader/luajit",
-                    "opt/koreader/reader.lua", "opt/koreader/frontend/device.lua",
-                    "opt/koreader/frontend/device/hibyr1/device.lua",
+                    "etc/init.d/S95pocketos", "etc/pocketos/koreader-sd.sha256",
+                    "etc/pocketos/koreader-runtime-files.sha256",
                     "etc/pocketos/reader-edition-source")
         prohibited = ("usr/bin/pocketos-shell", "usr/bin/pocketos-music",
                       "usr/bin/pocketos-game", "usr/bin/pocketos-decoder",
                       "etc/pocketos/games-enable", "etc/pocketos/doom.sha256",
-                      "etc/pocketos/classic-ui-enable")
+                      "etc/pocketos/classic-ui-enable", "opt/koreader")
         if any(name in paths for name in prohibited):
-            p.error("Reader-only image contains a legacy PocketOS, music, or game GUI")
+            p.error("Reader-only image contains legacy UI or internal KOReader")
+        if not a.sd_runtime or a.sd_runtime.is_symlink() or not a.sd_runtime.is_file():
+            p.error("Reader signing requires a real --sd-runtime SquashFS file")
+        if a.sd_runtime.name != "KOReader-R1-SD-RUNTIME.squashfs":
+            p.error("Unexpected external KOReader runtime filename")
         startup = read_image_file("usr/bin/pocketos-start").decode()
-        if ("exec ./luajit ./reader.lua" not in startup or
-            "export KO_PLATFORM=hibyr1" not in startup or
-            "export KO_HOME=" not in startup):
-            p.error("Reader-only launcher does not start full KOReader on R1")
+        for token in ("exec ./luajit ./reader.lua", "export KO_PLATFORM=hibyr1",
+                      "export KO_HOME=", 'sha256sum -c "$manifest"',
+                      "mount -t squashfs -o ro,nosuid,nodev,loop,exec",
+                      "mknod -m 0600 /dev/loop0 b 7 0"):
+            if token not in startup:
+                p.error("Reader-only launcher missing boot or verification step: " + token)
         if not any("0.1.0-reader." in line for line in release):
             p.error("Reader-only rootfs identity missing")
-        plugins = {Path(name).parts[3] for name in paths
-                   if name.startswith("opt/koreader/plugins/") and
-                   len(Path(name).parts) >= 5 and
-                   Path(name).parts[3].endswith(".koplugin")}
-        if len(plugins) < 20:
-            p.error("Reader-only firmware must retain the complete KOReader plugins")
+        reader = json.loads(a.candidate.read_text())
+        if (reader.get("reader_edition") is not True or
+                reader.get("only_visible_ui") != "KOReader" or
+                reader.get("sd_mount_noexec_preserved") is not True or
+                reader.get("requires_kernel_loop_support") is not True or
+                reader.get("signed") is not False or
+                reader.get("safe_to_flash") is not False or
+                reader.get("sequence") != a.sequence or
+                reader.get("bootloader_payload") is not False or
+                reader.get("recovery_payload") is not False or
+                reader.get("userdata_payload") is not False or
+                reader.get("kernel_modified") is not False):
+            p.error("Reader edition report is missing required safety metadata")
+        image_sha = hashlib.sha256(a.rootfs.read_bytes()).hexdigest()
+        runtime_sha = hashlib.sha256(a.sd_runtime.read_bytes()).hexdigest()
+        if (reader.get("rootfs_sha256") != image_sha or
+                reader.get("rootfs_bytes") != a.rootfs.stat().st_size or
+                a.rootfs.stat().st_size > 16 * 1024 * 1024 or
+                reader.get("sd_payload_sha256") != runtime_sha or
+                reader.get("sd_payload_bytes") != a.sd_runtime.stat().st_size):
+            p.error("Reader report does not match the actual built images")
+        manifest = read_image_file("etc/pocketos/koreader-sd.sha256")
+        image_location = "/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+        if (manifest != (runtime_sha + "  " + image_location + "\\n").encode() or
+                reader.get("sd_runtime_path") != image_location or
+                reader.get("sd_runtime_mount_path") != "/run/pocketos-reader" or
+                reader.get("sd_manifest_sha256") != hashlib.sha256(manifest).hexdigest()):
+            p.error("Trusted internal SD image digest or mount mapping mismatch")
+        sd_entries = subprocess.check_output(
+            ["unsquashfs", "-ls", str(a.sd_runtime)], text=True).splitlines()
+        sd_paths = {line.removeprefix("squashfs-root/") for line in sd_entries
+                    if line.startswith("squashfs-root/")}
+        for name in ("luajit", "reader.lua", "frontend/device.lua",
+                     "frontend/device/hibyr1/device.lua"):
+            if name not in sd_paths:
+                p.error("Native SD KOReader is missing " + name)
+        plugins = {Path(name).parts[1] for name in sd_paths
+                   if name.startswith("plugins/") and
+                   len(Path(name).parts) >= 2 and
+                   Path(name).parts[1].endswith(".koplugin")}
+        if len(plugins) < 20 or len(plugins) != reader.get("installed_koreader_plugin_count"):
+            p.error("Full KOReader SD plugin tree is missing or differs from report")
+        if (read_image_file("etc/pocketos/reader-edition-source").decode().strip()
+                != reader.get("source_commit")):
+            p.error("Reader commit identity differs")
+        # Translate the already-verified reader report into the existing strict
+        # R1 UPT packer schema. The proven kernel is revalidated separately.
+        candidate = {"image": {"sha256": image_sha},
+                     "primary_target": "/dev/mtd2 (rootfs)",
+                     "kernel_reused": True,
+                     "build_id": next((line.removeprefix("BUILD_ID=")
+                                       for line in release if line.startswith("BUILD_ID=")), None)}
     else:
         required = ("usr/bin/pocketos-shell", "usr/bin/pocketos-start",
                     "usr/bin/pocketos-update", "usr/sbin/pocketos-recovery-arm",
@@ -90,7 +147,10 @@ def main():
         p.error("Wrong PocketOS identity")
     if read_image_file("etc/pocketos/recovery-enable") != b"POCKETOS-R1-RECOVERY-1\n":
         p.error("Reviewed recovery handoff approval missing")
-    candidate = json.loads(a.candidate.read_text())
+    if not a.reader_only:
+        if a.sd_runtime is not None:
+            p.error("--sd-runtime is only valid with --reader-only")
+        candidate = json.loads(a.candidate.read_text())
     a.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".pocketos-release-", dir=a.output.parent) as temp:
         work = Path(temp)
