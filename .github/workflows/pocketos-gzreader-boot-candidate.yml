@@ -70,7 +70,7 @@ jobs:
       - name: Verify genuine MIPS POSIX declaration generation
         env:
           GH_TOKEN: ${{ github.token }}
-          FFI_RUN: ${{ inputs.ffi_run || '44448723610' }}
+          FFI_RUN: ${{ inputs.ffi_run || '44451080847' }}
         run: |
           set -euo pipefail
           [[ "$FFI_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
@@ -81,11 +81,11 @@ jobs:
             .head_repository.full_name==$repo and
             .path==".github/workflows/pocketos-gzreader-mips-ffi.yml"' ffi-run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FFI_RUN/artifacts" > ffi-artifacts.json
-          jq -e '[.artifacts[] | select(.id==14493624530 and .digest=="sha256:3a7bc939a61d6958b9b8e31d33b3d5e312520c505f1c5417fae5a12250928e9c" and .name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | length==1' ffi-artifacts.json
+          jq -e '[.artifacts[] | select(.id==14495905686 and .digest=="sha256:707b6ccabb703171e6e60b7004106e47366ea0e0ef7ca504a9a886197d85ca48" and .name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | length==1' ffi-artifacts.json
       - uses: actions/download-artifact@v4
         with:
           name: GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
-          run-id: ${{ inputs.ffi_run || '44448723610' }}
+          run-id: ${{ inputs.ffi_run || '44451080847' }}
           github-token: ${{ github.token }}
           path: ffi-artifact
       - uses: actions/download-artifact@v4
@@ -160,17 +160,40 @@ jobs:
           mkdir -p extracted/root extracted/runtime
           unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs > report/extract-root.txt
           unsquashfs -no-progress -d extracted/runtime candidate/GZreader-R1-SD-RUNTIME.squashfs > report/extract-runtime.txt
+          mkdir -p "$RUNNER_TEMP/gzreader-qemu-settings"
           (
             cd extracted/runtime
-            KO_PLATFORM=hibyr1 timeout 40 qemu-mipsel -L "$GITHUB_WORKSPACE/extracted/root" ./luajit -e '
+            export KO_PLATFORM=hibyr1
+            export KO_HOME="$RUNNER_TEMP/gzreader-qemu-settings"
+            export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            timeout 65 qemu-mipsel -L "$GITHUB_WORKSPACE/extracted/root" ./luajit -e '
               require("setupkoenv")
+              -- GZreader initializes these BEFORE its native input module.
+              G_defaults = require("luadefaults"):open()
+              local DataStorage = require("datastorage")
+              G_reader_settings = require("luasettings"):open(
+                DataStorage:getDataDir() .. "/settings.reader.lua")
               assert(type(require("ffi"))=="table")
-              require("ffi/posix_h")
-              require("ffi/blitbuffer")
+              for _, module in ipairs({
+                  "ffi/posix_h", "ffi/blitbuffer", "ffi/framebuffer_linux",
+                  "device/generic/device", "device/input", "device/hibyr1/device"
+              }) do
+                local ok, err = pcall(require, module)
+                assert(ok, module .. ": " .. tostring(err))
+                print("PASS GZreader native import: " .. module)
+              end
+              local BB = require("ffi/blitbuffer")
+              local bb = BB.new(24, 24, BB.TYPE_BBRGB16)
+              assert(bb and bb:getWidth()==24 and bb:getHeight()==24)
+              local ffi = require("ffi")
+              for _, sym in ipairs({"clock_gettime", "gettimeofday", "open", "statvfs"}) do
+                local ok, err = pcall(function() return ffi.C[sym] end)
+                assert(ok, "Missing libc symbol " .. sym .. ": " .. tostring(err))
+              end
               assert(type(loadfile("reader.lua"))=="function")
               assert(type(loadfile("plugins/gzreader.koplugin/main.lua"))=="function")
               assert(type(loadfile("plugins/zenos.koplugin/main.lua"))=="function")
-              print("GZreader native MIPS graphics/ZenOS entry preflight PASS")
+              print("GZreader native MIPS graphics, input, libc and ZenOS preflight PASS")
             '
           ) 2>&1 | tee report/qemu-gzreader.txt
       - name: Add physical R1 warnings to unsigned diagnostic candidate
