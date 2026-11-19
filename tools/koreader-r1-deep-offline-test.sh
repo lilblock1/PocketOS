@@ -63,13 +63,19 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
   cd "$K"
   export KO_PLATFORM=hibyr1
   export LD_LIBRARY_PATH="$K/libs:$K"
+  # Match reader.lua's settings initialization prior to loading gestures/input.
+  export KO_HOME="$REPORT/KOReader-test-settings"
+  mkdir -p "$KO_HOME"
   timeout 90 qemu-mipsel -L "$R" "$K/luajit" -e '
     package.path = "./?.lua;./?/init.lua;./frontend/?.lua;./frontend/?/init.lua;" .. package.path
     package.cpath = "./libs/?.so;./libs/lib?.so;./?.so;" .. package.cpath
     require("setupkoenv") -- Match genuine KOReader boot: installs ffi.loadlib and correct require paths.
     assert(jit.arch:match("^mips"), "Not native MIPS")
     assert(type(require("ffi")) == "table", "LuaJIT FFI missing")
-    local modules = {"ffi/blitbuffer", "ffi/framebuffer_linux", "device/generic/device", "device/input", "device/hibyr1/device"}
+    G_defaults = require("luadefaults"):open()
+    local DataStorage = require("datastorage")
+    G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
+    local modules = {"ffi/posix_h", "ffi/blitbuffer", "ffi/framebuffer_linux", "device/generic/device", "device/input", "device/hibyr1/device"}
     local errors = 0
     for _, name in ipairs(modules) do
       local ok, result = pcall(require, name)
@@ -77,6 +83,12 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
       else io.stderr:write("BLOCKER: module " .. name .. ": " .. tostring(result) .. "\n"); errors = errors + 1 end
     end
     if errors > 0 then os.exit(10) end
+    local ffi = require("ffi")
+    for _, sym in ipairs({"clock_gettime", "gettimeofday", "open", "statvfs"}) do
+      local ok, err = pcall(function() return ffi.C[sym] end)
+      assert(ok, "Missing MIPS libc symbol " .. sym .. ": " .. tostring(err))
+      print("PASS: native libc symbol " .. sym)
+    end
     local BB = require("ffi/blitbuffer")
     local bb = BB.new(24, 24, BB.TYPE_BBRGB16)
     assert(bb and bb:getWidth() == 24 and bb:getHeight() == 24, "RGB565 framebuffer test failed")
