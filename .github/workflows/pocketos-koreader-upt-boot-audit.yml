@@ -36,7 +36,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
             jq -e '.status=="completed" and .conclusion=="success" and
                    .head_branch=="reader-edition-koreader" and
-                   .path==".github/workflows/pocketos-koreader-boot-candidate.yml"'
+                   .path==".github/workflows/pocketos-reader-boot-candidate.yml"'
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
             jq -e '[.artifacts[] | select(
               .id==14487360020 and
