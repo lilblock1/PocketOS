@@ -26,7 +26,7 @@ jobs:
           set -euo pipefail
           for spec in \
             '44457942480 5583ff2f3d1e71e1afa6d45874087f8be71dd0c3 KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE 14498828705 sha256:705df2c1f9a511139db3af7471e1dce2eaf76c8609d7dcc22b33ce21f5ed337e' \
-            '44459237409 f5062b9f1e41cab8202ecf4c0ab8af7d9e54271c KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE 14499196861 sha256:67fb08f56f84b027c71e0fa27e35f311437e14014d95785a01354501b179f0fa' \
+            '44460324548 b762805c1d8b6a20dc13a609d2e12de95a30c161 KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE 14500126529 sha256:841974f90e44f58fc00c9cd05d56acafdbac912179c3c278b21978d5eb0d5898' \
             '44430582561 dcc5f05164ee5ef57018abdf4a30a80be363cf0a PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE 14487360020 sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3'; do
             read -r run sha name artifact digest <<<"$spec"
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
-          run-id: 44459237409
+          run-id: 44460324548
           github-token: ${{ github.token }}
           path: ffi
       - uses: actions/download-artifact@v4
