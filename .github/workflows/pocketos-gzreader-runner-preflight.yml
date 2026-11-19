@@ -1,0 +1,28 @@
+name: PocketOS R1 - GitHub runner image build tool inventory
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - '.github/workflows/pocketos-gzreader-runner-preflight.yml'
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Identify preinstalled SquashFS, QEMU, ISO, and MIPS tools
+        shell: bash
+        run: |
+          set -u
+          for tool in python3 sha256sum jq gh 7z unsquashfs mksquashfs \
+                      qemu-mipsel mipsel-linux-gnu-gcc mipsel-linux-gnu-readelf \
+                      genisoimage xorriso; do
+            printf '%-26s' "$tool"
+            command -v "$tool" || echo 'NOT PRESENT'
+          done
+          echo 'GitHub environment:'
+          grep -E '^(PRETTY_NAME|VERSION_ID)=' /etc/os-release
+          echo 'APT configuration (no apt operations performed):'
+          ls /etc/apt/sources.list.d/ || true
+          echo 'This job never modifies firmware or updates.'
