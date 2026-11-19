@@ -33,20 +33,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44460649797" |
             jq -e '.status=="completed" and .conclusion=="success" and
                    .head_branch=="reader-edition-koreader" and
-                   .path==".github/workflows/pocketos-reader-boot-candidate.yml"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
+                   .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44460649797/artifacts" |
             jq -e '[.artifacts[] | select(
-              .id==14487360020 and
-              .digest=="sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
-              .name=="PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
+              .id==14500046462 and
+              .digest=="sha256:e6115bb624cc19249fbcd5752ee21732620acb8b3437a9ce7c99c8ed1cfd787b" and
+              .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
               .expired==false)] | length==1'
       - uses: actions/download-artifact@v4
         with:
-          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
-          run-id: 44430582561
+          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
+          run-id: 44460649797
           github-token: ${{ github.token }}
           path: pinned
       - name: Verify hashes, init chain, KOReader-only visible frontend, signed recovery tools
@@ -54,14 +54,15 @@ jobs:
           set -euo pipefail
           mkdir -p report root sd
           jq -e '.only_visible_ui=="KOReader" and
-                 .rootfs_bytes<=16777216 and .installed_koreader_plugin_count>=20 and
+                 .sequence==6 and .rootfs_bytes<=16777216 and
+                 .installed_koreader_plugin_count>=20 and
                  .bootloader_payload==false and .recovery_payload==false and
                  .userdata_payload==false and .signed==false and
-                 .physical_boot_verified==false and .safe_to_flash==false' pinned/reader-edition-report.json
-          echo "$(jq -r .rootfs_sha256 pinned/reader-edition-report.json)  pinned/reader-rootfs.squashfs" | sha256sum -c -
-          echo "$(jq -r .sd_payload_sha256 pinned/reader-edition-report.json)  pinned/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
-          unsquashfs -no-progress -d root pinned/reader-rootfs.squashfs >report/root-unpack.txt
-          unsquashfs -no-progress -d sd pinned/KOReader-R1-SD-RUNTIME.squashfs >report/sd-unpack.txt
+                 .physical_boot_verified==false and .safe_to_flash==false' pinned/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 pinned/candidate/reader-edition-report.json)  pinned/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 pinned/candidate/reader-edition-report.json)  pinned/candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d root pinned/candidate/reader-rootfs.squashfs >report/root-unpack.txt
+          unsquashfs -no-progress -d sd pinned/candidate/KOReader-R1-SD-RUNTIME.squashfs >report/sd-unpack.txt
           test -f root/etc/inittab
           test -f root/etc/init.d/rcS
           test -f root/etc/init.d/S95pocketos
@@ -86,6 +87,9 @@ jobs:
           done
           test -f sd/reader.lua
           test -f sd/frontend/device/hibyr1/device.lua
+          grep -Fq 'linux_gnu_mipsel=' sd/ffi/posix_h.lua
+          test ! -e sd/plugins/zenos.koplugin
+          test ! -e sd/plugins/gzreader.koplugin
           [ "$(find sd/plugins -mindepth 1 -maxdepth 1 -name '*.koplugin' -type d | wc -l)" -ge 20 ]
           sh -n root/usr/bin/pocketos-start
           sh -n root/etc/init.d/S95pocketos
@@ -93,7 +97,7 @@ jobs:
           sh -n tools/r1-koreader-loop-probe.sh
           test "$(sh tools/r1-koreader-loop-probe.sh --self-test)" = 'PocketOS KOReader R1 read-only hardware probe v1'
           actual="$(cat root/etc/pocketos/koreader-sd.sha256)"
-          expected="$(jq -r .sd_payload_sha256 pinned/reader-edition-report.json)  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+          expected="$(jq -r .sd_payload_sha256 pinned/candidate/reader-edition-report.json)  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
           test "$actual" = "$expected"
           echo 'PASS: packaged R1 init+autostart, standard KOReader sole UI, correct protected SD digest and recovery tools.' >report/bootchain.txt
       - name: Extract pinned original kernel for simulated R1 legacy UPT packing
@@ -119,12 +123,12 @@ jobs:
           spec = importlib.util.spec_from_file_location("upt", root/"tools/build-r1-upt.py")
           mod = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(mod)
-          report = json.loads((root/"pinned/reader-edition-report.json").read_text())
+          report = json.loads((root/"pinned/candidate/reader-edition-report.json").read_text())
           c = {"image":{"sha256":report["rootfs_sha256"]},
                "primary_target":"/dev/mtd2 (rootfs)",
                "kernel_reused":True,"build_id":report["source_commit"][:16]}
           result = mod.package(
-              root/"pinned/reader-rootfs.squashfs", c,
+              root/"pinned/candidate/reader-rootfs.squashfs", c,
               root/"offline-upt/iso-stage",
               root/"offline-upt/pocketos-r1.upt", root/"baseline/xImage")
           assert result["kernel_payload"] is True
