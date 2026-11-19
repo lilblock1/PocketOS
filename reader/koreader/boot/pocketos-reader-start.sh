@@ -47,7 +47,7 @@ sha256sum -c "$manifest" >/dev/null 2>&1 ||
 [ ! -e "$ko" ] && [ ! -L "$ko" ] ||
     fail "Reader runtime mountpoint is already present"
 mkdir -m 0700 "$ko" || fail "Cannot create reader mountpoint"
-# Mount only the hash-verified SquashFS, never remount /mnt/sd_0 or NAND.
+# The hash-verified SquashFS loop mount does not alter SD or NAND mounts.
 # Kernel loop support is NOT YET verified on physical HiBy R1 hardware.
 mount -t squashfs -o ro,nosuid,nodev,loop,exec "$sd_image" "$ko" ||
     fail "Verified reader SquashFS loop mount unsupported"
@@ -77,7 +77,7 @@ export KO_PLATFORM=hibyr1
 
 # Use a writable data location for settings, reading progress, annotations
 # and extra plugins. Never write to the immutable firmware partition.
-# Never remount/format SD or internal partitions; only the trusted RO loop image is mounted.
+# The only new mount is a read-only loop image; SD and internal partitions stay unchanged.
 if [ -d /mnt/sd_0 ] && [ ! -L /mnt/sd_0 ] &&
    awk '$2=="/mnt/sd_0" {ok=1} END {exit !ok}' /proc/mounts &&
    [ -w /mnt/sd_0 ]; then
