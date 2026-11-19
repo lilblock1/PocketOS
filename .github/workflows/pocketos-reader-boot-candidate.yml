@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -115,7 +115,7 @@ jobs:
               exit 1
             }
           echo "Candidate, QEMU and boot-chain provenance verified; runtime source files unchanged." 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
           run-id: 44460649797
@@ -204,14 +204,14 @@ jobs:
           mount, RAM pressure, signing identity, recovery and rollback.
           No flash or OTA operation was performed.
           EOF
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: KOReader-R1-QEMU-VERIFIED-RO-SD-PREFLIGHT-NOT-FIRMWARE
           path: hardware-bundle/
           retention-days: 14
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: KOReader-R1-RO-SD-PREFLIGHT-REPORT-NOT-FIRMWARE
