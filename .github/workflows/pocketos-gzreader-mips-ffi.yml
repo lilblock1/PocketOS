@@ -1,0 +1,86 @@
+name: PocketOS R1 - generate genuine GZreader MIPS POSIX ABI (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - '.github/workflows/pocketos-gzreader-mips-ffi.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-mips-cdefs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS cross compiler and host build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
+            gcc make git python3
+      - name: Check out exactly pinned upstream sources
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/koreader/koreader-base.git base-src
+          git -C base-src checkout --detach 6e4bc81af4e04f78d81677a323a780a71b29702a
+          test "$(git -C base-src rev-parse HEAD)" = 6e4bc81af4e04f78d81677a323a780a71b29702a
+          git clone --filter=blob:none https://github.com/LuaJIT/LuaJIT.git host-luajit
+          git -C host-luajit checkout --detach 63c8f1a9b479ba5518cf6a170ff7729178bc3cfd
+          git clone --filter=blob:none https://github.com/tree-sitter/tree-sitter.git tree-sitter-src
+          git -C tree-sitter-src checkout --detach v0.27.0
+          git clone --filter=blob:none https://github.com/tree-sitter/tree-sitter-c.git tree-sitter-c-src
+          git -C tree-sitter-c-src checkout --detach 7fa1be1b694b6e763686793d97da01f36a0e5c12
+      - name: Compile pinned host LuaJIT and required tree-sitter C parser
+        run: |
+          set -euo pipefail
+          mkdir -p host-libs generated report
+          make -C host-luajit -j2 >report/luajit-build.log 2>&1 || { tail -n 80 report/luajit-build.log; exit 1; }
+          host-luajit/src/luajit -e 'assert(type(require("ffi"))=="table"); assert(type(require("string.buffer"))=="table"); print("LuaJIT 2.1 FFI host toolchain OK")'
+          gcc -std=gnu11 -O2 -fPIC -shared \
+            -I tree-sitter-src/lib/include -I tree-sitter-src/lib/src \
+            tree-sitter-src/lib/src/lib.c \
+            -Wl,-soname,libtree-sitter.so.0.27 \
+            -o host-libs/libtree-sitter.so.0.27
+          gcc -std=gnu11 -O2 -fPIC -shared \
+            -I tree-sitter-src/lib/include \
+            tree-sitter-c-src/src/parser.c \
+            -Wl,-soname,libtree-sitter-c.so.15.0 \
+            -o host-libs/libtree-sitter-c.so.15.0
+          file host-libs/libtree-sitter.so.0.27 host-libs/libtree-sitter-c.so.15.0 >report/host-elf.txt
+      - name: Generate native MIPS32 glibc cdefs from MIPS headers (NEVER substitute ARM)
+        run: |
+          set -euo pipefail
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/host-libs"
+          (
+            cd base-src
+            "$GITHUB_WORKSPACE/host-luajit/src/luajit" ffi-cdecl/ffi-cdecl.lua \
+              -c mipsel-linux-gnu-gcc -f '-march=mips32r2,-mabi=32' \
+              -M -o "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" \
+              ffi-cdecl/posix_cdecl.c
+            test -s "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            grep -Fq 'cdecl_struct_timeval' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            grep -Fq 'cdecl_type_time_t' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
+            cp "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" ffi-cdecl/
+            python3 utils/gen_merged_cdecl_h.py \
+              "$GITHUB_WORKSPACE/generated/posix_h.lua" \
+              ffi-cdecl/posix_h_.lua platform ffi-cdecl \
+              android_arm android_arm64 android_x64 android_x86 \
+              linux_gnu_arm linux_gnu_arm64 linux_gnu_x64 \
+              linux_gnu_mipsel linux_musl_arm linux_musl_arm64 linux_musl_x64 macos
+          )
+          grep -Fq 'linux_gnu_mipsel=' generated/posix_h.lua
+          ! grep -Fq 'unsupported platform: linux_gnu_mipsel' generated/posix_h.lua
+          host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
+          echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
+          sha256sum generated/posix_h.lua generated/posix_h_linux_gnu_mipsel.lua >report/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          path: |
+            generated/
+            report/
+          retention-days: 14
+          if-no-files-found: warn
