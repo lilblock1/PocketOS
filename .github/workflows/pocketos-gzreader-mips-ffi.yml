@@ -41,14 +41,14 @@ jobs:
           gcc -std=gnu11 -O2 -fPIC -shared \
             -I tree-sitter-src/lib/include -I tree-sitter-src/lib/src \
             tree-sitter-src/lib/src/lib.c \
-            -Wl,-soname,libtree-sitter.so.0.27 \
-            -o host-libs/libtree-sitter.so.0.27
+            -Wl,-soname,libtree-sitter.so.0.26 \
+            -o host-libs/libtree-sitter.so.0.26
           gcc -std=gnu11 -O2 -fPIC -shared \
             -I tree-sitter-src/lib/include \
             tree-sitter-c-src/src/parser.c \
             -Wl,-soname,libtree-sitter-c.so.15.0 \
             -o host-libs/libtree-sitter-c.so.15.0
-          file host-libs/libtree-sitter.so.0.27 host-libs/libtree-sitter-c.so.15.0 >report/host-elf.txt
+          file host-libs/libtree-sitter.so.0.26 host-libs/libtree-sitter-c.so.15.0 >report/host-elf.txt
       - name: Generate native MIPS32 glibc cdefs from MIPS headers (NEVER substitute ARM)
         run: |
           set -euo pipefail
