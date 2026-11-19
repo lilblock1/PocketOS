@@ -30,6 +30,13 @@ def normalize(source: str) -> str:
     for old, replacement in PRIVATE_TYPES.items():
         updated, count = re.subn(r"\b" + re.escape(old) + r"\b", replacement, updated)
         seen[old] = count
+    # Old upstream KOReader's setpriority() prototype leaks a glibc-private
+    # enum typedef on MIPS. An explicit target-compiled ABI guard verifies
+    # its storage/register representation matches int before this rewrite.
+    updated, n_priority = re.subn(r"\b__priority_which_t\b", "int", updated)
+    if n_priority != 1:
+        raise ValueError("Expected one MIPS setpriority() glibc-private enum")
+    seen["__priority_which_t -> int"] = n_priority
     updated, asm_count = ASM_SPLIT_LITERAL.subn(r'__asm__("\1")', updated)
     if '__asm__("""' in updated:
         raise ValueError("Unresolved GNU asm symbol redirection")
