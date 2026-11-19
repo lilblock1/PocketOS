@@ -6,6 +6,10 @@ on:
         description: Successful GZreader native MIPS build GitHub Actions run ID
         required: true
         type: string
+      ffi_run:
+        description: Successful target-header-generated MIPS POSIX ABI run ID
+        required: true
+        type: string
 permissions:
   contents: read
   actions: read
@@ -38,6 +42,27 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > artifacts.json
           jq -e '[.artifacts[] | select(.name=="GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE" and .expired==false)] | length==1' artifacts.json
           echo "SOURCE_SHA=$(jq -er .head_sha run.json)" >> "$GITHUB_ENV"
+      - name: Verify genuine MIPS POSIX declaration generation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FFI_RUN: ${{ inputs.ffi_run }}
+        run: |
+          set -euo pipefail
+          [[ "$FFI_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FFI_RUN" > ffi-run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .status=="completed" and .conclusion=="success" and
+            .head_branch=="reader-edition-gzreader" and
+            .head_repository.full_name==$repo and
+            .path==".github/workflows/pocketos-gzreader-mips-ffi.yml"' ffi-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FFI_RUN/artifacts" > ffi-artifacts.json
+          jq -e '[.artifacts[] | select(.name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | length==1' ffi-artifacts.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          run-id: ${{ inputs.ffi_run }}
+          github-token: ${{ github.token }}
+          path: ffi-artifact
       - uses: actions/download-artifact@v4
         with:
           name: GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE
@@ -50,6 +75,11 @@ jobs:
           mkdir -p reader-source original original-iso baseline probe-output report
           (cd compiled/output; sha256sum -c SHA256SUMS)
           tar -xzf compiled/output/GZreader-R1-MIPS-PROTOTYPE.tar.gz -C reader-source --no-same-owner --no-same-permissions
+          (cd ffi-artifact; sha256sum -c report/SHA256SUMS)
+          test -f ffi-artifact/generated/posix_h.lua
+          grep -Fq 'linux_gnu_mipsel=' ffi-artifact/generated/posix_h.lua
+          test -f reader-source/koreader/ffi/posix_h.lua
+          cp ffi-artifact/generated/posix_h.lua reader-source/koreader/ffi/posix_h.lua
           test -f reader-source/koreader/reader.lua
           test -x reader-source/koreader/luajit
           test -f reader-source/koreader/plugins/gzreader.koplugin/main.lua
