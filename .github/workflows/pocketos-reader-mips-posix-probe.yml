@@ -19,7 +19,7 @@ jobs:
       - name: Install MIPS cross compiler and emulator
         run: |
           sudo apt-get update
-          sudo apt-get install -y mipsel-linux-gnu-gcc gcc-mipsel-linux-gnu qemu-user squashfs-tools git
+          sudo apt-get install -y gcc-mipsel-linux-gnu qemu-user squashfs-tools git
       - uses: actions/download-artifact@v4
         with:
           name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
