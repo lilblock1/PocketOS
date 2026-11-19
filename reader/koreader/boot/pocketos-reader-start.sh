@@ -46,15 +46,14 @@ sha256sum -c "$manifest" >/dev/null 2>&1 ||
     fail "Safe /run tmpfs is unavailable"
 [ ! -e "$ko" ] && [ ! -L "$ko" ] ||
     fail "Reader runtime mountpoint is already present"
-
-# Physical HiBy R1 has a registered loop block driver and /dev/loop-control,
-# but does not currently expose a /dev/loop0 block node. The existing boot
-# sequence mounts /dev as devtmpfs, so it is safe to create ONLY that one
-# temporary device node. This never writes to NAND or the SD filesystem.
+# Real R1 evidence: loop major 7 and /dev/loop-control exist, but
+# /dev/loop0 may be absent. /dev is a volatile devtmpfs mount; create
+# only this one known, kernel-backed block node. Never modify NAND or SD.
 [ -d /dev ] && [ ! -L /dev ] &&
     awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "Expected temporary /dev filesystem is unavailable"
+    fail "Temporary /dev filesystem unavailable"
 grep -Eq '^[[:space:]]*7[[:space:]]+loop
+# The hash-verified SquashFS loop mount does not alter SD or NAND mounts.
 # Kernel loop support is NOT YET verified on physical HiBy R1 hardware.
 mount -t squashfs -o ro,nosuid,nodev,loop,exec "$sd_image" "$ko" ||
     fail "Verified reader SquashFS loop mount unsupported"
@@ -110,18 +109,17 @@ if [ -d /mnt/sd_0/Books ] && [ ! -L /mnt/sd_0/Books ]; then
 fi
 exec ./luajit ./reader.lua
  /proc/devices ||
-    fail "Kernel loop driver major 7 is not registered"
+    fail "Kernel loop driver major 7 is missing"
 [ -c /dev/loop-control ] && [ ! -L /dev/loop-control ] ||
-    fail "Kernel loop-control node missing"
+    fail "Loop control node unavailable"
 if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
     mknod -m 0600 /dev/loop0 b 7 0 ||
-        fail "Cannot create temporary /dev/loop0 block node"
+        fail "Cannot create volatile loop0 device node"
 fi
 [ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] ||
-    fail "Unsafe or unavailable /dev/loop0 block node"
-# Reject any pre-existing block node with the wrong major/minor pair.
+    fail "Unsafe loop0 device node"
 [ "$(busybox stat -c '%t:%T' /dev/loop0)" = "7:0" ] ||
-    fail "Unexpected /dev/loop0 device identity"
+    fail "Unexpected loop0 major/minor number"
 
 mkdir -m 0700 "$ko" || fail "Cannot create reader mountpoint"
 # The hash-verified SquashFS loop mount does not alter SD or NAND mounts.
