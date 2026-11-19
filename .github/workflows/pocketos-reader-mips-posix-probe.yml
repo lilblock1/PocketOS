@@ -1,0 +1,73 @@
+name: PocketOS Reader - generate true MIPS POSIX FFI declarations (non-flashable experiment)
+on:
+  push:
+    branches: [reader-edition-koreader]
+    paths:
+      - '.github/workflows/pocketos-reader-mips-posix-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  mips-posix-cdecl:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS cross compiler and emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mipsel-linux-gnu-gcc gcc-mipsel-linux-gnu qemu-user squashfs-tools git
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
+          run-id: 44430582561
+          github-token: ${{ github.token }}
+          path: candidate
+      - name: Extract already-built native KOReader without modifying the original
+        run: |
+          set -euo pipefail
+          mkdir -p extracted/root extracted/runtime report
+          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >/dev/null
+          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >/dev/null
+      - name: Checkout matching pinned KOReader-base FFI generator and headers
+        run: |
+          set -euo pipefail
+          git clone --no-checkout --filter=blob:none https://github.com/koreader/koreader-base.git upstream-base
+          git -C upstream-base checkout --detach f64c3eb11049e9a75189f186d7345d97c07d87b9
+          test "$(git -C upstream-base rev-parse HEAD)" = f64c3eb11049e9a75189f186d7345d97c07d87b9
+          test -f upstream-base/ffi-cdecl/posix_cdecl.c
+          test -f upstream-base/ffi-cdecl/ffi-cdecl.lua
+      - name: Attempt target-header-derived POSIX cdefs using native MIPS ffi-cdecl
+        run: |
+          set -euo pipefail
+          R="$GITHUB_WORKSPACE/extracted/root"
+          K="$GITHUB_WORKSPACE/extracted/runtime"
+          echo 'Native MIPS runtime libs potentially needed by cdecl generator' | tee report/generator.txt
+          ls -1 "$K/libs" | grep -E 'tree-sitter|lpeg|buffer|utf8proc' | tee -a report/generator.txt || true
+          test -f "$K/ffi/tree_sitter_h.lua" || echo 'WARN: tree_sitter_h.lua not shipped in runtime' | tee -a report/generator.txt
+          (
+            cd "$K"
+            export KO_PLATFORM=hibyr1
+            export LD_LIBRARY_PATH="$K/libs:$K"
+            timeout 60 qemu-mipsel -L "$R" "$K/luajit" "$GITHUB_WORKSPACE/upstream-base/ffi-cdecl/ffi-cdecl.lua" \
+              -c mipsel-linux-gnu-gcc -f '-march=mips32r2,-mabi=32' \
+              -M -o "$GITHUB_WORKSPACE/report/posix_h_linux_gnu_mipsel.lua" \
+              "$GITHUB_WORKSPACE/upstream-base/ffi-cdecl/posix_cdecl.c"
+          )
+          test -s report/posix_h_linux_gnu_mipsel.lua
+          grep -Fq 'cdecl_type_time_t' report/posix_h_linux_gnu_mipsel.lua
+          grep -Fq 'cdecl_struct_timeval' report/posix_h_linux_gnu_mipsel.lua
+          echo 'Generated target-header-derived MIPS POSIX cdefs; not yet ABI-certified or firmware.' | tee -a report/generator.txt
+      - name: Upload the FFI probe evidence even if generator fails
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: KOReader-R1-REAL-MIPS-POSIX-FFI-GENERATION-PROBE-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
+          if-no-files-found: warn
