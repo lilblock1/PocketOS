@@ -23,6 +23,34 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Smoke-test the read-only hardware probe (host only; not R1 validation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe=tools/r1-koreader-loop-probe.sh
+          sh -n "$probe"
+          test_output="$(sh "$probe" --self-test)"
+          printf '%s\n' "$test_output"
+          grep -Fxq 'PocketOS KOReader R1 read-only hardware probe v1' <<<"$test_output"
+
+          usage_status=0
+          usage_output="$(sh "$probe" 2>&1)" || usage_status=$?
+          test "$usage_status" -eq 2
+          grep -Fq 'Usage: sh r1-koreader-loop-probe.sh --audit|EXPECTED_SD_IMAGE_SHA256' <<<"$usage_output"
+
+          # Exercise only the read-only inventory path on the hosted runner.
+          # This is a shell smoke test, never evidence about physical R1 hardware.
+          audit_output="$(sh "$probe" --audit)"
+          grep -Fq 'AUDIT FINISHED; filesystem and boot image unchanged.' <<<"$audit_output"
+
+          # Keep the safety-critical probe contract explicit in CI.
+          grep -Fq 'noexec' "$probe"
+          grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
+          grep -Fq 'TARGET=hiby-r1' "$probe"
+          if grep -Eq '(^|[[:space:]])(flash_erase|nandwrite|fw_setenv|reboot|dd)([[:space:]]|$)' "$probe"; then
+            echo '::error::Unexpected firmware/reboot/write command in read-only probe.'
+            exit 1
+          fi
       - name: Install QEMU and image inspection tools with bounded retries
         timeout-minutes: 10
         run: |
