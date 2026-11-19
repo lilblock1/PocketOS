@@ -1,89 +1,121 @@
 #!/bin/sh
-# Test pinned KOReader SD runtime on a real R1 without touching NAND/OTA.
-# Only a temporary block node under devtmpfs and RO loop mount under /run.
+# KOReader HiBy R1 pre-install hardware gate. NO NAND, OTA, recovery or GUI writes.
+# --audit: read-only device information.
+# <SHA256>: verified SD image read-only mount + native LuaJIT smoke, with cleanup.
 set -eu
+umask 077
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
-umask 077
-if [ "$#" -eq 1 ] && [ "$1" = --self-test ]; then
-    echo "KOReader R1 SD loop mount smoke-test v1"
+if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
+    echo 'PocketOS KOReader R1 read-only hardware probe v1'
     exit 0
 fi
+fail() { echo "BLOCKED: $*" >&2; exit 1; }
 [ "$#" -eq 1 ] || {
-    echo "Usage: sh r1-koreader-loop-probe.sh EXPECTED_SD_IMAGE_SHA256" >&2
+    echo "Usage: sh r1-koreader-hardware-probe.sh --audit|EXPECTED_SD_IMAGE_SHA256" >&2
     exit 2
 }
-expected=$1
-case "$expected" in ""|*[!0123456789abcdef]*) echo "Expected lowercase SHA256 digest" >&2; exit 2;; esac
-[ "$(printf '%s' "$expected" | wc -c)" -eq 64 ] || exit 2
-fail() { echo "BLOCKED: $*" >&2; exit 1; }
-[ "$(id -u)" -eq 0 ] || fail "Root ADB is required"
-[ "$(uname -r)" = 4.4.94-sonix ] || fail "Unexpected R1 kernel"
-grep -Fxq NAME=PocketOS /etc/pocketos-release || fail "Independent PocketOS absent"
-grep -Fxq TARGET=hiby-r1 /etc/pocketos-release || fail "Unexpected device"
-awk '$1=="/dev/mmcblk0p1" && $2=="/mnt/sd_0" && $3=="vfat" &&
-     $4 ~ /(^|,)noexec(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "Reviewed protected SD mount missing"
-awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "Volatile devtmpfs unavailable"
-awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "Volatile /run unavailable"
-grep -Eq '^[[:space:]]*squashfs$' /proc/filesystems || fail "SquashFS unavailable"
-grep -Eq '^[[:space:]]*7[[:space:]]+loop$' /proc/devices || fail "Loop driver unavailable"
-[ -c /dev/loop-control ] && [ ! -L /dev/loop-control ] ||
-    fail "Loop control node unavailable"
-sd=/mnt/sd_0/PocketOS/KOReaderRuntime
-image=$sd/KOReader-R1-SD-RUNTIME.squashfs
-point=/run/pocketos-reader-smoke
-[ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] ||
-    fail "Unsafe SD folder"
-[ -d "$sd" ] && [ ! -L "$sd" ] || fail "SD runtime folder missing"
-[ -f "$image" ] && [ ! -L "$image" ] || fail "Expected KOReader image missing"
-actual=$(sha256sum "$image" | awk '{print $1}') || fail "Cannot hash SD image"
-[ "$actual" = "$expected" ] || fail "SD image SHA256 mismatch"
-[ ! -e "$point" ] && [ ! -L "$point" ] ||
-    fail "Temporary mountpoint already exists"
-made_node=0
-made_point=0
-mounted_here() {
-    awk -v m="$point" '$2==m {ok=1} END {exit !ok}' /proc/mounts
+report_environment() {
+    echo '=== KOReader R1 hardware inventory (READ-ONLY) ==='
+    echo "Kernel: $(uname -r)"
+    grep -E '^(NAME|TARGET|UPDATE_SEQUENCE)=' /etc/pocketos-release 2>/dev/null || :
+    echo 'Filesystems:'
+    grep -E '[[:space:]](squashfs|vfat|tmpfs|devtmpfs)$' /proc/filesystems || :
+    echo 'Loop driver registration:'
+    grep -E '^[[:space:]]*7[[:space:]]+loop$' /proc/devices || :
+    echo 'SD / RAM mounts:'
+    awk '$2=="/mnt/sd_0" || $2=="/run" || $2=="/dev" {print $2,$3,$4}' /proc/mounts
+    echo 'Memory:'
+    grep -E '^(MemTotal|MemAvailable|MemFree|SwapTotal):' /proc/meminfo || :
+    echo 'Framebuffer:'
+    [ -c /dev/fb0 ] && echo 'Character device /dev/fb0 present' || echo 'No /dev/fb0'
+    for p in /sys/class/graphics/fb0/name /sys/class/graphics/fb0/bits_per_pixel \
+             /sys/class/graphics/fb0/virtual_size; do
+        if [ -r "$p" ]; then printf '%s: ' "$p"; cat "$p"; fi
+    done
+    echo 'Input devices (names/capabilities only; no touch events or identifiers):'
+    if [ -r /proc/bus/input/devices ]; then
+        grep -E '^[NHB]: ' /proc/bus/input/devices | sed -E 's/(Uniq|Phys)=.*/(omitted)/' || :
+    fi
 }
+if [ "$1" = --audit ]; then
+    report_environment
+    echo 'AUDIT FINISHED; filesystem and boot image unchanged.'
+    exit 0
+fi
+expected=$1
+case "$expected" in ''|*[!0123456789abcdef]*)
+    fail 'Supply a lowercase 64-character SHA256 from the verified GitHub report';;
+esac
+[ "$(printf '%s' "$expected" | wc -c | tr -d ' ')" -eq 64 ] || fail 'SHA256 must contain exactly 64 characters'
+[ "$(id -u)" -eq 0 ] || fail 'Root USB ADB is needed for volatile loop mount'
+[ "$(uname -r)" = 4.4.94-sonix ] || fail 'Unexpected kernel; do not test'
+grep -Fxq NAME=PocketOS /etc/pocketos-release || fail 'Installed independent PocketOS missing'
+grep -Fxq TARGET=hiby-r1 /etc/pocketos-release || fail 'Unexpected device'
+[ -c /dev/loop-control ] && [ ! -L /dev/loop-control ] || fail 'Loop control node missing'
+grep -Eq '^[[:space:]]*7[[:space:]]+loop$' /proc/devices || fail 'Loop driver missing'
+grep -Eq '^[[:space:]]*squashfs$' /proc/filesystems || fail 'SquashFS kernel support missing'
+awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END{exit !ok}' /proc/mounts ||
+    fail '/dev must be volatile devtmpfs'
+awk '$2=="/run" && $3=="tmpfs" {ok=1} END{exit !ok}' /proc/mounts ||
+    fail '/run must be volatile tmpfs'
+awk '$2=="/mnt/sd_0" && $3=="vfat" &&
+    $4 ~ /(^|,)noexec(,|$)/ {ok=1} END{exit !ok}' /proc/mounts ||
+    fail 'FAT32 microSD must remain mounted noexec'
+sd_dir=/mnt/sd_0/PocketOS/KOReaderRuntime
+sd_image=$sd_dir/KOReader-R1-SD-RUNTIME.squashfs
+mountpoint=/run/pocketos-koreader-readonly-probe
+for d in /mnt/sd_0/PocketOS "$sd_dir"; do
+    [ -d "$d" ] && [ ! -L "$d" ] || fail "Missing/unsafe SD folder: $d"
+done
+[ -f "$sd_image" ] && [ ! -L "$sd_image" ] ||
+    fail 'KOReader-R1-SD-RUNTIME.squashfs missing from FAT32 card'
+echo 'Verifying SD SquashFS SHA256 (read-only; may take a while on R1)...'
+actual=$(sha256sum "$sd_image" | awk '{print $1}') || fail 'Unable to hash runtime'
+[ "$actual" = "$expected" ] || fail 'SD runtime image digest differs; do not proceed'
+[ ! -e "$mountpoint" ] && [ ! -L "$mountpoint" ] ||
+    fail 'Temporary mountpoint occupied; refusing to disturb it'
+made_loop=0
+made_mount=0
+mounted_here() { awk -v p="$mountpoint" '$2==p {ok=1} END{exit !ok}' /proc/mounts; }
 cleanup() {
-    if [ "$made_point" -eq 1 ]; then
+    if [ "$made_mount" -eq 1 ]; then
         if mounted_here; then
-            umount "$point" || {
-                echo "WARNING: probe mount still active; leaving device node alone" >&2
+            umount "$mountpoint" || {
+                echo 'WARNING: test mount could not be unmounted; inspect with ADB' >&2
                 return
             }
         fi
-        rmdir "$point" 2>/dev/null || :
+        rmdir "$mountpoint" 2>/dev/null || :
     fi
-    if [ "$made_node" -eq 1 ] && ! mounted_here; then rm -f /dev/loop0; fi
+    if [ "$made_loop" -eq 1 ] && ! mounted_here; then
+        rm -f /dev/loop0
+    fi
 }
 trap 'cleanup' EXIT
 trap 'exit 1' HUP INT TERM
 if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
-    mknod -m 0600 /dev/loop0 b 7 0 || fail "Unable to make volatile loop0"
-    made_node=1
+    mknod -m 0600 /dev/loop0 b 7 0 || fail 'Cannot create temporary loop0'
+    made_loop=1
 fi
-[ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] || fail "Unsafe loop0 node"
-[ "$(busybox stat -c '%t:%T' /dev/loop0)" = 7:0 ] ||
-    fail "Wrong loop0 major/minor"
-[ "$(busybox losetup -f)" = /dev/loop0 ] ||
-    fail "Loop0 already in use or unavailable"
-mkdir -m 0700 "$point" || fail "Unable to make RAM mountpoint"
-made_point=1
-busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec "$image" "$point" ||
-    fail "Read-only SquashFS loop mount failed"
-awk -v m="$point" '$2==m && $3=="squashfs" &&
-     $4 ~ /(^|,)ro(,|$)/ {ok=1} END {exit !ok}' /proc/mounts ||
-    fail "Mount was not verified read-only"
-[ -f "$point/reader.lua" ] && [ -x "$point/luajit" ] ||
-    fail "Native KOReader entry points missing"
-[ -f "$point/frontend/device/hibyr1/device.lua" ] ||
-    fail "Native HiBy R1 backend missing"
-plugins=$(find "$point/plugins" -maxdepth 1 -type d -name '*.koplugin' | wc -l)
-[ "$plugins" -ge 20 ] || fail "Incomplete KOReader plugins"
-"$point/luajit" -v || fail "Native MIPS LuaJIT failed on physical R1"
-echo "PASS: SD runtime verified, mounted RO, $plugins plugins, MIPS LuaJIT launched"
-echo "NOT TESTED: display/touch, firmware install or signing. DO NOT FLASH."
+[ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] || fail '/dev/loop0 not a block node'
+[ "$(busybox stat -c '%t:%T' /dev/loop0)" = 7:0 ] || fail '/dev/loop0 major/minor incorrect'
+[ "$(busybox losetup -f)" = /dev/loop0 ] || fail 'Loop0 is already in use'
+mkdir -m 0700 "$mountpoint" || fail 'Unable to create temporary RAM mountpoint'
+made_mount=1
+busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec "$sd_image" "$mountpoint" ||
+    fail 'HiBy R1 could not mount read-only SquashFS over loop'
+awk -v m="$mountpoint" '$2==m && $3=="squashfs" &&
+    $4 ~ /(^|,)ro(,|$)/ {ok=1} END{exit !ok}' /proc/mounts ||
+    fail 'Mount is not confirmed read-only SquashFS'
+for file in reader.lua luajit frontend/device/hibyr1/device.lua \
+            plugins/koreader.koplugin/main.lua plugins/zenos.koplugin/main.lua \
+            ffi/posix_h.lua; do
+    [ -f "$mountpoint/$file" ] || fail "KOReader runtime missing $file"
+done
+[ -x "$mountpoint/luajit" ] || fail 'MIPS LuaJIT cannot be executed'
+plugins=$(find "$mountpoint/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
+[ "$plugins" -ge 20 ] || fail 'KOReader full plugin tree incomplete'
+"$mountpoint/luajit" -v || fail 'Native MIPS LuaJIT could not execute on physical R1'
+echo "PASS: real R1 kernel mounted verified $actual SD SquashFS read-only, $plugins plugins, MIPS LuaJIT executed"
+echo 'NOT TESTED: LCD graphics, actual touch input, full KOReader GUI, RAM pressure, boot/recovery/rollback. DO NOT FLASH.'
