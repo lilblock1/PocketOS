@@ -85,15 +85,15 @@ jobs:
           name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
           run-id: 44460649797
           github-token: ${{ github.token }}
-          path: candidate
+          path: verified
       - name: Verify original rootfs/SD hashes and extract authentic images
         run: |
           set -euo pipefail
           mkdir -p extracted/root extracted/runtime report
-          sha_root=$(jq -r '.rootfs_sha256' candidate/reader-edition-report.json)
-          sha_sd=$(jq -r '.sd_payload_sha256' candidate/reader-edition-report.json)
-          printf '%s  %s\n' "$sha_root" candidate/reader-rootfs.squashfs | sha256sum -c -
-          printf '%s  %s\n' "$sha_sd" candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
+          sha_root=$(jq -r '.rootfs_sha256' verified/candidate/reader-edition-report.json)
+          sha_sd=$(jq -r '.sd_payload_sha256' verified/candidate/reader-edition-report.json)
+          printf '%s  %s\n' "$sha_root" verified/candidate/reader-rootfs.squashfs | sha256sum -c -
+          printf '%s  %s\n' "$sha_sd" verified/candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
                   .sequence==6 and .installed_koreader_plugin_count>=37 and
                   .removed_other_user_interfaces==true and
@@ -101,9 +101,9 @@ jobs:
                   .signed==false and .sd_runtime_required==true and
                   .sd_mount_noexec_preserved==true and .kernel_modified==false and
                   .bootloader_payload==false and .recovery_payload==false and
-                  .userdata_payload==false and .rootfs_bytes<=16777216' candidate/reader-edition-report.json
-          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/root-extract.txt
-          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-extract.txt
+                  .userdata_payload==false and .rootfs_bytes<=16777216' verified/candidate/reader-edition-report.json
+          unsquashfs -no-progress -d extracted/root verified/candidate/reader-rootfs.squashfs >report/root-extract.txt
+          unsquashfs -no-progress -d extracted/runtime verified/candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-extract.txt
           printf '%s  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs\n' "$sha_sd" |
             cmp - extracted/root/etc/pocketos/koreader-sd.sha256
           echo "PASS: signed-update trust remains separate; pinned candidate images and protected SD manifest match"
@@ -124,11 +124,11 @@ jobs:
         run: |
           set -u
           mkdir -p report host-loop-mount
-          if [ ! -f candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
+          if [ ! -f verified/candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
             echo "NOT RUN: candidate missing" | tee report/host-loop.txt
             exit 0
           fi
-          if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
+          if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec verified/candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
             if grep -Fq ' /host-loop-mount ' /proc/mounts; then
               echo 'GitHub runner mounted read-only image (different kernel and loop implementation)' | tee report/host-loop.txt
             else
