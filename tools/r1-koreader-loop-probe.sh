@@ -12,7 +12,7 @@ if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
 fi
 fail() { echo "BLOCKED: $*" >&2; exit 1; }
 [ "$#" -eq 1 ] || {
-    echo "Usage: sh r1-koreader-hardware-probe.sh --audit|EXPECTED_SD_IMAGE_SHA256" >&2
+    echo "Usage: sh r1-koreader-loop-probe.sh --audit|EXPECTED_SD_IMAGE_SHA256" >&2
     exit 2
 }
 report_environment() {
