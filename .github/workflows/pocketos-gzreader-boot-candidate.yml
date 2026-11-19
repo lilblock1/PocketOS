@@ -77,7 +77,7 @@ jobs:
           tar -xzf compiled/output/GZreader-R1-MIPS-PROTOTYPE.tar.gz -C reader-source --no-same-owner --no-same-permissions
           (cd ffi-artifact; sha256sum -c report/SHA256SUMS)
           test -f ffi-artifact/generated/posix_h.lua
-          grep -Fq 'linux_gnu_mipsel=' ffi-artifact/generated/posix_h.lua
+          grep -Fq 'linux_mipsel=' ffi-artifact/generated/posix_h.lua
           test -f reader-source/koreader/ffi/posix_h.lua
           cp ffi-artifact/generated/posix_h.lua reader-source/koreader/ffi/posix_h.lua
           test -f reader-source/koreader/reader.lua
