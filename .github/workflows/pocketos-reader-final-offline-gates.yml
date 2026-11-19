@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/pocketos-reader-final-offline-gates.yml'
       - 'tools/koreader-r1-deep-offline-test.sh'
+      - 'tools/r1-koreader-mips-ffi-diagnostic.sh'
   workflow_dispatch:
 permissions:
   contents: read
@@ -62,6 +63,14 @@ jobs:
         run: |
           set -euo pipefail
           bash tools/koreader-r1-deep-offline-test.sh extracted/root extracted/runtime report
+      - name: Inventory further MIPS FFI problems in a temporary, explicitly nonshipping CI copy
+        if: always()
+        run: |
+          if [ -d extracted/root ] && [ -d extracted/runtime ]; then
+            bash tools/r1-koreader-mips-ffi-diagnostic.sh extracted/root extracted/runtime report
+          else
+            echo 'Skipped: candidate not extracted'
+          fi
       - name: Attempt read-only SquashFS loop mount on GitHub runner (NOT an R1 test)
         if: always()
         run: |
