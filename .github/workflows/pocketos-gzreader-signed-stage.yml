@@ -1,0 +1,136 @@
+name: PocketOS R1 - stage signed GZreader boot package (MANUAL; DO NOT INSTALL)
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Passed GZreader-only boot candidate run ID (must have QEMU test success)
+        required: true
+        type: string
+      confirmation:
+        description: Type STAGE-ONLY to create a signed artifact; no release, OTA change or flashing
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  stage-without-publishing:
+    if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/reader-edition-gzreader' && inputs.confirmation == 'STAGE-ONLY'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: pocketos-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Authenticate completed QEMU-passing R1 source candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.candidate_run }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" > source-run.json
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .status=="completed" and .conclusion=="success" and
+            .head_branch=="reader-edition-gzreader" and
+            .head_repository.full_name==$repo and
+            .path==".github/workflows/pocketos-gzreader-boot-candidate.yml"' source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > artifacts.json
+          jq -e '[.artifacts[] | select(
+            .name=="GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE" and
+            .expired==false and
+            (.digest|test("^sha256:[a-f0-9]{64}$")))] | length==1' artifacts.json
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE
+          run-id: ${{ inputs.candidate_run }}
+          github-token: ${{ github.token }}
+          path: candidate-artifact
+      - name: Install release validation tools (not flash utilities)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssl squashfs-tools p7zip-full genisoimage python3
+      - name: Verify boot candidate and byte-pinned independent R1 kernel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          jq -e '.only_visible_ui=="GZreader" and .ui_shell=="ZenOS" and
+                 .sequence==6 and .reader_edition==true and
+                 .installed_gzreader_plugin_count>=5 and
+                 .physical_boot_verified==false and .signed==false and
+                 .safe_to_flash==false and .kernel_modified==false and
+                 .bootloader_payload==false and .recovery_payload==false and
+                 .userdata_payload==false and .rootfs_bytes<=16777216' candidate-artifact/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 candidate-artifact/candidate/reader-edition-report.json)  candidate-artifact/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate-artifact/candidate/reader-edition-report.json)  candidate-artifact/candidate/GZreader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          mkdir -p baseline-upt baseline-extract baseline
+          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir baseline-upt --pattern pocketos-r1.upt
+          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  baseline-upt/pocketos-r1.upt' | sha256sum -c -
+          7z x -y -obaseline-extract baseline-upt/pocketos-r1.upt >/dev/null
+          python3 tools/extract-r1-system-upt.py --extracted baseline-extract \
+            --rootfs baseline/pocketos-rootfs.squashfs \
+            --kernel baseline/xImage \
+            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
+            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
+      - name: Sign offline candidate with installed PocketOS trust and recovery preflight
+        env:
+          RELEASE_KEY: ${{ secrets.POCKETOS_RELEASE_KEY }}
+          PREFLIGHT_LOG: ${{ secrets.POCKETOS_PREFLIGHT_LOG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [ -n "$RELEASE_KEY" ] && [ -n "$PREFLIGHT_LOG" ] || {
+            echo "::error::Release key and physical R1 recovery preflight evidence are required"; exit 1;
+          }
+          preflight="$RUNNER_TEMP/r1-gzreader-recovery-preflight.log"
+          key="$RUNNER_TEMP/r1-gzreader-private.pem"
+          trap 'rm -f "$preflight" "$key"' EXIT
+          printf '%s\n' "$PREFLIGHT_LOG" > "$preflight"
+          tr -d '\r' <"$preflight" | grep -Fxq 'POCKETOS-R1-RECOVERY-PREFLIGHT-OK' || {
+            echo "::error::Recovery preflight has not been approved"; exit 1;
+          }
+          printf '%s\n' "$RELEASE_KEY" > "$key"
+          unset RELEASE_KEY PREFLIGHT_LOG
+          chmod 600 "$key"
+          openssl pkey -in "$key" -check -noout >/dev/null
+          python3 tools/pack-r1-gzreader-firmware-update.py \
+            --rootfs candidate-artifact/candidate/reader-rootfs.squashfs \
+            --candidate candidate-artifact/candidate/reader-edition-report.json \
+            --kernel baseline/xImage \
+            --sd-runtime candidate-artifact/candidate/GZreader-R1-SD-RUNTIME.squashfs \
+            --key "$key" \
+            --sequence 6 --channel test --reader-only \
+            --output signed-stage
+          openssl pkey -in "$key" -pubout -out public.pem
+          openssl dgst -sha256 -verify public.pem -signature signed-stage/manifest.sig signed-stage/manifest
+          (cd signed-stage && tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -)
+          test "$(head -n 1 signed-stage/manifest)" = 'POCKETOS-R1-FW-1 test r1-mipsel 6'
+      - name: Attach experimental stage warnings, preserve SD runtime and hashes
+        run: |
+          set -euo pipefail
+          mkdir -p stage-only
+          cp signed-stage/manifest signed-stage/manifest.sig signed-stage/pocketos-r1.upt \
+             signed-stage/data-r1-report.json stage-only/
+          cp candidate-artifact/candidate/GZreader-R1-SD-RUNTIME.squashfs stage-only/
+          cat >stage-only/DO-NOT-INSTALL-YET.txt <<'EOF'
+          GZreader-only HiBy R1 firmware: SIGNED OFFLINE STAGING, NOT A VERIFIED BOOT.
+          This workflow does not publish any release, OTA channel or firmware.
+          Do NOT install/flash without independently verifying real HiBy R1
+          recovery, kernel 4.4.94 loop mount and SquashFS, physical framebuffer,
+          touch events and RAM usage. An R1 failure can brick the device.
+          Tested: pinned native GZreader/ZenOS build, MIPS POSIX ABI generation,
+          previous CI boot-chain/QEMU test and signed update trust.
+          NOT tested: real device cold boot, display, touch and rollback.
+          Only GZreader/ZenOS is intended as the visible UI.
+          EOF
+          (cd stage-only && sha256sum * > SHA256SUMS)
+      - name: Upload without publishing or modifying test-latest
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GZreader-R1-SIGNED-STAGING-DO-NOT-INSTALL
+          path: stage-only/
+          retention-days: 7
+          if-no-files-found: error
