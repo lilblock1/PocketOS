@@ -35,22 +35,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=reader-edition-koreader&per_page=100" >ffi-runs.json
-          run=$(jq -er --arg repo "$GITHUB_REPOSITORY" '
-            [.workflow_runs[]|select(
-              .status=="completed" and .conclusion=="success" and
-              .head_branch=="reader-edition-koreader" and
-              .head_repository.full_name==$repo and
-              .path==".github/workflows/pocketos-koreader-mips-ffi.yml")] |
-            sort_by(.created_at) | last | .id' ffi-runs.json)
+          # Exact, independently successful KOReader-specific GNU MIPS cdefs.
+          # Do not silently select GZreader cdefs or a failed/partial workflow.
+          run=44459237409
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
+            jq -e '.status=="completed" and .conclusion=="success" and
+                   .head_branch=="reader-edition-koreader" and
+                   .head_sha=="f5062b9f1e41cab8202ecf4c0ab8af7d9e54271c" and
+                   .path==".github/workflows/pocketos-koreader-mips-ffi.yml"'
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" >ffi-artifacts.json
           jq -e '[.artifacts[]|select(
+            .id==14499196861 and
             .name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and
             .expired==false and
-            (.digest|test("^sha256:[a-f0-9]{64}$")))] | length==1' ffi-artifacts.json
+            .digest=="sha256:67fb08f56f84b027c71e0fa27e35f311437e14014d95785a01354501b179f0fa")] | length==1' ffi-artifacts.json
           printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
-          jq -r '.artifacts[]|select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE")|.digest' ffi-artifacts.json >ffi-artifact-digest.txt
-          echo "Native MIPS FFI source run: $run"
+          echo "Verified original KOReader GNU MIPS POSIX source run: $run"
       - name: Authenticate immutable original KOReader-only runtime
         env:
           GH_TOKEN: ${{ github.token }}
