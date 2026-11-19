@@ -16,29 +16,74 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout exact reader-edition branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install host tools (no firmware writers)
+          fetch-depth: 0
+      - name: Install host tools with bounded retries (no firmware writers)
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-user squashfs-tools binutils-mipsel-linux-gnu util-linux
-      - name: Authenticate pinned completed KOReader candidate
+          set -euo pipefail
+          timeout 300 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
+          timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+            install -y --no-install-recommends qemu-user squashfs-tools binutils-mipsel-linux-gnu util-linux
+      - name: Authenticate exact corrected KOReader candidate, QEMU run and boot audit
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
-            jq -e '.status=="completed" and .conclusion=="success" and .head_sha=="dcc5f05164ee5ef57018abdf4a30a80be363cf0a"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
-            jq -e '[.artifacts[]|select(.id==14487360020 and
-                     .name=="PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
-                     .digest=="sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
-                     .expired==false)]|length==1'
-      - uses: actions/download-artifact@v4
+          candidate_run=44460649797
+          candidate_sha=f2ed849682cdd6ca076f7a5d2a954a179a7079cb
+          qemu_run=44460728655
+          qemu_sha=672a18bec0e0512675e96c6bd24c16189667ba03
+          audit_run=44460896960
+          audit_sha=8e0662876f5c84b0f04210878e1c674b7e156506
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run" |
+            jq -e --arg sha "$candidate_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$qemu_run" |
+            jq -e --arg sha "$qemu_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-new-image-qemu.yml"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$audit_run" |
+            jq -e --arg sha "$audit_sha" '
+              .status=="completed" and .conclusion=="success" and
+              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+              .path==".github/workflows/pocketos-koreader-upt-boot-audit.yml"'
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run/artifacts" |
+            jq -e '[.artifacts[]|select(
+              .id==14500046462 and
+              .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
+              .digest=="sha256:e6115bb624cc19249fbcd5752ee21732620acb8b3437a9ce7c99c8ed1cfd787b" and
+              .expired==false)]|length==1'
+
+          git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
+          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
+            .github/workflows/pocketos-koreader-mips-build.yml \
+            .github/workflows/pocketos-koreader-mips-ffi.yml \
+            .github/workflows/pocketos-koreader-mips-ready-candidate.yml \
+            reader/koreader/normalize-mips-posix.py \
+            reader/koreader/prepare-upstream.py \
+            reader/koreader/overlay \
+            reader/koreader/boot/pocketos-reader-start.sh \
+            reader/koreader/r1-touch-probe.c \
+            reader/koreader/build-reader-rootfs.py \
+            tools/koreader-r1-deep-offline-test.sh || {
+              echo "::error::The pinned QEMU candidate is stale relative to native/ABI sources; rebuild and retest before using it."
+              exit 1
+            }
+          echo "Candidate, QEMU and boot-chain provenance verified; runtime source files unchanged."
+      - uses: actions/download-artifact@v8
         with:
-          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
-          run-id: 44430582561
+          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
+          run-id: 44460649797
           github-token: ${{ github.token }}
           path: candidate
       - name: Verify original rootfs/SD hashes and extract authentic images
@@ -50,8 +95,11 @@ jobs:
           printf '%s  %s\n' "$sha_root" candidate/reader-rootfs.squashfs | sha256sum -c -
           printf '%s  %s\n' "$sha_sd" candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+                  .sequence==6 and .installed_koreader_plugin_count>=37 and
+                  .removed_other_user_interfaces==true and
                   .physical_boot_verified==false and .safe_to_flash==false and
                   .signed==false and .sd_runtime_required==true and
+                  .sd_mount_noexec_preserved==true and .kernel_modified==false and
                   .bootloader_payload==false and .recovery_payload==false and
                   .userdata_payload==false and .rootfs_bytes<=16777216' candidate/reader-edition-report.json
           unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/root-extract.txt
@@ -110,7 +158,7 @@ jobs:
           EOF
       - name: Upload even if tests uncover a blocker
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: KOReader-R1-FINAL-OFFLINE-GATES-REPORT-NOT-FIRMWARE
           path: report/
