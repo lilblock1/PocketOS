@@ -65,9 +65,19 @@ jobs:
               .expired==false)]|length==1'
 
           git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
+          # Permit only runner action-version changes in the ABI workflow;
+          # any changed ABI pin, generator, normalization or assertion invalidates
+          # this candidate and requires a fresh native build and QEMU run.
+          git show "$candidate_sha":.github/workflows/pocketos-koreader-mips-ffi.yml |
+            sed -E '/uses: actions\/(checkout|upload-artifact)@v[0-9]+/d' > /tmp/ffi-candidate.yml
+          sed -E '/uses: actions\/(checkout|upload-artifact)@v[0-9]+/d' \
+            .github/workflows/pocketos-koreader-mips-ffi.yml > /tmp/ffi-current.yml
+          cmp -s /tmp/ffi-candidate.yml /tmp/ffi-current.yml || {
+            echo "::error::MIPS ABI generator changed beyond runner action versions; rebuild and retest."
+            exit 1
+          }
           git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
             .github/workflows/pocketos-koreader-mips-build.yml \
-            .github/workflows/pocketos-koreader-mips-ffi.yml \
             .github/workflows/pocketos-koreader-mips-ready-candidate.yml \
             reader/koreader/normalize-mips-posix.py \
             reader/koreader/prepare-upstream.py \
