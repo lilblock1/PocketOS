@@ -1,0 +1,132 @@
+name: PocketOS R1 - GZreader genuine MIPS graphics/startup QEMU smoke (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - '.github/workflows/pocketos-gzreader-qemu-ffi-smoke.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  qemu-mips-ffi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install only missing QEMU user-mode emulator
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          if ! command -v qemu-mipsel >/dev/null; then
+            timeout 180 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=1 -o Acquire::http::Timeout=25 \
+              install -y --no-install-recommends qemu-user
+          fi
+          command -v qemu-mipsel
+          command -v unsquashfs
+      - name: Verify pinned candidate images and patched glibc FFI artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44450496333/artifacts" |
+            jq -e '[.artifacts[]|select(.id==14495596462 and
+                .digest=="sha256:bea1bf27d6249f07cbf4b31037be2ea4931fc55a23684ea67fdb850e8dcc2971" and
+                .name=="GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE" and
+                .expired==false)]|length==1'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44451080847" |
+            jq -e '.status=="completed" and .conclusion=="success" and
+                   .head_branch=="reader-edition-gzreader"'
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44451080847/artifacts" |
+            jq -e '[.artifacts[]|select(.id==14495905686 and
+                .digest=="sha256:707b6ccabb703171e6e60b7004106e47366ea0e0ef7ca504a9a886197d85ca48" and
+                .name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and
+                .expired==false)]|length==1'
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-ONLY-CANDIDATE-AND-BUILD-REPORT-NOT-FIRMWARE
+          run-id: 44450496333
+          github-token: ${{ github.token }}
+          path: previous-candidate
+      - uses: actions/download-artifact@v4
+        with:
+          name: GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          run-id: 44451080847
+          github-token: ${{ github.token }}
+          path: ffi
+      - name: Verify exact immutable images and extract MIPS sysroot
+        run: |
+          set -euo pipefail
+          mkdir -p sysroot runtime report
+          jq -e '.only_visible_ui=="GZreader" and .ui_shell=="ZenOS" and
+                 .rootfs_bytes<=16777216 and .signed==false and
+                 .safe_to_flash==false' previous-candidate/candidate/reader-edition-report.json
+          echo "$(jq -r .rootfs_sha256 previous-candidate/candidate/reader-edition-report.json)  previous-candidate/candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 previous-candidate/candidate/reader-edition-report.json)  previous-candidate/candidate/GZreader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          (cd ffi; sha256sum -c report/SHA256SUMS)
+          grep -Fq 'linux_mipsel=' ffi/generated/posix_h.lua
+          ! grep -Fq '__asm__("""' ffi/generated/posix_h.lua
+          unsquashfs -no-progress -d sysroot previous-candidate/candidate/reader-rootfs.squashfs >report/root-unpack.txt
+          unsquashfs -no-progress -d runtime previous-candidate/candidate/GZreader-R1-SD-RUNTIME.squashfs >report/runtime-unpack.txt
+          cp ffi/generated/posix_h.lua runtime/ffi/posix_h.lua
+      - name: Import native graphics/input modules and test off-screen RGB565
+        run: |
+          set -euo pipefail
+          (
+            cd runtime
+            export KO_PLATFORM=hibyr1
+            export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            timeout 90 qemu-mipsel -L "$GITHUB_WORKSPACE/sysroot" ./luajit -e '
+              require("setupkoenv")
+              assert(type(require("ffi"))=="table")
+              local modules = {
+                "ffi/posix_h",
+                "ffi/blitbuffer",
+                "ffi/framebuffer_linux",
+                "device/generic/device",
+                "device/input",
+                "device/hibyr1/device",
+              }
+              local failures = 0
+              for _, name in ipairs(modules) do
+                local ok, result = pcall(require, name)
+                if ok then print("PASS native MIPS import: " .. name)
+                else
+                  io.stderr:write("BLOCKER native MIPS import: " .. name ..
+                    ": " .. tostring(result) .. "\n")
+                  failures = failures + 1
+                end
+              end
+              if failures ~= 0 then os.exit(10) end
+              local ffi = require("ffi")
+              local symbols = {"clock_gettime", "gettimeofday", "open", "statvfs"}
+              for _, symbol in ipairs(symbols) do
+                local ok, err = pcall(function() return ffi.C[symbol] end)
+                if not ok then
+                  io.stderr:write("BLOCKER libc symbol: "..symbol..": "..tostring(err).."\n")
+                  failures = failures + 1
+                else print("PASS libc symbol: "..symbol) end
+              end
+              if failures ~= 0 then os.exit(11) end
+              local BB = require("ffi/blitbuffer")
+              local b = BB.new(24, 24, BB.TYPE_BBRGB16)
+              assert(b and b:getWidth() == 24 and b:getHeight() == 24)
+              assert(type(loadfile("reader.lua")) == "function")
+              assert(type(loadfile("plugins/gzreader.koplugin/main.lua")) == "function")
+              assert(type(loadfile("plugins/zenos.koplugin/main.lua")) == "function")
+              print("GZreader R1 QEMU native graphics, input, cdefs, RGB565: PASS")
+            '
+          ) 2>&1 | tee report/qemu-native-module-test.log
+      - name: Record physical R1 gate is still outstanding
+        if: always()
+        run: |
+          mkdir -p report
+          echo 'QEMU emulates MIPS userspace, NOT HiBy R1 kernel, LCD, touchscreen, SD loop, recovery, or cold boot. Firmware remains UNSIGNED and NOT READY TO FLASH.' >report/NOT-PHYSICAL-BOOT.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-QEMU-MIPS-FFI-SMOKE-REPORT-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
