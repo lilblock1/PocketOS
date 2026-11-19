@@ -150,7 +150,7 @@ jobs:
           # 'plugins' is a symlink in the upstream install tree.
           plugin_count=$(find -L "$app_dir/plugins" -maxdepth 1 -type d -name '*.koplugin' | wc -l)
           echo "Upstream KOReader plugin directories: $plugin_count"
-          test "$plugin_count" -ge 20
+          test "$plugin_count" -ge 37
           # Test Lua CLI without touching target framebuffer/input devices.
           timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu \
             "$package" -e 'assert(jit.arch:match("^mips")); assert(type(require("ffi"))=="table"); print("KOReader R1 native Lua: PASS")'
@@ -182,7 +182,7 @@ jobs:
     needs: koreader-mips
     if: success()
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
@@ -190,12 +190,48 @@ jobs:
       - name: Install verified R1 rootfs inspection and MIPS tools
         run: |
           timeout 360 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update
-          timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends p7zip-full squashfs-tools \
+          timeout 600 sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=60 install -y --no-install-recommends p7zip-full squashfs-tools genisoimage \
             gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu libc6-dev-mipsel-cross qemu-user
       - uses: actions/download-artifact@v8
         with:
           name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
           path: compiled
+      - name: Select a fresh successful compiler-generated GNU MIPS ABI artifact
+        id: abi-source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-ffi.yml/runs?branch=reader-edition-koreader&status=completed&per_page=20")"
+          selected=0
+          while IFS=$'\t' read -r run_id head_sha; do
+            [ -n "$run_id" ] || continue
+            comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...$GITHUB_SHA" 2>/dev/null)" || continue
+            if ! jq -e '[.files[]?.filename | select(. == ".github/workflows/pocketos-koreader-mips-ffi.yml" or . == "reader/koreader/normalize-mips-posix.py")] | length == 0' <<<"$comparison" >/dev/null; then
+              continue
+            fi
+            run_meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg sha "$head_sha" '.head_branch=="reader-edition-koreader" and .head_sha==$sha and .status=="completed" and .conclusion=="success"' <<<"$run_meta" >/dev/null
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            [ -n "$artifact" ] || continue
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "Selected fresh ABI run $run_id at $head_sha, artifact $(jq -r .id <<<"$artifact") digest $(jq -r .digest <<<"$artifact")"
+            selected=1
+            break
+          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success") | [.id,.head_sha] | @tsv' <<<"$runs")
+          [ "$selected" -eq 1 ] || { echo "::error::No successful MIPS ABI artifact with unchanged compiler assertions/normalizer"; exit 1; }
+      - uses: actions/download-artifact@v8
+        with:
+          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
+          run-id: ${{ steps.abi-source.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: ffi
+          digest-mismatch: error
       - name: Extract complete KOReader runtime from same successful build
         run: |
           set -euo pipefail
@@ -207,6 +243,22 @@ jobs:
           test -f full-reader/koreader/frontend/device/hibyr1/device.lua
           test -d full-reader/koreader/plugins
           test "$(find full-reader/koreader/plugins -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20
+      - name: Install verified compiler-generated GNU MIPS POSIX declarations
+        run: |
+          set -euo pipefail
+          (cd ffi && sha256sum -c report/SHA256SUMS)
+          test -s ffi/generated/posix_h.lua
+          test -s ffi/generated/posix_h_linux_gnu_mipsel.lua
+          test "$(grep -Fc 'linux_gnu_mipsel=' ffi/generated/posix_h.lua)" -eq 1
+          ! grep -Fq 'linux_mipsel=' ffi/generated/posix_h.lua
+          grep -Fq 'Automatically generated with' ffi/generated/posix_h.lua
+          test -f full-reader/koreader/ffi/posix_h.lua
+          cp ffi/generated/posix_h.lua full-reader/koreader/ffi/posix_h.lua
+          grep -Fq 'linux_gnu_mipsel=' full-reader/koreader/ffi/posix_h.lua
+          ! grep -Fq 'linux_mipsel=' full-reader/koreader/ffi/posix_h.lua
+          test ! -e full-reader/koreader/plugins/zenos.koplugin
+          test ! -e full-reader/koreader/plugins/gzreader.koplugin
+          echo "PASS: exact compiler-generated GNU MIPS POSIX declarations installed; no GZreader/ZenOS files"
       - name: Download and pin independently booted PocketOS system 2
         env:
           GH_TOKEN: ${{ github.token }}
@@ -240,9 +292,10 @@ jobs:
             --koreader full-reader/koreader \
             --probe tool-output/pocketos-r1-touch-probe \
             --launcher reader/koreader/boot/pocketos-reader-start.sh \
-            --output reader-candidate --sequence 4 \
+            --output reader-candidate --sequence 6 \
             --source-commit "$GITHUB_SHA"
           jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+                  .sequence==6 and .installed_koreader_plugin_count>=37 and
                   .sd_runtime_required==true and
                   .sd_runtime_path=="/mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs" and
                   .sd_runtime_mount_path=="/run/pocketos-reader" and
@@ -258,7 +311,7 @@ jobs:
                   .signed==false and .safe_to_flash==false and
                   .rootfs_bytes<=16777216' reader-candidate/reader-edition-report.json
           test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
-                    etc/pocketos-release | grep '^UPDATE_SEQUENCE=')" = 'UPDATE_SEQUENCE=4'
+                    etc/pocketos-release | grep '^UPDATE_SEQUENCE=')" = 'UPDATE_SEQUENCE=6'
           test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
                     usr/bin/pocketos-start | grep -Fc 'exec ./luajit ./reader.lua')" -ge 1
           test "$(unsquashfs -cat reader-candidate/reader-rootfs.squashfs \
@@ -271,7 +324,7 @@ jobs:
           unsquashfs -ls reader-candidate/KOReader-R1-SD-RUNTIME.squashfs > reader-candidate/SD-IMAGE-CONTENTS.txt
           grep -Fq 'squashfs-root/luajit' reader-candidate/SD-IMAGE-CONTENTS.txt
           grep -Fq 'squashfs-root/frontend/device/hibyr1/device.lua' reader-candidate/SD-IMAGE-CONTENTS.txt
-          test "$(grep -c '\.koplugin' reader-candidate/SD-IMAGE-CONTENTS.txt)" -gt 20
+          test "$(grep -c '\.koplugin' reader-candidate/SD-IMAGE-CONTENTS.txt)" -ge 37
           unsquashfs -cat reader-candidate/reader-rootfs.squashfs usr/bin/pocketos-start | grep -Fq 'mount -t squashfs -o ro,nosuid,nodev,loop,exec'
           # No older user-facing applications may survive.
           for path in usr/bin/pocketos-shell usr/bin/pocketos-music usr/bin/pocketos-game; do
@@ -282,10 +335,80 @@ jobs:
             fi
           done
           echo 'Candidate is UNSIGNED and NOT SAFE TO FLASH; signing and hardware verification remain separately required.'
+      - name: Run QEMU POSIX, framebuffer, input and RGB565 tests on this exact candidate
+        run: |
+          set -euo pipefail
+          mkdir -p qemu-check/root qemu-check/runtime
+          echo "$(jq -r .rootfs_sha256 reader-candidate/reader-edition-report.json)  reader-candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 reader-candidate/reader-edition-report.json)  reader-candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          unsquashfs -no-progress -d qemu-check/root reader-candidate/reader-rootfs.squashfs >qemu-check/root-extract.log
+          unsquashfs -no-progress -d qemu-check/runtime reader-candidate/KOReader-R1-SD-RUNTIME.squashfs >qemu-check/runtime-extract.log
+          bash tools/koreader-r1-deep-offline-test.sh qemu-check/root qemu-check/runtime qemu-check/report
+          grep -Fxq 'PASS: native MIPS KOReader modules, software RGB565 and entry under QEMU' qemu-check/report/summary.log
+          echo "PASS: this exact unsigned candidate passed native MIPS QEMU POSIX/framebuffer/input/RGB565 checks" | tee qemu-check/report/CANDIDATE-QEMU-PASS.txt
+      - name: Validate disposable offline UPT layout and signature format without publishing
+        run: |
+          set -euo pipefail
+          mkdir -p bootchain-report offline-upt
+          python3 - <<'PY'
+          import importlib.util, json, pathlib
+          root = pathlib.Path.cwd()
+          spec = importlib.util.spec_from_file_location("r1_upt", root / "tools/build-r1-upt.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          report = json.loads((root / "reader-candidate/reader-edition-report.json").read_text())
+          candidate = {
+              "image": {"sha256": report["rootfs_sha256"]},
+              "primary_target": "/dev/mtd2 (rootfs)",
+              "kernel_reused": True,
+              "build_id": report["source_commit"][:16],
+          }
+          result = module.package(
+              root / "reader-candidate/reader-rootfs.squashfs",
+              candidate,
+              root / "offline-upt/iso-stage",
+              root / "offline-upt/pocketos-r1.upt",
+              root / "baseline/xImage",
+          )
+          assert result["kernel_payload"] is True
+          assert result["kernel_unchanged"] is True
+          assert result["rootfs_sha256"] == report["rootfs_sha256"]
+          assert result["bootloader_payload"] is False
+          assert result["recovery_payload"] is False
+          assert result["userdata_payload"] is False
+          assert result["cold_boot_verified"] is False
+          (root / "bootchain-report/unsigned-upt-layout.json").write_text(json.dumps(result, indent=2) + "\n")
+          print("PASS: temporary unsigned UPT layout uses exact existing kernel; no device interaction")
+          PY
+          7z x -y -ooffline-upt/verify offline-upt/pocketos-r1.upt >bootchain-report/upt-extract.log
+          test -f offline-upt/verify/ota_v0/ota_update.in
+          grep -Fxq 'img_type=kernel' offline-upt/verify/ota_v0/ota_update.in
+          grep -Fxq 'img_type=rootfs' offline-upt/verify/ota_v0/ota_update.in
+          test "$(find offline-upt/verify/ota_v0 -name 'xImage.*' | wc -l)" -ge 2
+          test "$(find offline-upt/verify/ota_v0 -name 'rootfs.squashfs.*' | wc -l)" -ge 10
+          umask 077
+          test_key="$RUNNER_TEMP/koreader-manifest-unit-test.pem"
+          test_public="$RUNNER_TEMP/koreader-manifest-unit-test-public.pem"
+          trap 'rm -f "$test_key" "$test_public"; rm -rf offline-upt' EXIT
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$test_key" 2>bootchain-report/ephemeral-key-generation.log
+          openssl pkey -in "$test_key" -pubout -out "$test_public"
+          cp bootchain-report/unsigned-upt-layout.json offline-upt/data-r1-report.json
+          python3 apps/pack-update.py --firmware --sequence 6 --channel test --key "$test_key" --output offline-upt/temporary-signature-test offline-upt/pocketos-r1.upt offline-upt/data-r1-report.json
+          (
+            cd offline-upt/temporary-signature-test
+            test "$(head -n 1 manifest)" = 'POCKETOS-R1-SYSTEM-1 test r1-mipsel 6'
+            openssl dgst -sha256 -verify "$test_public" -signature manifest.sig manifest
+            tail -n +2 manifest | awk '{print $1 "  " $3}' | sha256sum -c -
+          )
+          echo "PASS: disposable manifest signature round-trip; test key is not the device trust key" >bootchain-report/signature-test.txt
+          echo "No UPT or signature-test output is uploaded; no OTA channel, key, recovery or device was changed."
       - uses: actions/upload-artifact@v7
         if: success()
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
-          path: reader-candidate/
+          path: |
+            reader-candidate/
+            qemu-check/report/
+            bootchain-report/
           retention-days: 14
           if-no-files-found: error
