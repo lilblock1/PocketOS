@@ -1,42 +1,70 @@
-# KOReader R1 — first read-only hardware test
+# KOReader-only PocketOS: first physical HiBy R1 test (NO flashing)
 
-**This is a development runtime, NOT firmware. Do not flash it.**
+This is the **first real-hardware test for standard KOReader**, not GZreader,
+ZenOS, music or games. It does **not** install a root filesystem, change a
+Wi-Fi update channel, modify NAND partitions, reboot, launch the reader
+graphically, or write to recovery.
 
-GitHub QEMU user-mode tests do not emulate the R1's kernel, actual loop driver, LCD, touchscreen or RAM. Test the unmodified SD payload with the already-running independent PocketOS before considering replacement firmware.
+The native KOReader MIPS firmware is still experimental. User-mode QEMU
+does not emulate the R1's actual kernel, LCD, touchscreen or memory budget.
 
-## Preconditions
+## Prerequisites
 
-- The **artifact checksum and protected SD manifest checks passed** in CI. The
-  current full KOReader runtime still has an UNSUPPORTED MIPS POSIX FFI blocker:
-  this read-only probe intentionally does NOT start the graphical reader.
-  You may collect this SD mount/LuaJIT diagnostic while the native ABI is being fixed;
-  never attempt a firmware flash or GUI boot with this build.
-- Device is already booted into independent PocketOS; root ADB works.
-- Back up the card and preserve a known-booting R1 recovery firmware image.
+- Your R1 must already be booting **independent PocketOS** with working **root USB ADB** (not SonixOS).
+- Use an existing FAT32 microSD card. Back up anything important first.
+- Preserve a known-working recovery or restore firmware.
+- A failed probe is a **stop** signal, not a reason to bypass checks.
 
-## On Windows
+For the historical, byte-pinned non-firmware KOReader candidate, open:
+https://github.com/lilblock1/PocketOS/actions/runs/44430582561
 
-1. Open https://github.com/lilblock1/PocketOS/actions/runs/44430582561 and download the non-firmware boot-candidate artifact under Artifacts. Extract the ZIP.
-2. Copy only KOReader-R1-SD-RUNTIME.squashfs to the existing FAT32 microSD folder PocketOS/KOReaderRuntime/ (create the folder if absent). Do not copy reader-rootfs.squashfs to the updater.
-3. Safely eject and reinsert the card in the device; leave the normal OS running.
-4. In PowerShell in the extracted ZIP's folder, run:
+Download the artifact named
+`PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE`
+under **Artifacts**. Extract it on your Windows PC. It should contain
+`KOReader-R1-SD-RUNTIME.squashfs` and `reader-edition-report.json` at the
+artifact root. Do **not** copy `reader-rootfs.squashfs` to the updater.
 
-~~~powershell
+## Windows PowerShell
+
+1. Copy only `KOReader-R1-SD-RUNTIME.squashfs` onto the FAT32 card under
+   `PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs`.
+   Safely eject and reinsert it in the running R1.
+2. Save the repository script
+   https://raw.githubusercontent.com/lilblock1/PocketOS/reader-edition-koreader/tools/r1-koreader-loop-probe.sh
+   as `r1-koreader-loop-probe.sh` into the extracted artifact's directory.
+   This script is **not** included inside the older artifact ZIP.
+3. Connect the already booted R1 over USB and run:
+
+```powershell
 adb devices
 adb shell id
-$hash = (Get-Content .\reader-edition-report.json -Raw | ConvertFrom-Json).sd_payload_sha256
 adb push .\r1-koreader-loop-probe.sh /tmp/r1-koreader-loop-probe.sh
+adb shell sh /tmp/r1-koreader-loop-probe.sh --audit
+$hash = (Get-Content .\reader-edition-report.json -Raw | ConvertFrom-Json).sd_payload_sha256
 adb shell sh /tmp/r1-koreader-loop-probe.sh $hash
-~~~
+```
 
-A PASS means the trusted SD image was verified, mounted read-only, the native MIPS LuaJIT version ran, and the mount was cleaned up. This is still not a KOReader graphical boot.
+The `--audit` mode collects read-only kernel, RAM, framebuffer, touchscreen
+names and filesystem mount information. It makes no mounts or writes.
 
-If a check reports BLOCKED, save the complete output and stop. Do not bypass it or install the unsigned image. This test does not require rebooting, flashing, remounting existing flash, changing updater channels or running KOReader's GUI.
+The SHA256 mode checks the SD image's exact checksum, makes an optional
+temporary `/dev/loop0` node **in volatile devtmpfs** if absent, mounts the
+verified image **read-only** under `/run`, checks standard KOReader's original
+plugin tree, executes `luajit -v`, then attempts to unmount and clean up
+everything it created. It does not run the graphical KOReader process.
 
-## Still only the real R1 can prove
+## Interpret results carefully
 
-- Native LCD framebuffer and RGB565 pixel layout, touchscreen event mapping, hardware keys.
-- Running the full document engine, all desired plugins and fonts within ~57 MiB usable RAM.
-- Firmware signing, installer format, recovery and rollback path.
+A `PASS` means only that the **actual HiBy R1** can mount the verified SD
+SquashFS and execute native MIPS LuaJIT. This is not a graphical boot or
+permission to install the unsigned root filesystem.
 
-An offline PASS does not authorize flashing. KOReader itself is currently blocked by missing linux_gnu_mipsel POSIX FFI declarations, so no reader-only firmware installation is ready. Hardware-specific recovery and signing remain separate gates.
+A `BLOCKED` result means stop and keep the full ADB output. The real kernel,
+SD driver, loop support, noexec policy or native ELF still needs to be fixed.
+
+**Remaining before a signed physical cold boot:** LCD framebuffer addressing
+and RGB565 pixels, actual touch event mapping, hardware buttons, GZreader-free
+upstream KOReader GUI startup, available RAM and memory pressure, verified
+firmware signing, stock recovery and rollback.
+
+**Never flash the unsigned SD/rootfs image or use `dd`/`flash_erase` on MTD.**
