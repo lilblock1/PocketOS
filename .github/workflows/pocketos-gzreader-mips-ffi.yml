@@ -83,12 +83,12 @@ jobs:
             cd base-src
             "$GITHUB_WORKSPACE/host-luajit/src/luajit" ffi-cdecl/ffi-cdecl.lua \
               -c mipsel-linux-gnu-gcc -f '-march=mips32r2,-mabi=32' \
-              -M -o "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" \
+              -M -o "$GITHUB_WORKSPACE/generated/posix_h_linux_mipsel.lua" \
               ffi-cdecl/posix_cdecl.c
-            test -s "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
-            grep -Fq 'cdecl_struct_timeval' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
-            grep -Fq 'cdecl_type_time_t' "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua"
-            cp "$GITHUB_WORKSPACE/generated/posix_h_linux_gnu_mipsel.lua" ffi-cdecl/
+            test -s "$GITHUB_WORKSPACE/generated/posix_h_linux_mipsel.lua"
+            grep -Fq 'cdecl_struct_timeval' "$GITHUB_WORKSPACE/generated/posix_h_linux_mipsel.lua"
+            grep -Fq 'cdecl_type_time_t' "$GITHUB_WORKSPACE/generated/posix_h_linux_mipsel.lua"
+            cp "$GITHUB_WORKSPACE/generated/posix_h_linux_mipsel.lua" ffi-cdecl/
             python3 utils/gen_merged_cdecl_h.py \
               "$GITHUB_WORKSPACE/generated/posix_h.lua" \
               ffi-cdecl/posix_h_.lua platform ffi-cdecl \
@@ -99,7 +99,7 @@ jobs:
           ! grep -Fq 'unsupported platform: linux_mipsel' generated/posix_h.lua
           host-luajit/src/luajit -e 'assert(loadfile("generated/posix_h.lua")); print("Merged MIPS POSIX declaration Lua syntax: PASS")'
           echo 'MIPS declarations generated from target headers; ABI runtime still needs QEMU and R1 testing. NOT firmware.' >report/README.txt
-          sha256sum generated/posix_h.lua generated/posix_h_linux_gnu_mipsel.lua >report/SHA256SUMS
+          sha256sum generated/posix_h.lua generated/posix_h_linux_mipsel.lua >report/SHA256SUMS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
