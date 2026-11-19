@@ -86,6 +86,7 @@ jobs:
           # Without recursive checkout, its document engine Makefile fails
           # before compilation because cr3gui/data/dict is absent.
           git -C native-koreader submodule update --init --recursive --depth 1 --jobs 2
+          test "$(git -C native-koreader/base rev-parse HEAD)" = f64c3eb11049e9a75189f186d7345d97c07d87b9
           test -f native-koreader/base/thirdparty/kpvcrlib/crengine/Makefile ||
             test -d native-koreader/base/thirdparty/kpvcrlib/crengine/cr3gui/data
           test -f native-koreader/base/Makefile.defs
@@ -213,7 +214,7 @@ jobs:
             run_meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
             jq -e --arg sha "$head_sha" '.head_branch=="reader-edition-koreader" and .head_sha==$sha and .status=="completed" and .conclusion=="success"' <<<"$run_meta" >/dev/null
             artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
-            artifact="$(jq -c '[.artifacts[] | select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
             [ -n "$artifact" ] || continue
             echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
             echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
@@ -242,7 +243,7 @@ jobs:
           test -f full-reader/koreader/reader.lua
           test -f full-reader/koreader/frontend/device/hibyr1/device.lua
           test -d full-reader/koreader/plugins
-          test "$(find full-reader/koreader/plugins -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20
+          test "$(find full-reader/koreader/plugins -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 37
       - name: Install verified compiler-generated GNU MIPS POSIX declarations
         run: |
           set -euo pipefail
