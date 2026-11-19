@@ -78,8 +78,15 @@ jobs:
             cd runtime
             export KO_PLATFORM=hibyr1
             export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            export KO_HOME="$GITHUB_WORKSPACE/ci-home"
+            mkdir -p "$KO_HOME"
             timeout 90 qemu-mipsel -L "$GITHUB_WORKSPACE/sysroot" ./luajit -e '
               require("setupkoenv")
+              -- Match actual GZreader reader.lua initialization order.
+              G_defaults = require("luadefaults"):open()
+              local DataStorage = require("datastorage")
+              G_reader_settings = require("luasettings"):open(
+                DataStorage:getDataDir() .. "/settings.reader.lua")
               assert(type(require("ffi"))=="table")
               local modules = {
                 "ffi/posix_h",
