@@ -1,0 +1,52 @@
+name: PocketOS R1 - GZreader + ZenOS device port preflight (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - 'reader/gzreader/**'
+      - '.github/workflows/pocketos-gzreader-r1-port.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out pinned GZreader with its own KOReader-base revision
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/9retirement6irk/GZreader.git source
+          git -C source checkout --detach 936f66b753e2a65427595920c4e8f36c10ec29e5
+          test "$(git -C source rev-parse HEAD)" = 936f66b753e2a65427595920c4e8f36c10ec29e5
+          git -C source submodule update --init --depth 1 base
+          test "$(git -C source/base rev-parse HEAD)" = 6e4bc81af4e04f78d81677a323a780a71b29702a
+      - name: Add HiBy R1 MIPS target while preserving GZreader / ZenOS
+        run: |
+          set -euo pipefail
+          python3 -m py_compile reader/gzreader/prepare-upstream.py
+          python3 reader/gzreader/prepare-upstream.py             --upstream source --overlay reader/koreader/overlay
+          grep -Fq 'os.getenv("KO_PLATFORM") == "hibyr1"' source/frontend/device.lua
+          grep -Fq 'return require("device/hibyr1/device")' source/frontend/device.lua
+          test -f source/frontend/device/hibyr1/device.lua
+          test -f source/plugins/gzreader.koplugin/main.lua
+          test -f source/plugins/zenos.koplugin/main.lua
+          test "$(find source/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20
+          grep -Fq 'mipsel-linux-gnu' source/base/Makefile.defs
+          grep -Fq 'MESON_CROSS_CPU_FAMILY = mips' source/base/Makefile.defs
+          test -f source/base/input/input.c
+          echo 'GZreader + ZenOS R1 ported source preflight PASS. Native MIPS ABI/boot not tested.'
+      - name: Upload bounded source test report
+        if: always()
+        run: |
+          mkdir -p report
+          { git -C source rev-parse HEAD 2>/dev/null || true;             git -C source/base rev-parse HEAD 2>/dev/null || true;             echo 'No bootable firmware is created. HiBy R1 support is still under development.'; } > report/README.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-port-preflight-NOT-FIRMWARE
+          path: report/
+          retention-days: 14
