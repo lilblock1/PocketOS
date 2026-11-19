@@ -1,5 +1,9 @@
 name: PocketOS R1 - GZreader-only cold-boot candidate (UNSIGNED; NOT FIRMWARE)
 on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - '.github/workflows/pocketos-gzreader-boot-candidate.yml'
   workflow_dispatch:
     inputs:
       native_run:
@@ -29,7 +33,7 @@ jobs:
       - name: Verify successful native build source and artifact
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN: ${{ inputs.native_run }}
+          SOURCE_RUN: ${{ inputs.native_run || '44442317482' }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
@@ -40,12 +44,12 @@ jobs:
             .head_repository.full_name==$repo and
             .path==".github/workflows/pocketos-gzreader-mips-build.yml"' run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > artifacts.json
-          jq -e '[.artifacts[] | select(.name=="GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE" and .expired==false)] | length==1' artifacts.json
+          jq -e '[.artifacts[] | select(.id==14491398713 and .digest=="sha256:4a59d56cd8f9932e8dee2a0d886b89f016c26a27975e4a0e3be7c01da24346ce" and .name=="GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE" and .expired==false)] | length==1' artifacts.json
           echo "SOURCE_SHA=$(jq -er .head_sha run.json)" >> "$GITHUB_ENV"
       - name: Verify genuine MIPS POSIX declaration generation
         env:
           GH_TOKEN: ${{ github.token }}
-          FFI_RUN: ${{ inputs.ffi_run }}
+          FFI_RUN: ${{ inputs.ffi_run || '44448723610' }}
         run: |
           set -euo pipefail
           [[ "$FFI_RUN" =~ ^[1-9][0-9]{6,19}$ ]] || exit 1
@@ -56,17 +60,17 @@ jobs:
             .head_repository.full_name==$repo and
             .path==".github/workflows/pocketos-gzreader-mips-ffi.yml"' ffi-run.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$FFI_RUN/artifacts" > ffi-artifacts.json
-          jq -e '[.artifacts[] | select(.name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | length==1' ffi-artifacts.json
+          jq -e '[.artifacts[] | select(.id==14493624530 and .digest=="sha256:3a7bc939a61d6958b9b8e31d33b3d5e312520c505f1c5417fae5a12250928e9c" and .name=="GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false)] | length==1' ffi-artifacts.json
       - uses: actions/download-artifact@v4
         with:
           name: GZreader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
-          run-id: ${{ inputs.ffi_run }}
+          run-id: ${{ inputs.ffi_run || '44448723610' }}
           github-token: ${{ github.token }}
           path: ffi-artifact
       - uses: actions/download-artifact@v4
         with:
           name: GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE
-          run-id: ${{ inputs.native_run }}
+          run-id: ${{ inputs.native_run || '44442317482' }}
           github-token: ${{ github.token }}
           path: compiled
       - name: Inspect GZreader binary, ZenOS plugins and original licensed source
