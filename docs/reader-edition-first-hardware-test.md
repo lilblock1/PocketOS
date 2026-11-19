@@ -15,25 +15,17 @@ does not emulate the R1's actual kernel, LCD, touchscreen or memory budget.
 - Preserve a known-working recovery or restore firmware.
 - A failed probe is a **stop** signal, not a reason to bypass checks.
 
-For the **corrected, QEMU-tested** standard KOReader (not GZreader) candidate, open:
-https://github.com/lilblock1/PocketOS/actions/runs/44460649797
-
-Download the artifact named
-`KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE`
-under **Artifacts**. Extract it on your Windows PC. The files are in the
-`candidate/` folder: `KOReader-R1-SD-RUNTIME.squashfs` and
-`reader-edition-report.json`. This exact image passed the MIPS QEMU
-startup/graphics/input test [#44460728655](https://github.com/lilblock1/PocketOS/actions/runs/44460728655). Do **not** copy `reader-rootfs.squashfs` to the updater.
+For the **corrected, QEMU-tested** standard upstream KOReader candidate (not GZreader), open the [RO-SD preflight workflow](https://github.com/lilblock1/PocketOS/actions/workflows/pocketos-reader-boot-candidate.yml) and download `KOReader-R1-QEMU-VERIFIED-RO-SD-PREFLIGHT-NOT-FIRMWARE` from its latest successful run. The bundle contains the exact candidate in `candidate/`, the read-only probe at the bundle root, and these instructions. It is produced only after the candidate hashes, GNU MIPS ABI key, original plugin tree, QEMU POSIX/framebuffer/input/RGB565 tests, and original `reader.lua` help test pass. The pinned candidate assembly and QEMU runs are also linked in the workflow's provenance checks. Do **not** copy `candidate/reader-rootfs.squashfs` to the updater.
 
 ## Windows PowerShell
 
 1. Copy only `KOReader-R1-SD-RUNTIME.squashfs` onto the FAT32 card under
    `PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs`.
    Safely eject and reinsert it in the running R1.
-2. Save the repository script
+2. Use the included `r1-koreader-loop-probe.sh` at the bundle root. If it is
+   missing (for example, when using the original candidate-only artifact),
+   retrieve the branch-pinned script from:
    https://raw.githubusercontent.com/lilblock1/PocketOS/reader-edition-koreader/tools/r1-koreader-loop-probe.sh
-   as `r1-koreader-loop-probe.sh` into the extracted artifact's directory.
-   This script is **not** included inside the artifact ZIP.
 3. Connect the already booted R1 over USB and run:
 
 ```powershell
