@@ -1,0 +1,88 @@
+name: PocketOS R1 - native GZreader plus ZenOS MIPS build (NOT FIRMWARE)
+on:
+  push:
+    branches: [reader-edition-gzreader]
+    paths:
+      - 'reader/gzreader/**'
+      - '.github/workflows/pocketos-gzreader-mips-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pocketos-gzreader-mips-build
+  cancel-in-progress: true
+jobs:
+  native-gzreader:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install MIPS32 cross compiler and upstream dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-mipsel-linux-gnu g++-mipsel-linux-gnu \
+            binutils-mipsel-linux-gnu qemu-user cmake ninja-build meson \
+            git make curl wget patch unzip zip python3 python3-pip \
+            pkg-config gettext autoconf automake libtool libtool-bin \
+            libssl-dev libjpeg-dev zlib1g-dev libc6-dev-i386 lib32gcc-13-dev
+      - name: Checkout pinned GZreader source and exact KOReader-base dependencies
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/9retirement6irk/GZreader.git native-gzreader
+          git -C native-gzreader checkout --detach 936f66b753e2a65427595920c4e8f36c10ec29e5
+          test "$(git -C native-gzreader rev-parse HEAD)" = 936f66b753e2a65427595920c4e8f36c10ec29e5
+          git -C native-gzreader submodule update --init --recursive --depth 1 --jobs 2
+          test "$(git -C native-gzreader/base rev-parse HEAD)" = 6e4bc81af4e04f78d81677a323a780a71b29702a
+          python3 reader/gzreader/prepare-upstream.py \
+            --upstream native-gzreader --overlay reader/koreader/overlay
+          test -f native-gzreader/plugins/gzreader.koplugin/main.lua
+          test -f native-gzreader/plugins/zenos.koplugin/main.lua
+      - name: Cross-compile native GZreader for HiBy R1
+        run: |
+          mkdir -p diagnostics
+          set +e
+          timeout 2700 make -C native-gzreader TARGET=hibyr1 \
+            CHOST=mipsel-linux-gnu USE_NO_CCACHE=1 PARALLEL_JOBS=2 CI=1 all \
+            > diagnostics/native-gzreader-build.log 2>&1
+          rc=$?
+          set -e
+          echo "$rc" > diagnostics/build-exit.txt
+          tail -n 160 diagnostics/native-gzreader-build.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Native GZreader MIPS build has blockers (exit $rc). Nothing flashable created."
+            exit "$rc"
+          fi
+      - name: Verify genuine GZreader plus ZenOS plugins and MIPS executable
+        run: |
+          set -euo pipefail
+          src=native-gzreader/koreader-hibyr1-mipsel-linux-gnu/koreader
+          test -d "$src"
+          test -f "$src/luajit"
+          test -f "$src/reader.lua"
+          test -f "$src/frontend/device/hibyr1/device.lua"
+          test -f "$src/plugins/gzreader.koplugin/main.lua"
+          test -f "$src/plugins/zenos.koplugin/main.lua"
+          mipsel-linux-gnu-readelf -h "$src/luajit" | grep -q MIPS
+          test "$(find -L "$src/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 5
+          timeout 30 qemu-mipsel -L /usr/mipsel-linux-gnu "$src/luajit" -e \
+            'assert(jit.arch:match("^mips")); assert(type(require("ffi"))=="table"); print("GZreader native MIPS LuaJIT: PASS")'
+          mkdir -p output
+          (cd "$src/.." && tar --dereference -czf "$GITHUB_WORKSPACE/output/GZreader-R1-MIPS-PROTOTYPE.tar.gz" koreader)
+          tar -tzf output/GZreader-R1-MIPS-PROTOTYPE.tar.gz > output/contents.txt
+          grep -Fxq 'koreader/plugins/gzreader.koplugin/main.lua' output/contents.txt
+          grep -Fxq 'koreader/plugins/zenos.koplugin/main.lua' output/contents.txt
+          echo 'GZreader + ZenOS only visible UI, backed by PocketOS system. MIPS POSIX FFI and physical boot UNVERIFIED. NOT FIRMWARE.' > output/README.txt
+          (cd output && sha256sum GZreader-R1-MIPS-PROTOTYPE.tar.gz > SHA256SUMS)
+      - name: Upload diagnostics and native prototype, not firmware
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: GZreader-R1-MIPS-NATIVE-BUILD-NOT-FIRMWARE
+          path: |
+            diagnostics/
+            output/
+          retention-days: 14
+          if-no-files-found: warn
