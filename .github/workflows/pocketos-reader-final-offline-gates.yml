@@ -95,6 +95,14 @@ jobs:
               return path.rstrip("/")
 
           expected = {normalize(path) for path in trigger_paths(build, "native build")}
+          integration_triggers = {
+              normalize(path) for path in trigger_paths(integration, "MIPS integration gate")
+          }
+          missing_triggers = expected - integration_triggers
+          assert not missing_triggers, (
+              "MIPS integration workflow will not run for every native build input; "
+              f"missing={sorted(missing_triggers)}"
+          )
           for label, workflow in (("final offline gate", gate), ("signed-stage gate", signed), ("MIPS integration gate", integration)):
               actual = {normalize(path) for path in selector_paths(workflow, label)}
               assert actual == expected, (
