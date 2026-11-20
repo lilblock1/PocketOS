@@ -36,7 +36,7 @@ jobs:
           if [ "$need" -eq 1 ]; then
             timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
               -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
-              install -y --no-install-recommends squashfs-tools p7zip-full jq gh openssl python3 genisoimage
+              install -y --no-install-recommends squashfs-tools p7zip-full jq gh openssl python3 genisoimage coreutils
           fi
           for tool in unsquashfs 7z jq gh sha256sum openssl python3 genisoimage; do command -v "$tool"; done
       - name: Select latest successful current-source native KOReader candidate
