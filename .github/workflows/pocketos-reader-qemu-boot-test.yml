@@ -45,7 +45,7 @@ jobs:
       - name: Select latest successful native candidate matching current KOReader sources
         id: candidate
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           selected=0
@@ -102,14 +102,14 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
-          run-id: \${{ steps.candidate.outputs.run_id }}
-          github-token: \${{ github.token }}
-          repository: \${{ github.repository }}
+          run-id: ${{ steps.candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: verified
           digest-mismatch: error
       - name: Verify current candidate metadata and image hashes
         env:
-          CANDIDATE_SHA: \${{ steps.candidate.outputs.head_sha }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
           report_json=verified/reader-candidate/reader-edition-report.json
@@ -136,8 +136,8 @@ jobs:
           K="$PWD/extracted/runtime"
           {
             echo "PocketOS Reader Edition current-source offline QEMU userspace/init readiness check"
-            echo "Native build run: \${{ steps.candidate.outputs.run_id }}"
-            echo "Native build commit: \${{ steps.candidate.outputs.head_sha }}"
+            echo "Native build run: ${{ steps.candidate.outputs.run_id }}"
+            echo "Native build commit: ${{ steps.candidate.outputs.head_sha }}"
             echo "NOT full-board boot emulation; physical cold boot, LCD, touch, hardware buttons, kernel loop mount, RAM pressure, production signing and rollback remain unverified"
           } | tee report/README.txt
           for file in etc/inittab etc/init.d/rcS etc/init.d/S95pocketos usr/bin/pocketos-start; do
