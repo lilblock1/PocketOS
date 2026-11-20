@@ -43,6 +43,43 @@ jobs:
               install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux coreutils jq gh
           fi
           for cmd in qemu-mipsel unsquashfs readelf mount umount sha256sum cmp stat timeout jq gh; do command -v "$cmd"; done
+      - name: Guard candidate freshness filter against native build trigger drift
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          build = Path(".github/workflows/pocketos-koreader-mips-build.yml").read_text()
+          gate = Path(".github/workflows/pocketos-reader-final-offline-gates.yml").read_text()
+          trigger = re.search(
+              r"(?ms)^  push:\n    branches: \\[reader-edition-koreader\\]\n    paths:\n(?P<body>.*?)(?=^  workflow_dispatch:)",
+              build,
+          )
+          selector = re.search(
+              r'(?ms)git diff --quiet "\\$head_sha" "\\$GITHUB_SHA" -- \\\\\n(?P<body>.*?)\\|\\| continue',
+              gate,
+          )
+          assert trigger, "Could not parse native build push-path list"
+          assert selector, "Could not parse final-gate candidate freshness selector"
+          build_paths = re.findall(r"(?m)^\\s+- '([^']+)'$", trigger.group("body"))
+          selector_paths = []
+          for line in selector.group("body").splitlines():
+              item = line.strip().removesuffix("\\\\").strip()
+              if item:
+                  selector_paths.append(item)
+
+          def normalize(path):
+              return path[:-3].rstrip("/") if path.endswith("/**") else path.rstrip("/")
+
+          expected = {normalize(p) for p in build_paths}
+          actual = {normalize(p) for p in selector_paths}
+          assert expected == actual, (
+              "Candidate freshness filter drifted from native build inputs; "
+              f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+          )
+          print("PASS: final offline candidate selector covers every native build/assembly trigger path")
+          PY
       - name: Select latest successful current-source native KOReader candidate
         id: candidate
         env:
