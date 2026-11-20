@@ -118,5 +118,25 @@ plugins=$(find "$mountpoint/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.ko
 [ ! -e "$mountpoint/plugins/zenos.koplugin" ] || fail 'ZenOS must not be in standard KOReader'
 [ ! -e "$mountpoint/plugins/gzreader.koplugin" ] || fail 'GZreader must not be in standard KOReader'
 "$mountpoint/luajit" -v || fail 'Native MIPS LuaJIT could not execute on physical R1'
+
+# Do not issue a success attestation until the read-only loop mount and any
+# temporary nodes have been removed successfully. A failed cleanup is a BLOCKED
+# preflight, not a pass suitable for the offline signing gate.
+if mounted_here; then
+    busybox umount "$mountpoint" || fail 'Read-only test mount would not unmount cleanly'
+fi
+mounted_here && fail 'Temporary SquashFS mount still active after cleanup'
+made_mount=0
+rmdir "$mountpoint" 2>/dev/null || fail 'Temporary RAM mountpoint could not be removed'
+if [ "$made_loop" -eq 1 ]; then
+    rm -f /dev/loop0 || fail 'Temporary loop node could not be removed'
+    made_loop=0
+fi
+[ ! -e "$mountpoint" ] && [ ! -L "$mountpoint" ] || fail 'Temporary mountpoint remains'
+if [ "$made_loop" -eq 0 ] && [ -e /dev/loop0 ] && [ ! -b /dev/loop0 ]; then
+    fail 'Unexpected /dev/loop0 node remains'
+fi
 echo "PASS: real R1 kernel mounted verified $actual SD SquashFS read-only, $plugins plugins, MIPS LuaJIT executed"
+echo "POCKETOS-R1-KOREADER-SD-SHA256=$actual"
+echo 'POCKETOS-R1-KOREADER-READONLY-SD-LOOP-OK'
 echo 'NOT TESTED: LCD graphics, actual touch input, full KOReader GUI, RAM pressure, boot/recovery/rollback. DO NOT FLASH.'
