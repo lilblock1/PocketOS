@@ -34,10 +34,18 @@ PY
   cd "$K"
   export KO_PLATFORM=hibyr1
   export LD_LIBRARY_PATH="$K/libs:$K"
+  # Use the same settings bootstrap as the real KOReader module-load gate.
+  # Without G_reader_settings, gesture/input modules fail for a test-harness
+  # reason unrelated to the intentionally incompatible ARM-cdefs experiment.
+  export KO_HOME="$REPORT/KOReader-diagnostic-settings"
+  mkdir -p "$KO_HOME"
   timeout 90 qemu-mipsel -L "$R" "$K/luajit" -e '
     package.path = "./?.lua;./?/init.lua;./frontend/?.lua;./frontend/?/init.lua;" .. package.path
     package.cpath = "./libs/?.so;./libs/lib?.so;./?.so;" .. package.cpath
     require("setupkoenv") -- Match genuine KOReader boot: installs ffi.loadlib and correct require paths.
+    G_defaults = require("luadefaults"):open()
+    local DataStorage = require("datastorage")
+    G_reader_settings = require("luasettings"):open(DataStorage:getDataDir() .. "/settings.reader.lua")
     for _, name in ipairs({
       "ffi/posix_h", "ffi/blitbuffer", "ffi/framebuffer_linux",
       "device/generic/device", "device/input", "device/hibyr1/device",
