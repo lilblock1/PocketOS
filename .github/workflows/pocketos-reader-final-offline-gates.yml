@@ -10,6 +10,7 @@ on:
       - '.github/workflows/pocketos-reader-qemu-boot-test.yml'
       - '.github/workflows/pocketos-koreader-new-image-qemu.yml'
       - '.github/workflows/pocketos-koreader-upt-boot-audit.yml'
+      - '.github/workflows/pocketos-koreader-verified-mips-integration.yml'
       - '.github/workflows/pocketos-reader-boot-candidate.yml'
       - 'reader/koreader/**'
       - 'tools/extract-r1-system-upt.py'
@@ -57,6 +58,7 @@ jobs:
           build = Path(".github/workflows/pocketos-koreader-mips-build.yml").read_text()
           gate = Path(".github/workflows/pocketos-reader-final-offline-gates.yml").read_text()
           signed = Path(".github/workflows/pocketos-koreader-signed-stage.yml").read_text()
+          integration = Path(".github/workflows/pocketos-koreader-verified-mips-integration.yml").read_text()
 
           def trigger_paths(text, label):
               lines = text.splitlines()
@@ -93,7 +95,7 @@ jobs:
               return path.rstrip("/")
 
           expected = {normalize(path) for path in trigger_paths(build, "native build")}
-          for label, workflow in (("final offline gate", gate), ("signed-stage gate", signed)):
+          for label, workflow in (("final offline gate", gate), ("signed-stage gate", signed), ("MIPS integration gate", integration)):
               actual = {normalize(path) for path in selector_paths(workflow, label)}
               assert actual == expected, (
                   f"{label} freshness selector drifted from native build inputs; "
