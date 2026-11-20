@@ -65,6 +65,13 @@ jobs:
           grep -Fq 'installed_koreader_plugin_count>=37' "$stage"
           grep -Fq 'POCKETOS-R1-KOREADER-SD-SHA256=$expected_sd_sha' "$stage"
           ! grep -Eq '44460649797|44460728655|44460896960|14500046462' "$stage"
+
+          # Guard the native builder's ABI selector: a successful run must be
+          # the pinned FFI workflow, and an unexpected run must be skipped.
+          build=.github/workflows/pocketos-koreader-mips-build.yml
+          grep -Fq '.path==".github/workflows/pocketos-koreader-mips-ffi.yml" and' "$build"
+          grep -Fq '<<<"$run_meta" >/dev/null || continue' "$build"
+
           if grep -Eq '(^|[[:space:]])(flash_erase|nandwrite|fw_setenv|reboot|dd)([[:space:]]|$)' "$probe"; then
             echo '::error::Unexpected firmware/reboot/write command in read-only probe.'
             exit 1
