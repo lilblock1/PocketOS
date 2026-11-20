@@ -95,7 +95,7 @@ jobs:
               break
             done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
             [ "$selected" -eq 1 ] && break
-            echo "No matching successful native candidate yet (attempt $attempt/40); waiting 15 seconds."
+            echo "No matching successful native candidate yet (attempt $attempt/40); waiting 30 seconds."
             sleep 30
           done
           [ "$selected" -eq 1 ] || { echo "::error::No successful native candidate matches current KOReader build inputs"; exit 1; }
