@@ -112,6 +112,21 @@ jobs:
           ABI_TYPE_EQ(blkcnt_t, __blkcnt64_t, "MIPS public blkcnt_t");
           ABI_TYPE_EQ(fsblkcnt_t, __fsblkcnt64_t, "MIPS public fsblkcnt_t");
           ABI_TYPE_EQ(fsfilcnt_t, __fsfilcnt64_t, "MIPS public fsfilcnt_t");
+          /* Verify the concrete public timeval layout consumed by LuaJIT FFI.
+           * This guards against correct typedef names with wrong field widths
+           * or offsets after normalization. */
+          _Static_assert(sizeof(time_t) == 8, "GNU MIPS public time_t must be 64-bit");
+          _Static_assert(sizeof(off_t) == 8, "GNU MIPS public off_t must be 64-bit");
+          _Static_assert(sizeof(((struct timeval *)0)->tv_sec) == 8,
+                         "GNU MIPS timeval.tv_sec width mismatch");
+          _Static_assert(sizeof(((struct timeval *)0)->tv_usec) == 8,
+                         "GNU MIPS timeval.tv_usec width mismatch");
+          _Static_assert(offsetof(struct timeval, tv_sec) == 0,
+                         "GNU MIPS timeval.tv_sec offset mismatch");
+          _Static_assert(offsetof(struct timeval, tv_usec) == 8,
+                         "GNU MIPS timeval.tv_usec offset mismatch");
+          _Static_assert(sizeof(struct timeval) == 16,
+                         "GNU MIPS timeval size mismatch");
           C
           python3 - <<'PY'
           from pathlib import Path

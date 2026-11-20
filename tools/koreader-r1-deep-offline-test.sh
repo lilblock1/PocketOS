@@ -88,6 +88,14 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
     end
     if errors > 0 then os.exit(10) end
     local ffi = require("ffi")
+    -- Check generated LuaJIT declarations against the concrete GNU MIPS32
+    -- ABI, not just symbol availability or typedef spelling.
+    assert(ffi.sizeof("time_t") == 8, "GNU MIPS time_t must be 64-bit")
+    assert(ffi.sizeof("off_t") == 8, "GNU MIPS off_t must be 64-bit")
+    assert(ffi.sizeof("struct timeval") == 16, "GNU MIPS timeval size mismatch")
+    assert(ffi.offsetof("struct timeval", "tv_sec") == 0, "timeval.tv_sec offset mismatch")
+    assert(ffi.offsetof("struct timeval", "tv_usec") == 8, "timeval.tv_usec offset mismatch")
+    print("PASS: generated GNU MIPS time_t/off_t and timeval layout match target ABI")
     for _, sym in ipairs({"clock_gettime", "gettimeofday", "open", "statvfs"}) do
       local ok, err = pcall(function() return ffi.C[sym] end)
       assert(ok, "Missing MIPS libc symbol " .. sym .. ": " .. tostring(err))
