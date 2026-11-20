@@ -93,10 +93,13 @@ jobs:
           path: verified
           digest-mismatch: error
       - name: Check original KOReader-only image and target resource budget
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
           for cmd in 7z unsquashfs openssl python3 sha256sum qemu-mipsel jq gh genisoimage; do command -v "$cmd"; done
-          jq -e '.only_visible_ui=="KOReader" and .sequence==6 and
+          jq -e --arg sha "$CANDIDATE_SHA" '.source_commit==$sha and
+                 .only_visible_ui=="KOReader" and .sequence==6 and
                  .reader_edition==true and .installed_koreader_plugin_count>=37 and
                  .rootfs_bytes<=16777216 and .removed_other_user_interfaces==true and
                  .physical_boot_verified==false and .signed==false and
