@@ -46,6 +46,22 @@ verified image **read-only** under `/run`, verifies all 37+ original KOReader
 plugin directories are present, executes `luajit -v`, then attempts to unmount
 and clean up everything it created. It does not run the graphical KOReader process.
 
+Only after the loop mount, native MIPS LuaJIT check, unmount, and temporary-node
+cleanup all succeed, the probe emits these exact attestation lines:
+
+```text
+POCKETOS-R1-KOREADER-SD-SHA256=<actual 64-character digest>
+POCKETOS-R1-KOREADER-READONLY-SD-LOOP-OK
+```
+
+Keep the complete output, including the digest line. The protected signed-stage
+workflow accepts that evidence only when the digest equals the current candidate's
+SD runtime. A separate `POCKETOS-R1-RECOVERY-PREFLIGHT-OK` line is a manual
+attestation and must be added only after the actual device's recovery entry/handoff
+has been checked. Do not make up either marker or reuse logs from another image.
+The signing workflow does not flash anything; its artifact is still marked
+DO-NOT-INSTALL until GUI, cold-boot, LCD/touch, RAM, and rollback gates are verified.
+
 ## Interpret results carefully
 
 A `PASS` means only that the **actual HiBy R1** can mount the verified SD
