@@ -4,7 +4,13 @@ on:
     branches: [reader-edition-koreader]
     paths:
       - '.github/workflows/pocketos-koreader-verified-mips-integration.yml'
+      - '.github/workflows/pocketos-koreader-mips-build.yml'
+      - '.github/workflows/pocketos-koreader-mips-ffi.yml'
+      - 'reader/koreader/**'
+      - 'tools/extract-r1-system-upt.py'
+      - 'tools/build-r1-upt.py'
       - 'tools/koreader-r1-deep-offline-test.sh'
+      - 'apps/pack-update.py'
   workflow_dispatch:
 permissions:
   contents: read
