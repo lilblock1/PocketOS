@@ -13,12 +13,13 @@ jobs:
   ko-reader-offline-signing-only:
     if: github.repository == 'lilblock1/PocketOS' && github.ref == 'refs/heads/reader-edition-koreader' && inputs.confirmation == 'STAGE-ONLY'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     environment: pocketos-release
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install candidate verification tools with bounded retries
         timeout-minutes: 8
         run: |
