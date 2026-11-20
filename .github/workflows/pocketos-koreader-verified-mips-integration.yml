@@ -14,9 +14,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 22
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install only MIPS QEMU emulator and host ELF inspection
         timeout-minutes: 10
         run: |
@@ -29,74 +30,66 @@ jobs:
               install -y --no-install-recommends qemu-user
           fi
           command -v qemu-mipsel
-      - name: Discover latest fully verified KOReader-specific glibc MIPS FFI
-        id: ffi
+      - name: Select latest successful current-source native KOReader candidate
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Exact, independently successful KOReader-specific GNU MIPS cdefs.
-          # Do not silently select GZreader cdefs or a failed/partial workflow.
-          run=44459237409
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
-            jq -e '.status=="completed" and .conclusion=="success" and
-                   .head_branch=="reader-edition-koreader" and
-                   .head_sha=="f5062b9f1e41cab8202ecf4c0ab8af7d9e54271c" and
-                   .path==".github/workflows/pocketos-koreader-mips-ffi.yml"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" >ffi-artifacts.json
-          jq -e '[.artifacts[]|select(
-            .id==14499196861 and
-            .name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and
-            .expired==false and
-            .digest=="sha256:67fb08f56f84b027c71e0fa27e35f311437e14014d95785a01354501b179f0fa")] | length==1' ffi-artifacts.json
-          printf 'run=%s\n' "$run" >> "$GITHUB_OUTPUT"
-          echo "Verified original KOReader GNU MIPS POSIX source run: $run"
-      - name: Authenticate immutable original KOReader-only runtime
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561" |
-            jq -e '.status=="completed" and .conclusion=="success" and
-                   .head_branch=="reader-edition-koreader" and
-                   .head_sha=="dcc5f05164ee5ef57018abdf4a30a80be363cf0a"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/44430582561/artifacts" |
-            jq -e '[.artifacts[]|select(
-              .id==14487360020 and
-              .digest=="sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3" and
-              .name=="PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE" and
-              .expired==false)]|length==1'
-      - uses: actions/download-artifact@v4
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")"
+          selected=0
+          while IFS=$'\t' read -r run_id head_sha; do
+            [ -n "$run_id" ] || continue
+            git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+            git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+              .github/workflows/pocketos-koreader-mips-build.yml \
+              .github/workflows/pocketos-koreader-mips-ffi.yml \
+              reader/koreader/normalize-mips-posix.py \
+              reader/koreader/prepare-upstream.py \
+              reader/koreader/overlay \
+              reader/koreader/boot/pocketos-reader-start.sh \
+              reader/koreader/r1-touch-probe.c \
+              reader/koreader/build-reader-rootfs.py || continue
+            meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            [ -n "$artifact" ] || continue
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
+            selected=1
+            break
+          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
+      - uses: actions/download-artifact@v8
         with:
-          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
-          run-id: 44430582561
+          name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
+          run-id: ${{ steps.candidate.outputs.run_id }}
           github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: candidate
-      - uses: actions/download-artifact@v4
-        with:
-          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
-          run-id: ${{ steps.ffi.outputs.run }}
-          github-token: ${{ github.token }}
-          path: ffi-artifact
+          digest-mismatch: error
       - name: Check original 37+ KOReader plugins, protected rootfs, generated GNU MIPS ABI
         run: |
           set -euo pipefail
           mkdir -p extracted/root extracted/runtime report
-          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
-          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
-          jq -e '.only_visible_ui=="KOReader" and
+          echo "$(jq -r .rootfs_sha256 candidate/reader-candidate/reader-edition-report.json)  candidate/reader-candidate/reader-rootfs.squashfs" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 candidate/reader-candidate/reader-edition-report.json)  candidate/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
+          jq -e --arg sha "${{ steps.candidate.outputs.head_sha }}" '.source_commit==$sha and .reader_edition==true and .only_visible_ui=="KOReader" and
                  .rootfs_bytes<=16777216 and .signed==false and
-                 .safe_to_flash==false and .installed_koreader_plugin_count>=20' candidate/reader-edition-report.json
-          (cd ffi-artifact && sha256sum -c report/SHA256SUMS)
-          grep -Fq 'linux_gnu_mipsel=' ffi-artifact/generated/posix_h.lua
-          ! grep -Fq 'linux_mipsel=' ffi-artifact/generated/posix_h.lua
-          unsquashfs -no-progress -d extracted/root candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
-          unsquashfs -no-progress -d extracted/runtime candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
+                 .safe_to_flash==false and .installed_koreader_plugin_count>=37' candidate/reader-candidate/reader-edition-report.json
+          grep -Fq 'linux_gnu_mipsel=' extracted/runtime/ffi/posix_h.lua
+          ! grep -Fq 'linux_mipsel=' extracted/runtime/ffi/posix_h.lua
+          ! grep -Fq 'unsupported platform: linux_gnu_mipsel' extracted/runtime/ffi/posix_h.lua
+          unsquashfs -no-progress -d extracted/root candidate/reader-candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
+          unsquashfs -no-progress -d extracted/runtime candidate/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
           plugins=$(find extracted/runtime/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
-          [ "$plugins" -ge 20 ]
+          [ "$plugins" -ge 37 ]
           test ! -e extracted/runtime/plugins/zenos.koplugin
           test ! -e extracted/runtime/plugins/gzreader.koplugin
-          cp ffi-artifact/generated/posix_h.lua extracted/runtime/ffi/posix_h.lua
           echo "PASS: $plugins original KOReader plugin folders; GNU MIPS FFI installed only into extracted CI runtime" > report/identity.txt
       - name: Verify original KOReader native graphics, evdev, libc, RGB565 and startup in MIPS QEMU
         run: |
@@ -115,7 +108,7 @@ jobs:
           The original source artifact and update channels are unchanged.
           NOT FLASHABLE, DO NOT INSTALL THE ROOTFS IMAGE.
           EOF
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: KOReader-R1-TRUE-MIPS-NATIVE-GRAPHICS-INPUT-REPORT-NOT-FIRMWARE
