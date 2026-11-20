@@ -103,8 +103,43 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
     end
     local BB = require("ffi/blitbuffer")
     local bb = BB.new(24, 24, BB.TYPE_BBRGB16)
-    assert(bb and bb:getWidth() == 24 and bb:getHeight() == 24, "RGB565 framebuffer test failed")
-    print("PASS: 24x24 native RGB565 offscreen framebuffer")
+    assert(bb and bb:getWidth() == 24 and bb:getHeight() == 24, "RGB565 framebuffer allocation failed")
+    assert(bb:getBytesPerPixel() == 2 and bb.stride >= 48, "RGB565 row stride mismatch")
+
+    -- Exercise real KOReader color conversion and pixel storage, not just
+    -- allocation. On little-endian MIPS32, RGB565 primaries have these words
+    -- and byte sequences in the off-screen buffer.
+    local raw = ffi.cast("uint8_t*", bb.data)
+    local pixels = {
+      { "#FF0000", 0xF800, 0x00, 0xF8, "red" },
+      { "#00FF00", 0x07E0, 0xE0, 0x07, "green" },
+      { "#0000FF", 0x001F, 0x1F, 0x00, "blue" },
+      { "#FFFFFF", 0xFFFF, 0xFF, 0xFF, "white" },
+    }
+    for x, p in ipairs(pixels) do
+      local px = x - 1
+      bb:setPixel(px, 0, BB.colorFromString(p[1]))
+      assert(bb:getPixel(px, 0).v == p[2], "RGB565 " .. p[5] .. " packed word mismatch")
+      assert(raw[px * 2] == p[3] and raw[px * 2 + 1] == p[4],
+             "RGB565 " .. p[5] .. " little-endian byte order mismatch")
+    end
+    print("PASS: RGB565 primary/white pixel packing, byte order and readback")
+
+    -- Linux input_event is a kernel evdev ABI, not glibc's public timeval:
+    -- MIPS32 long remains 32-bit, so this upstream cdef must stay 16 bytes
+    -- even though GNU MIPS public time_t/timeval are 64-bit.
+    require("ffi/linux_input_h")
+    assert(ffi.sizeof("long") == 4, "MIPS32 long width mismatch")
+    assert(ffi.sizeof("struct input_event") == 16, "MIPS32 evdev input_event size mismatch")
+    assert(ffi.offsetof("struct input_event", "type") == 8, "evdev type offset mismatch")
+    assert(ffi.offsetof("struct input_event", "code") == 10, "evdev code offset mismatch")
+    assert(ffi.offsetof("struct input_event", "value") == 12, "evdev value offset mismatch")
+    local ev = ffi.new("struct input_event")
+    ev.type, ev.code, ev.value = 1, 330, 1 -- EV_KEY / BTN_TOUCH press
+    assert(ev.type == 1 and ev.code == 330 and ev.value == 1, "synthetic touch event layout mismatch")
+    ev.type, ev.code, ev.value = 3, 53, 1234 -- EV_ABS / ABS_MT_POSITION_X
+    assert(ev.type == 3 and ev.code == 53 and ev.value == 1234, "synthetic touch coordinate layout mismatch")
+    print("PASS: MIPS32 evdev input_event size/offsets and synthetic key/touch records")
     assert(type(loadfile("reader.lua")) == "function", "KOReader entry is not parseable")
     print("PASS: upstream KOReader entry parser")
   '
