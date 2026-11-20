@@ -125,7 +125,7 @@ plugins=$(find "$mountpoint/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.ko
 if mounted_here; then
     busybox umount "$mountpoint" || fail 'Read-only test mount would not unmount cleanly'
 fi
-mounted_here && fail 'Temporary SquashFS mount still active after cleanup'
+if mounted_here; then fail 'Temporary SquashFS mount still active after cleanup'; fi
 made_mount=0
 rmdir "$mountpoint" 2>/dev/null || fail 'Temporary RAM mountpoint could not be removed'
 if [ "$made_loop" -eq 1 ]; then
