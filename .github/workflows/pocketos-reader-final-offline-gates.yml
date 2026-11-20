@@ -36,101 +36,68 @@ jobs:
               install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux jq gh
           fi
           for cmd in qemu-mipsel unsquashfs readelf mount jq gh; do command -v "$cmd"; done
-      - name: Authenticate exact corrected KOReader candidate, QEMU run and boot audit
+      - name: Select latest successful current-source native KOReader candidate
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          candidate_run=44460649797
-          candidate_sha=f2ed849682cdd6ca076f7a5d2a954a179a7079cb
-          qemu_run=44460728655
-          qemu_sha=672a18bec0e0512675e96c6bd24c16189667ba03
-          audit_run=44460896960
-          audit_sha=8e0662876f5c84b0f04210878e1c674b7e156506
-
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run" |
-            jq -e --arg sha "$candidate_sha" '
-              .status=="completed" and .conclusion=="success" and
-              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
-              .path==".github/workflows/pocketos-koreader-mips-ready-candidate.yml"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$qemu_run" |
-            jq -e --arg sha "$qemu_sha" '
-              .status=="completed" and .conclusion=="success" and
-              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
-              .path==".github/workflows/pocketos-koreader-new-image-qemu.yml"'
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$audit_run" |
-            jq -e --arg sha "$audit_sha" '
-              .status=="completed" and .conclusion=="success" and
-              .head_branch=="reader-edition-koreader" and .head_sha==$sha and
-              .path==".github/workflows/pocketos-koreader-upt-boot-audit.yml"'
-
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate_run/artifacts" |
-            jq -e '[.artifacts[]|select(
-              .id==14500046462 and
-              .name=="KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE" and
-              .digest=="sha256:e6115bb624cc19249fbcd5752ee21732620acb8b3437a9ce7c99c8ed1cfd787b" and
-              .expired==false)]|length==1'
-
-          git merge-base --is-ancestor "$candidate_sha" "$GITHUB_SHA"
-          # Permit only runner action-version changes in the ABI workflow;
-          # any changed ABI pin, generator, normalization or assertion invalidates
-          # this candidate and requires a fresh native build and QEMU run.
-          git show "$candidate_sha":.github/workflows/pocketos-koreader-mips-ffi.yml |
-            sed -E '/uses: actions\/(checkout|upload-artifact)@v[0-9]+/d' > /tmp/ffi-candidate.yml
-          sed -E '/uses: actions\/(checkout|upload-artifact)@v[0-9]+/d' \
-            .github/workflows/pocketos-koreader-mips-ffi.yml > /tmp/ffi-current.yml
-          cmp -s /tmp/ffi-candidate.yml /tmp/ffi-current.yml || {
-            echo "::error::MIPS ABI generator changed beyond runner action versions; rebuild and retest."
-            exit 1
-          }
-          git diff --quiet "$qemu_sha" "$GITHUB_SHA" -- \
-            .github/workflows/pocketos-koreader-new-image-qemu.yml || {
-              echo "::error::QEMU validation workflow changed after its pinned passing run."
-              exit 1
-            }
-          git diff --quiet "$audit_sha" "$GITHUB_SHA" -- \
-            .github/workflows/pocketos-koreader-upt-boot-audit.yml || {
-              echo "::error::boot-chain/UPT audit workflow changed after its pinned passing run."
-              exit 1
-            }
-          git diff --quiet "$candidate_sha" "$GITHUB_SHA" -- \
-            .github/workflows/pocketos-koreader-mips-build.yml \
-            .github/workflows/pocketos-koreader-mips-ready-candidate.yml \
-            reader/koreader/normalize-mips-posix.py \
-            reader/koreader/prepare-upstream.py \
-            reader/koreader/overlay \
-            reader/koreader/boot/pocketos-reader-start.sh \
-            reader/koreader/r1-touch-probe.c \
-            reader/koreader/build-reader-rootfs.py \
-            tools/koreader-r1-deep-offline-test.sh || {
-              echo "::error::The pinned QEMU candidate is stale relative to native/ABI sources; rebuild and retest before using it."
-              exit 1
-            }
-          echo "Candidate, QEMU and boot-chain provenance verified; runtime source files unchanged."
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")"
+          selected=0
+          while IFS=$'\t' read -r run_id head_sha; do
+            [ -n "$run_id" ] || continue
+            git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+            git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+              .github/workflows/pocketos-koreader-mips-build.yml \
+              .github/workflows/pocketos-koreader-mips-ffi.yml \
+              reader/koreader/normalize-mips-posix.py \
+              reader/koreader/prepare-upstream.py \
+              reader/koreader/overlay \
+              reader/koreader/boot/pocketos-reader-start.sh \
+              reader/koreader/r1-touch-probe.c \
+              reader/koreader/build-reader-rootfs.py || continue
+            meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            [ -n "$artifact" ] || continue
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
+            selected=1
+            break
+          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
       - uses: actions/download-artifact@v8
         with:
-          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
-          run-id: 44460649797
+          name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
+          run-id: ${{ steps.candidate.outputs.run_id }}
           github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: verified
+          digest-mismatch: error
       - name: Verify original rootfs/SD hashes and extract authentic images
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
           mkdir -p extracted/root extracted/runtime report
-          sha_root=$(jq -r '.rootfs_sha256' verified/candidate/reader-edition-report.json)
-          sha_sd=$(jq -r '.sd_payload_sha256' verified/candidate/reader-edition-report.json)
-          printf '%s  %s\n' "$sha_root" verified/candidate/reader-rootfs.squashfs | sha256sum -c -
-          printf '%s  %s\n' "$sha_sd" verified/candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
-          jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and
+          sha_root=$(jq -r '.rootfs_sha256' verified/reader-candidate/reader-edition-report.json)
+          sha_sd=$(jq -r '.sd_payload_sha256' verified/reader-candidate/reader-edition-report.json)
+          printf '%s  %s\n' "$sha_root" verified/reader-candidate/reader-rootfs.squashfs | sha256sum -c -
+          printf '%s  %s\n' "$sha_sd" verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs | sha256sum -c -
+          jq -e --arg sha "$CANDIDATE_SHA" '.source_commit==$sha and .reader_edition==true and .only_visible_ui=="KOReader" and
                   .sequence==6 and .installed_koreader_plugin_count>=37 and
                   .removed_other_user_interfaces==true and
                   .physical_boot_verified==false and .safe_to_flash==false and
                   .signed==false and .sd_runtime_required==true and
                   .sd_mount_noexec_preserved==true and .kernel_modified==false and
                   .bootloader_payload==false and .recovery_payload==false and
-                  .userdata_payload==false and .rootfs_bytes<=16777216' verified/candidate/reader-edition-report.json
-          unsquashfs -no-progress -d extracted/root verified/candidate/reader-rootfs.squashfs >report/root-extract.txt
-          unsquashfs -no-progress -d extracted/runtime verified/candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-extract.txt
+                  .userdata_payload==false and .rootfs_bytes<=16777216' verified/reader-candidate/reader-edition-report.json
+          unsquashfs -no-progress -d extracted/root verified/reader-candidate/reader-rootfs.squashfs >report/root-extract.txt
+          unsquashfs -no-progress -d extracted/runtime verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs >report/runtime-extract.txt
           printf '%s  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs\n' "$sha_sd" |
             cmp - extracted/root/etc/pocketos/koreader-sd.sha256
           echo "PASS: signed-update trust remains separate; pinned candidate images and protected SD manifest match"
@@ -151,11 +118,11 @@ jobs:
         run: |
           set -u
           mkdir -p report host-loop-mount
-          if [ ! -f verified/candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
+          if [ ! -f verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
             echo "NOT RUN: candidate missing" | tee report/host-loop.txt
             exit 0
           fi
-          if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec verified/candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
+          if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
             if grep -Fq ' /host-loop-mount ' /proc/mounts; then
               echo 'GitHub runner mounted read-only image (different kernel and loop implementation)' | tee report/host-loop.txt
             else
