@@ -71,12 +71,12 @@ jobs:
           def selector_paths(text, label):
               marker = 'git diff --quiet "$head_sha" "$GITHUB_SHA" -- '
               assert marker in text, f"{label}: candidate freshness selector missing"
-              start = text.index("\\n", text.index(marker)) + 1
+              start = text.index("\n", text.index(marker)) + 1
               end = text.index("|| continue", start)
               paths = []
               for line in text[start:end].splitlines():
                   item = line.strip()
-                  if item.endswith("\\\\"):
+                  if item.endswith("\\"):
                       item = item[:-1].strip()
                   if item:
                       paths.append(item)
@@ -97,7 +97,7 @@ jobs:
               )
           print("PASS: final offline and signed-stage selectors cover every native build/assembly input")
           PY
-      - name: Select latest successful current-source native KOReader candidate      - name: Select latest successful current-source native KOReader candidate
+      - name: Select latest successful current-source native KOReader candidate
         id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
