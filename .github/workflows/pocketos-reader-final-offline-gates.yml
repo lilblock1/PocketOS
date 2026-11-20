@@ -53,19 +53,19 @@ jobs:
           build = Path(".github/workflows/pocketos-koreader-mips-build.yml").read_text()
           gate = Path(".github/workflows/pocketos-reader-final-offline-gates.yml").read_text()
           trigger = re.search(
-              r"(?ms)^  push:\n    branches: \\[reader-edition-koreader\\]\n    paths:\n(?P<body>.*?)(?=^  workflow_dispatch:)",
+              r"(?ms)^  push:\n    branches: \[reader-edition-koreader\]\n    paths:\n(?P<body>.*?)(?=^  workflow_dispatch:)",
               build,
           )
           selector = re.search(
-              r'(?ms)git diff --quiet "\\$head_sha" "\\$GITHUB_SHA" -- \\\\\n(?P<body>.*?)\\|\\| continue',
+              r'(?ms)git diff --quiet "\$head_sha" "\$GITHUB_SHA" -- \\\n(?P<body>.*?)\|\| continue',
               gate,
           )
           assert trigger, "Could not parse native build push-path list"
           assert selector, "Could not parse final-gate candidate freshness selector"
-          build_paths = re.findall(r"(?m)^\\s+- '([^']+)'$", trigger.group("body"))
+          build_paths = re.findall(r"(?m)^\s+- '([^']+)'$", trigger.group("body"))
           selector_paths = []
           for line in selector.group("body").splitlines():
-              item = line.strip().removesuffix("\\\\").strip()
+              item = line.strip().removesuffix("\\").strip()
               if item:
                   selector_paths.append(item)
 
