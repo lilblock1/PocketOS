@@ -217,7 +217,14 @@ jobs:
               continue
             fi
             run_meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
-            jq -e --arg sha "$head_sha" '.head_branch=="reader-edition-koreader" and .head_sha==$sha and .status=="completed" and .conclusion=="success"' <<<"$run_meta" >/dev/null
+            # The run list is already scoped to the FFI workflow, but verify
+            # the returned metadata too. Treat an unexpected/stale run as a
+            # rejected candidate and continue searching instead of aborting.
+            jq -e --arg sha "$head_sha" \
+              '.path==".github/workflows/pocketos-koreader-mips-ffi.yml" and
+               .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+               .status=="completed" and .conclusion=="success"' \
+              <<<"$run_meta" >/dev/null || continue
             artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
             artifact="$(jq -c '[.artifacts[] | select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
             [ -n "$artifact" ] || continue
