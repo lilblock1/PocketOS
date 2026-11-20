@@ -114,7 +114,7 @@ for file in reader.lua luajit frontend/device/hibyr1/device.lua \
 done
 [ -x "$mountpoint/luajit" ] || fail 'MIPS LuaJIT cannot be executed'
 plugins=$(find "$mountpoint/plugins" -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
-[ "$plugins" -ge 20 ] || fail 'KOReader full plugin tree incomplete'
+[ "$plugins" -ge 37 ] || fail 'KOReader original plugin tree incomplete (need 37+)'
 [ ! -e "$mountpoint/plugins/zenos.koplugin" ] || fail 'ZenOS must not be in standard KOReader'
 [ ! -e "$mountpoint/plugins/gzreader.koplugin" ] || fail 'GZreader must not be in standard KOReader'
 "$mountpoint/luajit" -v || fail 'Native MIPS LuaJIT could not execute on physical R1'

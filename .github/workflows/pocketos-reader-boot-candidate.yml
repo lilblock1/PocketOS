@@ -47,6 +47,7 @@ jobs:
           grep -Fq 'noexec' "$probe"
           grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
           grep -Fq 'TARGET=hiby-r1' "$probe"
+          grep -Fq '[ "$plugins" -ge 37 ]' "$probe"
           if grep -Eq '(^|[[:space:]])(flash_erase|nandwrite|fw_setenv|reboot|dd)([[:space:]]|$)' "$probe"; then
             echo '::error::Unexpected firmware/reboot/write command in read-only probe.'
             exit 1
