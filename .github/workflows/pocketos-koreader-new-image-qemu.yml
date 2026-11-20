@@ -49,7 +49,7 @@ jobs:
           # commit, rather than failing on or testing a stale artifact.
           selected=0
           for attempt in $(seq 1 40); do
-            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
+            runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
               echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
               sleep 30
               continue
@@ -65,9 +65,9 @@ jobs:
                 tools/build-r1-upt.py \
                 tools/koreader-r1-deep-offline-test.sh \
                 apps/pack-update.py || continue
-              meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
+              meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
               jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
-              artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
+              artifacts="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
               artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
               [ -n "$artifact" ] || continue
               echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
