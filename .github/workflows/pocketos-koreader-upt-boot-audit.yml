@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           need=0
-          for tool in unsquashfs 7z jq gh sha256sum openssl python3 genisoimage; do
+          for tool in unsquashfs 7z jq gh sha256sum openssl python3 genisoimage timeout; do
             command -v "$tool" >/dev/null 2>&1 || need=1
           done
           if [ "$need" -eq 1 ]; then
@@ -38,7 +38,7 @@ jobs:
               -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
               install -y --no-install-recommends squashfs-tools p7zip-full jq gh openssl python3 genisoimage coreutils
           fi
-          for tool in unsquashfs 7z jq gh sha256sum openssl python3 genisoimage; do command -v "$tool"; done
+          for tool in unsquashfs 7z jq gh sha256sum openssl python3 genisoimage timeout; do command -v "$tool"; done
       - name: Select latest successful current-source native KOReader candidate
         id: candidate
         env:
@@ -49,7 +49,7 @@ jobs:
           # an older candidate just because the native build is still running.
           selected=0
           for attempt in $(seq 1 40); do
-            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
+            runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
               echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
               sleep 30
               continue
@@ -65,9 +65,9 @@ jobs:
                 tools/build-r1-upt.py \
                 tools/koreader-r1-deep-offline-test.sh \
                 apps/pack-update.py || continue
-              meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
+              meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
               jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
-              artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
+              artifacts="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
               artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
               [ -n "$artifact" ] || continue
               echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
