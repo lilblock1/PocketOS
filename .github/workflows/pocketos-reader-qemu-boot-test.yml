@@ -49,15 +49,22 @@ jobs:
         run: |
           set -euo pipefail
           selected=0
-          for attempt in $(seq 1 40); do
-            runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
-              echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
-              sleep 30
+          for attempt in $(seq 1 20); do
+            # Use the repository-wide runs endpoint, bound every API call, and
+            # log why candidates are rejected. This avoids an opaque hang when
+            # the workflow-specific Actions API endpoint stalls.
+            runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=reader-edition-koreader&per_page=100")" || {
+              echo "GitHub Actions API read failed (attempt $attempt/20); retrying."
+              sleep 15
               continue
             }
             while IFS=$'\t' read -r run_id head_sha; do
               [ -n "$run_id" ] || continue
-              git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+              echo "Checking native build run $run_id at $head_sha"
+              git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || {
+                echo "Skip $run_id: build commit is not an ancestor of this workflow commit."
+                continue
+              }
               git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
                 .github/workflows/pocketos-koreader-mips-build.yml \
                 .github/workflows/pocketos-koreader-mips-ffi.yml \
@@ -66,12 +73,19 @@ jobs:
                 tools/build-r1-upt.py \
                 tools/koreader-r1-deep-offline-test.sh \
                 tools/r1-koreader-loop-probe.sh \
-                apps/pack-update.py || continue
-              meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
-              jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
-              artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
+                apps/pack-update.py || {
+                  echo "Skip $run_id: one or more native build inputs changed."
+                  continue
+                }
+              artifacts="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || {
+                echo "Artifact API read failed for run $run_id; trying the next eligible build."
+                continue
+              }
               artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
-              [ -n "$artifact" ] || continue
+              [ -n "$artifact" ] || {
+                echo "Skip $run_id: no unexpired candidate artifact with a SHA-256 digest."
+                continue
+              }
               echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
               echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
               echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
@@ -81,8 +95,8 @@ jobs:
               break
             done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
             [ "$selected" -eq 1 ] && break
-            echo "No matching successful native candidate yet (attempt $attempt/40); waiting 30 seconds."
-            sleep 30
+            echo "No matching successful native candidate yet (attempt $attempt/20); waiting 15 seconds."
+            sleep 15
           done
           [ "$selected" -eq 1 ] || { echo "::error::No successful native candidate matches current KOReader build inputs"; exit 1; }
       - uses: actions/download-artifact@v8
