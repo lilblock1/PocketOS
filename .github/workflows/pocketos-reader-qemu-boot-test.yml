@@ -49,13 +49,13 @@ jobs:
         run: |
           set -euo pipefail
           selected=0
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 40); do
             # Use the repository-wide runs endpoint, bound every API call, and
             # log why candidates are rejected. This avoids an opaque hang when
             # the workflow-specific Actions API endpoint stalls.
             runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs?branch=reader-edition-koreader&per_page=100")" || {
-              echo "GitHub Actions API read failed (attempt $attempt/20); retrying."
-              sleep 15
+              echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
+              sleep 30
               continue
             }
             while IFS=$'\t' read -r run_id head_sha; do
@@ -95,8 +95,8 @@ jobs:
               break
             done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
             [ "$selected" -eq 1 ] && break
-            echo "No matching successful native candidate yet (attempt $attempt/20); waiting 15 seconds."
-            sleep 15
+            echo "No matching successful native candidate yet (attempt $attempt/40); waiting 15 seconds."
+            sleep 30
           done
           [ "$selected" -eq 1 ] || { echo "::error::No successful native candidate matches current KOReader build inputs"; exit 1; }
       - uses: actions/download-artifact@v8
