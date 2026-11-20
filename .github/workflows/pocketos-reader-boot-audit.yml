@@ -1,4 +1,4 @@
-name: PocketOS Reader Edition - Offline boot readiness audit (NOT FIRMWARE)
+name: PocketOS Reader Edition - current KOReader loader/init readiness audit (NOT FIRMWARE)
 on:
   push:
     branches: [reader-edition-koreader]
@@ -14,30 +14,83 @@ concurrency:
 jobs:
   boot-audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Install offline SquashFS and MIPS tools
+          fetch-depth: 0
+      - name: Install SquashFS and MIPS ELF tools with bounded retries
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools binutils-mipsel-linux-gnu
-      - name: Download pinned, successfully built unsigned reader candidate
-        uses: actions/download-artifact@v4
+          set -euo pipefail
+          need=0
+          for tool in unsquashfs readelf jq gh sha256sum; do command -v "$tool" >/dev/null 2>&1 || need=1; done
+          if [ "$need" -eq 1 ]; then
+            timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+              install -y --no-install-recommends squashfs-tools binutils jq gh
+          fi
+          for tool in unsquashfs readelf jq gh sha256sum; do command -v "$tool"; done
+      - name: Select latest successful current-source native KOReader candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")"
+          selected=0
+          while IFS='|' read -r run_id head_sha; do
+            [ -n "$run_id" ] || continue
+            git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+            git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+              .github/workflows/pocketos-koreader-mips-build.yml \
+              .github/workflows/pocketos-koreader-mips-ffi.yml \
+              reader/koreader/normalize-mips-posix.py \
+              reader/koreader/prepare-upstream.py \
+              reader/koreader/overlay \
+              reader/koreader/boot/pocketos-reader-start.sh \
+              reader/koreader/r1-touch-probe.c \
+              reader/koreader/build-reader-rootfs.py || continue
+            meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            [ -n "$artifact" ] || continue
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
+            selected=1
+            break
+          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | "\(.id)|\(.head_sha)"' <<<"$runs")
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
+      - uses: actions/download-artifact@v8
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
-          run-id: 44415673018
+          run-id: ${{ steps.candidate.outputs.run_id }}
           github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
           path: reviewed
-      - name: Inspect actual init chain, runtime loader and ABI without device access
+          digest-mismatch: error
+      - name: Inspect actual init chain, runtime loader and libc ABI without device access
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
           mkdir -p root runtime report
-          echo 'b750c2b8f215ec8bb651fab86d69b8dbd624ba2816bee46d11f377920015b892  reviewed/reader-rootfs.squashfs' | sha256sum -c -
-          echo '22d223901f1a855085dc99f39d4295187bf01ac525ffeb724b516e4033db13cb  reviewed/KOReader-R1-SD-PAYLOAD.tar.gz' | sha256sum -c -
-          unsquashfs -no-progress -d root reviewed/reader-rootfs.squashfs >report/unsquashfs.log
-          tar -xzf reviewed/KOReader-R1-SD-PAYLOAD.tar.gz -C runtime --no-same-owner --no-same-permissions
+          report_json=reviewed/reader-candidate/reader-edition-report.json
+          root_image=reviewed/reader-candidate/reader-rootfs.squashfs
+          sd_image=reviewed/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs
+          jq -e --arg sha "$CANDIDATE_SHA" '.source_commit==$sha and .reader_edition==true and
+            .only_visible_ui=="KOReader" and .sequence==6 and
+            .installed_koreader_plugin_count>=37 and .rootfs_bytes<=16777216 and
+            .signed==false and .safe_to_flash==false and .physical_boot_verified==false' "$report_json"
+          echo "$(jq -r .rootfs_sha256 "$report_json")  $root_image" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 "$report_json")  $sd_image" | sha256sum -c -
+          unsquashfs -no-progress -d root "$root_image" >report/unsquashfs-root.log
+          unsquashfs -no-progress -d runtime "$sd_image" >report/unsquashfs-runtime.log
           for file in etc/inittab etc/init.d/rcS etc/init.d/S95pocketos usr/bin/pocketos-start; do
             if [ -f "root/$file" ]; then
               echo "== $file ==" | tee -a report/startup.txt
@@ -47,44 +100,50 @@ jobs:
             fi
           done
           test -f root/etc/init.d/S95pocketos
-          if ! grep -Fq pocketos-start root/etc/init.d/S95pocketos; then
-            echo 'BLOCKER: existing S95pocketos does not directly mention pocketos-start' | tee report/boot-blocker.txt
-          fi
-          test -f runtime/koreader/luajit
-          readelf -h runtime/koreader/luajit > report/luajit-elf.txt
-          readelf -l runtime/koreader/luajit > report/luajit-program-headers.txt
-          readelf -d runtime/koreader/luajit > report/luajit-dynamic.txt
-          readelf -V runtime/koreader/luajit > report/luajit-version-info.txt
+          grep -Fq pocketos-start root/etc/init.d/S95pocketos
+          test -x root/usr/bin/pocketos-start
+          test -f runtime/luajit
+          readelf -h runtime/luajit > report/luajit-elf.txt
+          readelf -l runtime/luajit > report/luajit-program-headers.txt
+          readelf -d runtime/luajit > report/luajit-dynamic.txt
+          readelf -V runtime/luajit > report/luajit-version-info.txt
           interpreter=$(sed -n 's/.*Requesting program interpreter: \([^]]*\).*/\1/p' report/luajit-program-headers.txt)
           echo "ELF_INTERPRETER=$interpreter" | tee report/abi-summary.txt
           grep 'Shared library:' report/luajit-dynamic.txt | tee -a report/abi-summary.txt
           grep -oE 'GLIBC_[0-9]+\.[0-9]+' report/luajit-version-info.txt | sort -Vu | tee -a report/abi-summary.txt
           if [ -z "$interpreter" ] || [ ! -e "root$interpreter" ]; then
-            echo "BLOCKER: existing rootfs lacks native LuaJIT interpreter $interpreter" | tee -a report/abi-summary.txt
+            echo "BLOCKER: rootfs lacks the target LuaJIT interpreter $interpreter" | tee -a report/abi-summary.txt
             exit 1
           fi
-          # Even if a loader exists, inspect the rootfs libc symbol versions.
           for libc in root/lib/libc.so.6 root/usr/lib/libc.so.6; do
-            if [ -e "$libc" ]; then
-              readelf -V "$libc" >report/rootfs-libc-version-info.txt || true
-            fi
+            if [ -e "$libc" ]; then readelf -V "$libc" >report/rootfs-libc-version-info.txt || true; fi
           done
           test -s report/rootfs-libc-version-info.txt || {
-            echo 'BLOCKER: unable to verify glibc compatibility in rootfs' | tee -a report/abi-summary.txt
+            echo 'BLOCKER: unable to inspect rootfs glibc symbol versions' | tee -a report/abi-summary.txt
             exit 1
           }
           required=$(grep -oE 'GLIBC_[0-9]+\.[0-9]+' report/luajit-version-info.txt | sort -Vu | tail -1)
           echo "Highest KOReader LuaJIT symbol requirement: $required" | tee -a report/abi-summary.txt
           grep -Fq "$required" report/rootfs-libc-version-info.txt || {
-            echo "BLOCKER: rootfs glibc does not export required version $required" | tee -a report/abi-summary.txt
+            echo "BLOCKER: rootfs glibc does not export $required" | tee -a report/abi-summary.txt
             exit 1
           }
-          test ! -e report/boot-blocker.txt
-          echo 'Offline boot audit passed (not a physical boot)' | tee -a report/abi-summary.txt
-      - uses: actions/upload-artifact@v4
+          echo 'PASS: current candidate init chain, MIPS LuaJIT loader and glibc symbol versions inspected; not a physical boot.' | tee -a report/abi-summary.txt
+      - name: Record hardware-only gates
+        if: always()
+        run: |
+          mkdir -p report
+          cat >report/PHYSICAL-GATES-REMAIN.txt <<'EOF'
+          This audit inspects the current unsigned KOReader candidate in CI only.
+          It does not prove physical R1 cold boot or LCD/touch operation.
+          Still required: R1 loop/SquashFS, FAT32 noexec + read-only loop mount,
+          memory pressure, trusted production signing, recovery and rollback.
+          No OTA channel, firmware or recovery data was changed.
+          EOF
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: KOReader-R1-BOOT-READINESS-AUDIT-NOT-FIRMWARE
+          name: KOReader-R1-CURRENT-CANDIDATE-LOADER-AUDIT-NOT-FIRMWARE
           path: report/
           if-no-files-found: warn
           retention-days: 14
