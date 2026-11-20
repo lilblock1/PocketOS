@@ -42,9 +42,9 @@ names and filesystem mount information. It makes no mounts or writes.
 
 The SHA256 mode checks the SD image's exact checksum, makes an optional
 temporary `/dev/loop0` node **in volatile devtmpfs** if absent, mounts the
-verified image **read-only** under `/run`, checks standard KOReader's original
-all 37+ original KOReader plugin directories, executes `luajit -v`, then attempts to unmount and clean up
-everything it created. It does not run the graphical KOReader process.
+verified image **read-only** under `/run`, verifies all 37+ original KOReader
+plugin directories are present, executes `luajit -v`, then attempts to unmount
+and clean up everything it created. It does not run the graphical KOReader process.
 
 ## Interpret results carefully
 
