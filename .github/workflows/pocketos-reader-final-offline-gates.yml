@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           need_install=0
-          for cmd in qemu-mipsel unsquashfs readelf mount jq gh; do
+          for cmd in qemu-mipsel unsquashfs readelf mount umount sha256sum cmp stat timeout jq gh; do
             if ! command -v "$cmd" >/dev/null 2>&1; then
               need_install=1
             fi
@@ -40,9 +40,9 @@ jobs:
           if [ "$need_install" -eq 1 ]; then
             timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
               -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
-              install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux jq gh
+              install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux coreutils jq gh
           fi
-          for cmd in qemu-mipsel unsquashfs readelf mount jq gh; do command -v "$cmd"; done
+          for cmd in qemu-mipsel unsquashfs readelf mount umount sha256sum cmp stat timeout jq gh; do command -v "$cmd"; done
       - name: Select latest successful current-source native KOReader candidate
         id: candidate
         env:
