@@ -1,145 +1,137 @@
-name: PocketOS R1 - standard KOReader corrected MIPS boot image assembly (UNSIGNED, NO FLASH)
+name: PocketOS R1 - verify canonical native KOReader candidate (UNSIGNED, NO FLASH)
 on:
   push:
     branches: [reader-edition-koreader]
     paths:
       - '.github/workflows/pocketos-koreader-mips-ready-candidate.yml'
+  workflow_dispatch:
 permissions:
   contents: read
   actions: read
 jobs:
-  assemble-standard-reader:
+  verify-current-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 19
+    timeout-minutes: 24
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Verify preinstalled image tools, avoid GitHub apt delays
+          fetch-depth: 0
+      - name: Install QEMU and image inspection tools with bounded retries
+        timeout-minutes: 10
         run: |
           set -euo pipefail
-          for cmd in python3 mksquashfs unsquashfs 7z readelf jq gh sha256sum tar; do command -v "$cmd"; done
-      - name: Verify successful standard KOReader native build and genuine GNU MIPS ABI
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          for spec in \
-            '44457942480 5583ff2f3d1e71e1afa6d45874087f8be71dd0c3 KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE 14498828705 sha256:705df2c1f9a511139db3af7471e1dce2eaf76c8609d7dcc22b33ce21f5ed337e' \
-            '44460324548 b762805c1d8b6a20dc13a609d2e12de95a30c161 KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE 14500126529 sha256:841974f90e44f58fc00c9cd05d56acafdbac912179c3c278b21978d5eb0d5898' \
-            '44430582561 dcc5f05164ee5ef57018abdf4a30a80be363cf0a PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE 14487360020 sha256:abf24ebdc14972f2ea6fa2c2e1b871438228b12fb0591a8a779bb7328750a4e3'; do
-            read -r run sha name artifact digest <<<"$spec"
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
-              jq -e --arg sha "$sha" '
-                .head_branch=="reader-edition-koreader" and .head_sha==$sha and
-                (.status=="completed" and .conclusion=="success" or
-                 (.id==44457942480 and .status=="in_progress"))'
-            if [ "$run" = 44457942480 ]; then
-              # The successful native-build job published its immutable
-              # artifact already, while an unrelated downstream image
-              # packaging job may still be installing dependencies.
-              gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" |
-                jq -e '[.jobs[]|select(
-                  .name=="Attempt complete native KOReader cross-build" and
-                  .status=="completed" and .conclusion=="success")] | length==1'
-            fi
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" |
-              jq -e --arg name "$name" --argjson id "$artifact" --arg digest "$digest" \
-                 '[.artifacts[]|select(.id==$id and .name==$name and .digest==$digest and .expired==false)]|length==1'
+          need=0
+          for tool in qemu-mipsel mksquashfs unsquashfs 7z readelf jq gh sha256sum tar; do
+            command -v "$tool" >/dev/null 2>&1 || need=1
           done
-      - uses: actions/download-artifact@v4
-        with:
-          name: KOReader-R1-FULL-MIPS-BUILD-REVIEW-NOT-FIRMWARE
-          run-id: 44457942480
-          github-token: ${{ github.token }}
-          path: native
-      - uses: actions/download-artifact@v4
-        with:
-          name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
-          run-id: 44460324548
-          github-token: ${{ github.token }}
-          path: ffi
-      - uses: actions/download-artifact@v4
-        with:
-          name: PocketOS-R1-KOReader-RO-SD-BOOT-CANDIDATE-UNSIGNED-NOT-FIRMWARE
-          run-id: 44430582561
-          github-token: ${{ github.token }}
-          path: previous-candidate
-      - name: Materialize verified complete original KOReader with corrected MIPS libc declarations
-        run: |
-          set -euo pipefail
-          mkdir -p full-reader tool-output report original original-iso baseline
-          (cd native/native-output && sha256sum -c SHA256SUMS)
-          tar -xzf native/native-output/KOReader-R1-MIPS-PROTOTYPE.tar.gz \
-            -C full-reader --no-same-owner --no-same-permissions
-          (cd ffi && sha256sum -c report/SHA256SUMS)
-          test -f full-reader/koreader/ffi/posix_h.lua
-          grep -Fq 'linux_gnu_mipsel=' ffi/generated/posix_h.lua
-          ! grep -Fq 'linux_mipsel=' ffi/generated/posix_h.lua
-          cp ffi/generated/posix_h.lua full-reader/koreader/ffi/posix_h.lua
-          readelf -h full-reader/koreader/luajit | grep -q MIPS
-          test -f full-reader/koreader/frontend/device/hibyr1/device.lua
-          test -f full-reader/koreader/frontend/device.lua
-          test -f full-reader/koreader/reader.lua
-          [ "$(find full-reader/koreader/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 20 ]
-          test ! -e full-reader/koreader/plugins/zenos.koplugin
-          test ! -e full-reader/koreader/plugins/gzreader.koplugin
-          echo "$(jq -r .rootfs_sha256 previous-candidate/reader-edition-report.json)  previous-candidate/reader-rootfs.squashfs" | sha256sum -c -
-          unsquashfs -cat previous-candidate/reader-rootfs.squashfs usr/bin/pocketos-r1-touch-probe >tool-output/pocketos-r1-touch-probe
-          chmod 755 tool-output/pocketos-r1-touch-probe
-          readelf -h tool-output/pocketos-r1-touch-probe | grep -q MIPS
-          sha256sum tool-output/pocketos-r1-touch-probe >report/touch-probe-reused-from-verified-KOReader.txt
-          sh -n reader/koreader/boot/pocketos-reader-start.sh
-          python3 -m py_compile reader/koreader/build-reader-rootfs.py
-      - name: Reuse exactly verified independent PocketOS rootfs and kernel
+          if [ "$need" -eq 1 ]; then
+            timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
+              install -y --no-install-recommends qemu-user squashfs-tools p7zip-full binutils jq gh
+          fi
+          for tool in qemu-mipsel unsquashfs 7z readelf jq gh sha256sum tar; do command -v "$tool"; done
+      - name: Select latest successful current-source native KOReader candidate
+        id: candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download pocketos-test-2 --repo "$GITHUB_REPOSITORY" --dir original --pattern pocketos-r1.upt
-          echo '1ba912c86e50d699085657ee28b357db32b27b793b09bc1d0a9ca93c88899b80  original/pocketos-r1.upt' | sha256sum -c -
-          7z x -y -ooriginal-iso original/pocketos-r1.upt >report/baseline-7zip.txt
-          python3 tools/extract-r1-system-upt.py --extracted original-iso \
-            --rootfs baseline/pocketos-rootfs.squashfs --kernel baseline/xImage \
-            --rootfs-sha256 fd2a763277941163a8b52a767b3fdcfe96b3530107a6f72a30fe0ccce365da8a \
-            --kernel-sha256 9222276c59d7bc9ffb8594106475b986bf66066c4f8f4db99c6fb34cb4fc64f6
-      - name: Assemble unsigned corrected-MIPS KOReader-only rootfs and RO SD runtime
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")"
+          selected=0
+          while IFS='|' read -r run_id head_sha; do
+            [ -n "$run_id" ] || continue
+            git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+            git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+              .github/workflows/pocketos-koreader-mips-build.yml \
+              .github/workflows/pocketos-koreader-mips-ffi.yml \
+              reader/koreader/normalize-mips-posix.py \
+              reader/koreader/prepare-upstream.py \
+              reader/koreader/overlay \
+              reader/koreader/boot/pocketos-reader-start.sh \
+              reader/koreader/r1-touch-probe.c \
+              reader/koreader/build-reader-rootfs.py || continue
+            meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
+            artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+            [ -n "$artifact" ] || continue
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+            echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
+            selected=1
+            break
+          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | "\(.id)|\(.head_sha)"' <<<"$runs")
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
+      - uses: actions/download-artifact@v8
+        with:
+          name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
+          run-id: ${{ steps.candidate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: candidate
+          digest-mismatch: error
+      - name: Verify candidate report, hashes, ABI, plugins and rootfs size
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.head_sha }}
         run: |
           set -euo pipefail
-          python3 reader/koreader/build-reader-rootfs.py \
-            --baseline baseline/pocketos-rootfs.squashfs \
-            --koreader full-reader/koreader \
-            --probe tool-output/pocketos-r1-touch-probe \
-            --launcher reader/koreader/boot/pocketos-reader-start.sh \
-            --output candidate --sequence 6 --source-commit "$GITHUB_SHA" >report/assembly.json
-          jq -e '.reader_edition==true and .only_visible_ui=="KOReader" and .sequence==6 and
-                 .rootfs_bytes<=16777216 and .installed_koreader_plugin_count>=20 and
-                 .removed_other_user_interfaces==true and
-                 .bootloader_payload==false and .recovery_payload==false and
-                 .userdata_payload==false and .kernel_modified==false and
-                 .physical_boot_verified==false and .signed==false and
-                 .safe_to_flash==false' candidate/reader-edition-report.json
-          echo "$(jq -r .rootfs_sha256 candidate/reader-edition-report.json)  candidate/reader-rootfs.squashfs" | sha256sum -c -
-          echo "$(jq -r .sd_payload_sha256 candidate/reader-edition-report.json)  candidate/KOReader-R1-SD-RUNTIME.squashfs" | sha256sum -c -
-          unsquashfs -cat candidate/reader-rootfs.squashfs usr/bin/pocketos-start |
-            grep -Fq 'KOReader-R1-SD-RUNTIME.squashfs'
-          unsquashfs -cat candidate/KOReader-R1-SD-RUNTIME.squashfs ffi/posix_h.lua |
-            grep -Fq 'linux_gnu_mipsel='
-          cat >candidate/NOT-INSTALLABLE.txt <<'EOF'
-          This is STANDARD KOReader only. Unsigned offline image, NOT firmware.
-          Do NOT flash, use in Wi-Fi updater, or claim a hardware boot.
-          The original KOReader Lua/37+ plugins and compiled MIPS libraries are
-          preserved; GNU MIPS POSIX declarations were generated from cross ABI.
-          Real R1 kernel loop mount, framebuffer, touch, memory, and rollback
-          are UNTESTED. Preserve existing live PocketOS and signed OTA channel.
+          mkdir -p root runtime report
+          report_json=candidate/reader-candidate/reader-edition-report.json
+          root_image=candidate/reader-candidate/reader-rootfs.squashfs
+          sd_image=candidate/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs
+          jq -e --arg sha "$CANDIDATE_SHA" '.source_commit==$sha and
+            .reader_edition==true and .only_visible_ui=="KOReader" and .sequence==6 and
+            .installed_koreader_plugin_count>=37 and .rootfs_bytes<=16777216 and
+            .removed_other_user_interfaces==true and .signed==false and .safe_to_flash==false and
+            .physical_boot_verified==false and .sd_runtime_required==true and
+            .sd_mount_noexec_preserved==true and .bootloader_payload==false and
+            .recovery_payload==false and .userdata_payload==false and .kernel_modified==false' "$report_json"
+          echo "$(jq -r .rootfs_sha256 "$report_json")  $root_image" | sha256sum -c -
+          echo "$(jq -r .sd_payload_sha256 "$report_json")  $sd_image" | sha256sum -c -
+          test "$(stat -c %s "$root_image")" -eq "$(jq -r .rootfs_bytes "$report_json")"
+          unsquashfs -no-progress -d root "$root_image" >report/root-unpack.txt
+          unsquashfs -no-progress -d runtime "$sd_image" >report/runtime-unpack.txt
+          test -f runtime/reader.lua
+          test -f runtime/frontend/device/hibyr1/device.lua
+          test "$(find runtime/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)" -ge 37
+          test ! -e runtime/plugins/gzreader.koplugin
+          test ! -e runtime/plugins/zenos.koplugin
+          grep -Fq 'linux_gnu_mipsel=' runtime/ffi/posix_h.lua
+          ! grep -Fq 'linux_mipsel=' runtime/ffi/posix_h.lua
+          test "$(cat root/etc/pocketos/koreader-sd.sha256)" = "$(jq -r .sd_payload_sha256 "$report_json")  /mnt/sd_0/PocketOS/KOReaderRuntime/KOReader-R1-SD-RUNTIME.squashfs"
+          echo 'PASS: canonical candidate provenance, original KOReader identity, 37+ plugins, generated GNU MIPS ABI and 16 MiB rootfs limit.' | tee report/summary.txt
+      - name: Re-run native MIPS QEMU checks on canonical candidate
+        run: |
+          set -euo pipefail
+          bash tools/koreader-r1-deep-offline-test.sh root runtime report
+          (
+            cd runtime
+            export KO_PLATFORM=hibyr1
+            export KO_HOME="$GITHUB_WORKSPACE/KOReader-QEMU-Profile"
+            export LD_LIBRARY_PATH="$PWD/libs:$PWD"
+            mkdir -p "$KO_HOME"
+            timeout 75 qemu-mipsel -L "$GITHUB_WORKSPACE/root" ./luajit ./reader.lua -h
+          ) 2>&1 | tee report/reader-entry-help.txt
+          grep -Eq 'usage:|Usage:|Read all the books' report/reader-entry-help.txt
+          echo 'PASS: current candidate native MIPS QEMU integration; no physical boot claim.' >>report/summary.txt
+      - name: Record hardware-only gates
+        if: always()
+        run: |
+          mkdir -p report
+          cat >report/PHYSICAL-GATES-REMAIN.txt <<'EOF'
+          This workflow verifies the current candidate produced by pocketos-koreader-mips-build.yml.
+          It does not assemble or publish firmware and does not prove a physical R1 boot.
+          Hardware still required: cold boot, LCD pixels, touch/key mapping, R1 loop/SquashFS,
+          FAT32 noexec + read-only loop mount, RAM pressure, production signing, recovery and rollback.
+          No OTA channel, trusted key, firmware or recovery partition was changed.
           EOF
-          echo 'PASS: Original KOReader MIPS rootfs and protected immutable SD runtime, ABI corrected. NO FLASH.' > report/summary.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: KOReader-R1-CORRECTED-MIPS-SD-AND-ROOTFS-NOT-FIRMWARE
-          path: |
-            candidate/
-            report/
+          name: KOReader-R1-CANONICAL-CANDIDATE-VERIFY-REPORT-NOT-FIRMWARE
+          path: report/
           retention-days: 14
           if-no-files-found: warn
