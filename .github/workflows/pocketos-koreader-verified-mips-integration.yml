@@ -81,16 +81,16 @@ jobs:
           jq -e --arg sha "${{ steps.candidate.outputs.head_sha }}" '.source_commit==$sha and .reader_edition==true and .only_visible_ui=="KOReader" and
                  .rootfs_bytes<=16777216 and .signed==false and
                  .safe_to_flash==false and .installed_koreader_plugin_count>=37' candidate/reader-candidate/reader-edition-report.json
+          unsquashfs -no-progress -d extracted/root candidate/reader-candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
+          unsquashfs -no-progress -d extracted/runtime candidate/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
           grep -Fq 'linux_gnu_mipsel=' extracted/runtime/ffi/posix_h.lua
           ! grep -Fq 'linux_mipsel=' extracted/runtime/ffi/posix_h.lua
           ! grep -Fq 'unsupported platform: linux_gnu_mipsel' extracted/runtime/ffi/posix_h.lua
-          unsquashfs -no-progress -d extracted/root candidate/reader-candidate/reader-rootfs.squashfs >report/unsquashfs-root.log
-          unsquashfs -no-progress -d extracted/runtime candidate/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs >report/unsquashfs-runtime.log
           plugins=$(find extracted/runtime/plugins -mindepth 1 -maxdepth 1 -type d -name '*.koplugin' | wc -l)
           [ "$plugins" -ge 37 ]
           test ! -e extracted/runtime/plugins/zenos.koplugin
           test ! -e extracted/runtime/plugins/gzreader.koplugin
-          echo "PASS: $plugins original KOReader plugin folders; GNU MIPS FFI installed only into extracted CI runtime" > report/identity.txt
+          echo "PASS: $plugins original KOReader plugin folders; candidate carries the verified GNU MIPS FFI" > report/identity.txt
       - name: Verify original KOReader native graphics, evdev, libc, RGB565 and startup in MIPS QEMU
         run: |
           set -euo pipefail
