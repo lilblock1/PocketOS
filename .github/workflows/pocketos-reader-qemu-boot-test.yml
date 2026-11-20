@@ -39,7 +39,7 @@ jobs:
           if [ "$need_install" -eq 1 ]; then
             timeout 540 sudo env DEBIAN_FRONTEND=noninteractive apt-get \
               -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
-              install -y --no-install-recommends qemu-user squashfs-tools binutils-mipsel-linux-gnu coreutils jq gh file
+              install -y --no-install-recommends qemu-user squashfs-tools binutils binutils-mipsel-linux-gnu coreutils jq gh file
           fi
           for cmd in qemu-mipsel unsquashfs readelf sha256sum jq gh file timeout; do command -v "$cmd"; done
       - name: Select latest successful native candidate matching current KOReader sources
