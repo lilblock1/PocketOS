@@ -113,19 +113,19 @@ jobs:
               sleep 30
               continue
             }
-            while IFS= read -r run_id head_sha; do
+            while IFS=$'\t' read -r run_id head_sha; do
               [ -n "$run_id" ] || continue
               git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
               # Keep this set aligned with the native build workflow's push paths.
               # Compare the entire KOReader tree and every build/assembly input so
               # newly added source files cannot be missed by a stale-artifact gate.
-              git diff --quiet "$head_sha" "$GITHUB_SHA" -- \\
-                .github/workflows/pocketos-koreader-mips-build.yml \\
-                .github/workflows/pocketos-koreader-mips-ffi.yml \\
-                reader/koreader/ \\
-                tools/extract-r1-system-upt.py \\
-                tools/build-r1-upt.py \\
-                tools/koreader-r1-deep-offline-test.sh \\
+              git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+                .github/workflows/pocketos-koreader-mips-build.yml \
+                .github/workflows/pocketos-koreader-mips-ffi.yml \
+                reader/koreader/ \
+                tools/extract-r1-system-upt.py \
+                tools/build-r1-upt.py \
+                tools/koreader-r1-deep-offline-test.sh \
                 apps/pack-update.py || continue
               meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
               jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
@@ -151,13 +151,13 @@ jobs:
               # Keep this set aligned with the native build workflow's push paths.
               # Compare the entire KOReader tree and every build/assembly input so
               # newly added source files cannot be missed by a stale-artifact gate.
-              git diff --quiet "$head_sha" "$GITHUB_SHA" -- \\
-                .github/workflows/pocketos-koreader-mips-build.yml \\
-                .github/workflows/pocketos-koreader-mips-ffi.yml \\
-                reader/koreader/ \\
-                tools/extract-r1-system-upt.py \\
-                tools/build-r1-upt.py \\
-                tools/koreader-r1-deep-offline-test.sh \\
+              git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+                .github/workflows/pocketos-koreader-mips-build.yml \
+                .github/workflows/pocketos-koreader-mips-ffi.yml \
+                reader/koreader/ \
+                tools/extract-r1-system-upt.py \
+                tools/build-r1-upt.py \
+                tools/koreader-r1-deep-offline-test.sh \
                 apps/pack-update.py || continue
               meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
               jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
