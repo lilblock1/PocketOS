@@ -124,8 +124,10 @@ def main():
                    if name.startswith("plugins/") and
                    len(Path(name).parts) >= 2 and
                    Path(name).parts[1].endswith(".koplugin")}
-        if len(plugins) < 20 or len(plugins) != reader.get("installed_koreader_plugin_count"):
-            p.error("Full KOReader SD plugin tree is missing or differs from report")
+        if len(plugins) < 37 or len(plugins) != reader.get("installed_koreader_plugin_count"):
+            p.error("Require all 37+ original upstream KOReader plugins; tree is missing or differs from report")
+        if any(name in sd_paths for name in ("plugins/gzreader.koplugin", "plugins/zenos.koplugin")):
+            p.error("GZreader/ZenOS plugins are forbidden in the standard KOReader firmware")
         if (read_image_file("etc/pocketos/reader-edition-source").decode().strip()
                 != reader.get("source_commit")):
             p.error("Reader commit identity differs")
