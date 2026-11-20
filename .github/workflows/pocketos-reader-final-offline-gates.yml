@@ -71,7 +71,7 @@ jobs:
           def selector_paths(text, label):
               marker = 'git diff --quiet "$head_sha" "$GITHUB_SHA" -- '
               assert marker in text, f"{label}: candidate freshness selector missing"
-              start = text.index("\n", text.index(marker)) + 1
+              start = text.index("\n", text.rindex(marker)) + 1
               end = text.index("|| continue", start)
               paths = []
               for line in text[start:end].splitlines():
