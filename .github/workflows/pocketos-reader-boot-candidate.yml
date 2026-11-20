@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/pocketos-reader-boot-candidate.yml'
       - 'tools/r1-koreader-loop-probe.sh'
+      - 'tools/pack-r1-firmware-update.py'
+      - '.github/workflows/pocketos-koreader-signed-stage.yml'
       - 'tools/koreader-r1-deep-offline-test.sh'
       - 'docs/reader-edition-first-hardware-test.md'
   workflow_dispatch:
@@ -48,6 +50,15 @@ jobs:
           grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
           grep -Fq 'TARGET=hiby-r1' "$probe"
           grep -Fq '[ "$plugins" -ge 37 ]' "$probe"
+          grep -Fq 'POCKETOS-R1-KOREADER-SD-SHA256=$actual' "$probe"
+          grep -Fq 'POCKETOS-R1-KOREADER-READONLY-SD-LOOP-OK' "$probe"
+          grep -Fq 'Require all 37+ original upstream KOReader plugins' tools/pack-r1-firmware-update.py
+          grep -Fq 'len(plugins) < 37' tools/pack-r1-firmware-update.py
+          stage=.github/workflows/pocketos-koreader-signed-stage.yml
+          grep -Fq 'actions/download-artifact@v8' "$stage"
+          grep -Fq 'installed_koreader_plugin_count>=37' "$stage"
+          grep -Fq 'POCKETOS-R1-KOREADER-SD-SHA256=$expected_sd_sha' "$stage"
+          ! grep -Eq '44460649797|44460728655|44460896960|14500046462' "$stage"
           if grep -Eq '(^|[[:space:]])(flash_erase|nandwrite|fw_setenv|reboot|dd)([[:space:]]|$)' "$probe"; then
             echo '::error::Unexpected firmware/reboot/write command in read-only probe.'
             exit 1
