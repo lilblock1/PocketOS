@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           need_install=0
-          for cmd in qemu-mipsel unsquashfs readelf mount umount sha256sum cmp stat timeout jq gh; do
+          for cmd in qemu-mipsel unsquashfs readelf mount umount findmnt sha256sum cmp stat timeout jq gh; do
             if ! command -v "$cmd" >/dev/null 2>&1; then
               need_install=1
             fi
@@ -47,7 +47,7 @@ jobs:
               -o Acquire::Retries=3 -o Acquire::http::Timeout=60 \
               install -y --no-install-recommends qemu-user squashfs-tools binutils util-linux coreutils jq gh
           fi
-          for cmd in qemu-mipsel unsquashfs readelf mount umount sha256sum cmp stat timeout jq gh; do command -v "$cmd"; done
+          for cmd in qemu-mipsel unsquashfs readelf mount umount findmnt sha256sum cmp stat timeout jq gh; do command -v "$cmd"; done
       - name: Guard candidate freshness filters against native build trigger drift
         run: |
           set -euo pipefail
@@ -195,20 +195,41 @@ jobs:
       - name: Attempt read-only SquashFS loop mount on GitHub runner (NOT an R1 test)
         if: always()
         run: |
-          set -u
+          set -euo pipefail
           mkdir -p report host-loop-mount
+          mounted=0
+          cleanup_host_mount() {
+            if [ "$mounted" -eq 1 ]; then
+              sudo umount host-loop-mount || true
+            fi
+          }
+          trap cleanup_host_mount EXIT
           if [ ! -f verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs ]; then
             echo "NOT RUN: candidate missing" | tee report/host-loop.txt
             exit 0
           fi
           if sudo mount -t squashfs -o ro,nosuid,nodev,loop,exec verified/reader-candidate/KOReader-R1-SD-RUNTIME.squashfs host-loop-mount 2>report/host-loop-error.txt; then
-            if grep -Fq ' /host-loop-mount ' /proc/mounts; then
-              echo 'GitHub runner mounted read-only image (different kernel and loop implementation)' | tee report/host-loop.txt
-            else
-              echo 'GitHub runner mounted image; verifying mountpoint' | tee report/host-loop.txt
-            fi
-            test -f host-loop-mount/reader.lua || echo 'WARNING: reader.lua missing in host loop mount' | tee -a report/host-loop.txt
+            mounted=1
+            mount_info="$(findmnt -rn -o FSTYPE,OPTIONS --target host-loop-mount)"
+            read -r fstype options <<<"$mount_info"
+            [ "$fstype" = squashfs ] || {
+              echo "FAIL: host mount has unexpected filesystem type: $fstype" | tee report/host-loop.txt
+              exit 1
+            }
+            case ",$options," in
+              *,ro,*) ;;
+              *)
+                echo "FAIL: host SquashFS mount is not confirmed read-only: $options" | tee report/host-loop.txt
+                exit 1
+                ;;
+            esac
+            test -f host-loop-mount/reader.lua || {
+              echo 'FAIL: reader.lua missing from mounted SD runtime' | tee report/host-loop.txt
+              exit 1
+            }
+            echo "PASS: host runner confirmed read-only SquashFS mount ($options); this is not an R1 kernel test" | tee report/host-loop.txt
             sudo umount host-loop-mount
+            mounted=0
           else
             echo "UNVERIFIED: GitHub runner does not permit image loop mount; this is not an R1 failure" | tee report/host-loop.txt
           fi
