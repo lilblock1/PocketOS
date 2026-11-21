@@ -57,7 +57,25 @@ jobs:
           grep -Fq 'no mounts or writes were attempted' <<<"$audit_output"
 
           # Keep the safety-critical probe contract explicit in CI.
-          grep -Fq 'noexec' "$probe"
+          # Both the audit and full probe must match the exact noexec mount option,
+          # not substrings such as noexecx and not a different mountpoint.
+          grep -Fq '$4 ~ /(^|,)noexec(,|$)/' "$probe"
+          has_sd_noexec() {
+            printf '%s\n' "$1" | awk '$2=="/mnt/sd_0" && $3=="vfat" && $4 ~ /(^|,)noexec(,|$)/ {ok=1} END{exit !ok}'
+          }
+          has_sd_noexec '/dev/mmcblk0p1 /mnt/sd_0 vfat rw,noexec,relatime 0 0'
+          if has_sd_noexec '/dev/mmcblk0p1 /mnt/sd_0 vfat rw,exec,relatime 0 0'; then
+            echo '::error::FAT32 audit accepted an exec mount.'
+            exit 1
+          fi
+          if has_sd_noexec '/dev/mmcblk0p1 /mnt/sd_0 vfat rw,noexecx,relatime 0 0'; then
+            echo '::error::FAT32 audit accepted a noexecx substring.'
+            exit 1
+          fi
+          if has_sd_noexec '/dev/mmcblk0p2 /mnt/sd_1 vfat rw,noexec,relatime 0 0'; then
+            echo '::error::FAT32 audit accepted the wrong SD mountpoint.'
+            exit 1
+          fi
           # /proc/filesystems may prefix nodev to filesystems that do not use
           # block devices; match the final filesystem field exactly.
           grep -Fq "awk '\$NF==\"squashfs\"" "$probe"
