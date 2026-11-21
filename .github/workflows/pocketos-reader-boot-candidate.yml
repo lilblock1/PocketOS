@@ -58,6 +58,15 @@ jobs:
 
           # Keep the safety-critical probe contract explicit in CI.
           grep -Fq 'noexec' "$probe"
+          # /proc/filesystems commonly marks kernel pseudo-filesystems as
+          # "nodev squashfs"; check the final field, not the whole line.
+          grep -Fq "awk '\$NF==\"squashfs\"" "$probe"
+          printf 'nodev\tsquashfs\n' | awk '$NF=="squashfs" {ok=1} END{exit !ok}'
+          printf 'squashfs\n' | awk '$NF=="squashfs" {ok=1} END{exit !ok}'
+          if printf 'nodev\tnotsquashfs\n' | awk '$NF=="squashfs" {ok=1} END{exit !ok}'; then
+            echo '::error::SquashFS support check accepted a non-matching filesystem.'
+            exit 1
+          fi
           grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
           grep -Fq 'required probe utilities missing:' "$probe"
           grep -Fq 'BusyBox mount/umount applets unavailable' "$probe"
