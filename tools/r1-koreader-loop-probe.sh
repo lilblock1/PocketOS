@@ -44,17 +44,52 @@ if [ "$1" = --audit ]; then
     audit_pass() { echo "AUDIT PASS: $*"; }
     audit_block() { echo "AUDIT BLOCKED: $*" >&2; audit_blockers=$((audit_blockers + 1)); }
 
-    [ "$(id -u)" -eq 0 ] && audit_pass 'root USB ADB' || audit_block 'root USB ADB is required'
-    [ "$(uname -r)" = 4.4.94-sonix ] && audit_pass 'expected R1 kernel' || audit_block 'kernel is not 4.4.94-sonix'
-    if grep -Fxq NAME=PocketOS /etc/pocketos-release 2>/dev/null &&
-       grep -Fxq TARGET=hiby-r1 /etc/pocketos-release 2>/dev/null; then
-        audit_pass 'independent PocketOS HiBy R1 identity'
+    if [ "$(id -u)" -eq 0 ]; then audit_pass "root USB ADB"; else audit_block "root USB ADB is required"; fi
+    if [ "$(uname -r)" = 4.4.94-sonix ]; then audit_pass "expected R1 kernel"; else audit_block "kernel is not 4.4.94-sonix"; fi
+    if grep -Fxq NAME=PocketOS /etc/pocketos-release 2>/dev/null && grep -Fxq TARGET=hiby-r1 /etc/pocketos-release 2>/dev/null; then
+        audit_pass "independent PocketOS HiBy R1 identity"
     else
-        audit_block 'expected PocketOS / hiby-r1 identity is missing'
+        audit_block "expected PocketOS / hiby-r1 identity is missing"
     fi
-    [ -c /dev/loop-control ] && [ ! -L /dev/loop-control ] &&
-        audit_pass 'loop-control device node' || audit_block 'safe /dev/loop-control node is missing'
-    grep -Eq '^[[:space:]]*7[[:space:]]+loop
+    if [ -c /dev/loop-control ] && [ ! -L /dev/loop-control ]; then audit_pass "loop-control node"; else audit_block "safe loop-control node is missing"; fi
+    if grep -q loop /proc/devices; then audit_pass "kernel loop driver"; else audit_block "kernel loop driver is not registered"; fi
+    if grep -q squashfs /proc/filesystems; then audit_pass "kernel SquashFS support"; else audit_block "kernel SquashFS support is missing"; fi
+    if awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END {exit !ok}' /proc/mounts; then audit_pass "volatile devtmpfs at /dev"; else audit_block "/dev is not mounted as devtmpfs"; fi
+    if awk '$2=="/run" && $3=="tmpfs" {ok=1} END {exit !ok}' /proc/mounts; then audit_pass "volatile tmpfs at /run"; else audit_block "/run is not mounted as tmpfs"; fi
+    if awk '$2=="/mnt/sd_0" && $3=="vfat" && $4 ~ /(^|,)noexec(,|$)/ {ok=1} END {exit !ok}' /proc/mounts; then audit_pass "FAT32 SD remains noexec"; else audit_block "SD is not mounted vfat with noexec"; fi
+    sd_dir=/mnt/sd_0/PocketOS/KOReaderRuntime
+    sd_image=$sd_dir/KOReader-R1-SD-RUNTIME.squashfs
+    if [ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] && [ -d "$sd_dir" ] && [ ! -L "$sd_dir" ] && [ -f "$sd_image" ] && [ ! -L "$sd_image" ]; then
+        audit_pass "runtime image exists at expected SD path without symlinked parents"
+    else
+        audit_block "runtime image or its SD directories are missing/unsafe"
+    fi
+    if command -v sha256sum >/dev/null 2>&1 && command -v busybox >/dev/null 2>&1 && command -v mknod >/dev/null 2>&1 && command -v find >/dev/null 2>&1; then
+        audit_pass "required probe utilities are present"
+    else
+        audit_block "one or more required probe utilities are missing"
+    fi
+    if [ "$(busybox losetup -f 2>/dev/null)" = /dev/loop0 ]; then
+        if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
+            audit_pass "loop0 is free; its node can be created temporarily in devtmpfs"
+        elif [ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] && [ "$(busybox stat -c '%t:%T' /dev/loop0 2>/dev/null)" = 7:0 ]; then
+            audit_pass "existing loop0 is the correct free block device"
+        else
+            audit_block "loop0 is free but its existing node is unsafe"
+        fi
+    else
+        audit_block "loop0 is not the next free loop device; existing loops will not be disturbed"
+    fi
+    mountpoint=/run/pocketos-koreader-readonly-probe
+    if [ ! -e "$mountpoint" ] && [ ! -L "$mountpoint" ]; then audit_pass "temporary RAM mountpoint is unoccupied"; else audit_block "temporary mountpoint already exists"; fi
+    if [ "$audit_blockers" -ne 0 ]; then
+        echo "AUDIT BLOCKED: $audit_blockers prerequisite(s) failed; no mounts or writes were attempted." >&2
+        exit 1
+    fi
+    echo "AUDIT PREFLIGHT PASS: prerequisites satisfied; filesystem, mounts, and boot image unchanged."
+    echo "This is not a recovery attestation or GUI/boot test."
+    exit 0
+fi
 expected=$1
 case "$expected" in ''|*[!0123456789abcdef]*)
     fail 'Supply a lowercase 64-character SHA256 from the verified GitHub report';;
