@@ -7,7 +7,7 @@ umask 077
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH
 if [ "$#" -eq 1 ] && [ "$1" = "--self-test" ]; then
-    echo 'PocketOS KOReader R1 read-only hardware probe v1'
+    echo 'PocketOS KOReader R1 read-only hardware probe v2'
     exit 0
 fi
 fail() { echo "BLOCKED: $*" >&2; exit 1; }
@@ -277,14 +277,17 @@ echo 'NOT TESTED: LCD graphics, actual touch input, full KOReader GUI, RAM press
     else
         audit_block 'one or more required probe utilities are missing'
     fi
-    if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
-        audit_pass 'temporary loop0 node does not already exist'
-    elif [ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] &&
-         [ "$(busybox stat -c '%t:%T' /dev/loop0 2>/dev/null)" = 7:0 ] &&
-         [ "$(busybox losetup -f 2>/dev/null)" = /dev/loop0 ]; then
-        audit_pass 'existing loop0 is the correct free block device'
+    if [ "$(busybox losetup -f 2>/dev/null)" = /dev/loop0 ]; then
+        if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then
+            audit_pass 'loop0 is free; its node can be created temporarily in devtmpfs'
+        elif [ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] &&
+             [ "$(busybox stat -c '%t:%T' /dev/loop0 2>/dev/null)" = 7:0 ]; then
+            audit_pass 'existing loop0 is the correct free block device'
+        else
+            audit_block 'loop0 is free but its existing node is unsafe; will not disturb it'
+        fi
     else
-        audit_block 'loop0 exists but is not the expected free device; will not disturb it'
+        audit_block 'loop0 is not the next free loop device; will not disturb existing loops'
     fi
     mountpoint=/run/pocketos-koreader-readonly-probe
     [ ! -e "$mountpoint" ] && [ ! -L "$mountpoint" ] &&
