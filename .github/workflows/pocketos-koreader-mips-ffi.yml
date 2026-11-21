@@ -74,6 +74,7 @@ jobs:
           #include <stdint.h>
           #include <sys/types.h>
           #include <sys/time.h>
+          #include <time.h>
           #include <sys/resource.h>
           #include <sys/stat.h>
           #include <sys/statvfs.h>
@@ -127,6 +128,52 @@ jobs:
                          "GNU MIPS timeval.tv_usec offset mismatch");
           _Static_assert(sizeof(struct timeval) == 16,
                          "GNU MIPS timeval size mismatch");
+          /* timespec keeps POSIX long tv_nsec on MIPS32 while public time_t
+           * is 64-bit. Assert the actual compiler layout used by clock_gettime. */
+          _Static_assert(sizeof(((struct timespec *)0)->tv_sec) == sizeof(time_t),
+                         "GNU MIPS timespec.tv_sec width mismatch");
+          _Static_assert(sizeof(((struct timespec *)0)->tv_nsec) == sizeof(long),
+                         "GNU MIPS timespec.tv_nsec must match long");
+          _Static_assert(offsetof(struct timespec, tv_sec) == 0,
+                         "GNU MIPS timespec.tv_sec offset mismatch");
+          _Static_assert(offsetof(struct timespec, tv_nsec) == sizeof(time_t),
+                         "GNU MIPS timespec.tv_nsec offset mismatch");
+          _Static_assert(sizeof(struct timespec) == 16,
+                         "GNU MIPS timespec size mismatch");
+          /* statvfs is exercised by the packaged FFI under QEMU. Check the
+           * compiler's field types and contiguous layout before generating
+           * declarations, rather than trusting plausible runtime values. */
+          #define ABI_FIELD_EQ(type, expression, label) \
+            _Static_assert(__builtin_types_compatible_p(__typeof__(expression), type), label " field type mismatch")
+          ABI_FIELD_EQ(unsigned long, ((struct statvfs *)0)->f_bsize, "MIPS statvfs f_bsize");
+          ABI_FIELD_EQ(unsigned long, ((struct statvfs *)0)->f_frsize, "MIPS statvfs f_frsize");
+          ABI_FIELD_EQ(fsblkcnt_t, ((struct statvfs *)0)->f_blocks, "MIPS statvfs f_blocks");
+          ABI_FIELD_EQ(fsblkcnt_t, ((struct statvfs *)0)->f_bfree, "MIPS statvfs f_bfree");
+          ABI_FIELD_EQ(fsblkcnt_t, ((struct statvfs *)0)->f_bavail, "MIPS statvfs f_bavail");
+          ABI_FIELD_EQ(fsfilcnt_t, ((struct statvfs *)0)->f_files, "MIPS statvfs f_files");
+          ABI_FIELD_EQ(fsfilcnt_t, ((struct statvfs *)0)->f_ffree, "MIPS statvfs f_ffree");
+          ABI_FIELD_EQ(fsfilcnt_t, ((struct statvfs *)0)->f_favail, "MIPS statvfs f_favail");
+          _Static_assert(offsetof(struct statvfs, f_bsize) == 0,
+                         "GNU MIPS statvfs f_bsize offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_frsize) == sizeof(unsigned long),
+                         "GNU MIPS statvfs f_frsize offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_blocks) == 2 * sizeof(unsigned long),
+                         "GNU MIPS statvfs f_blocks offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_bfree) ==
+                         offsetof(struct statvfs, f_blocks) + sizeof(fsblkcnt_t),
+                         "GNU MIPS statvfs f_bfree offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_bavail) ==
+                         offsetof(struct statvfs, f_bfree) + sizeof(fsblkcnt_t),
+                         "GNU MIPS statvfs f_bavail offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_files) ==
+                         offsetof(struct statvfs, f_bavail) + sizeof(fsblkcnt_t),
+                         "GNU MIPS statvfs f_files offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_ffree) ==
+                         offsetof(struct statvfs, f_files) + sizeof(fsfilcnt_t),
+                         "GNU MIPS statvfs f_ffree offset mismatch");
+          _Static_assert(offsetof(struct statvfs, f_favail) ==
+                         offsetof(struct statvfs, f_ffree) + sizeof(fsfilcnt_t),
+                         "GNU MIPS statvfs f_favail offset mismatch");
           C
           python3 - <<'PY'
           from pathlib import Path
