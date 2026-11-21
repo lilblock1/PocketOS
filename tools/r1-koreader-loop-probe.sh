@@ -39,6 +39,21 @@ report_environment() {
     fi
 }
 if [ "$1" = --audit ]; then
+    # Verify the tools used by both the inventory and full read-only probe
+    # before reporting environment details. This path never mounts or writes.
+    missing_tools=
+    for tool in awk cat grep sed sha256sum find wc tr mkdir rmdir rm mknod id uname busybox; do
+        command -v "$tool" >/dev/null 2>&1 || missing_tools="$missing_tools $tool"
+    done
+    if [ -n "$missing_tools" ]; then
+        echo "AUDIT BLOCKED: required probe utilities missing:$missing_tools; no mounts or writes were attempted." >&2
+        exit 1
+    fi
+    if ! busybox mount --help 2>&1 | grep -qi 'Usage:' ||
+       ! busybox umount --help 2>&1 | grep -qi 'Usage:'; then
+        echo "AUDIT BLOCKED: BusyBox mount/umount applets unavailable; no mounts or writes were attempted." >&2
+        exit 1
+    fi
     report_environment
     audit_blockers=0
     audit_pass() { echo "AUDIT PASS: $*"; }
@@ -59,7 +74,12 @@ if [ "$1" = --audit ]; then
     sd_dir=/mnt/sd_0/PocketOS/KOReaderRuntime
     sd_image=$sd_dir/KOReader-R1-SD-RUNTIME.squashfs
     if [ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] && [ -d "$sd_dir" ] && [ ! -L "$sd_dir" ] && [ -f "$sd_image" ] && [ ! -L "$sd_image" ]; then audit_pass "runtime image path"; else audit_block "runtime image or SD directories are missing/unsafe"; fi
-    if command -v sha256sum >/dev/null 2>&1 && command -v busybox >/dev/null 2>&1 && command -v mknod >/dev/null 2>&1 && command -v find >/dev/null 2>&1; then audit_pass "required probe utilities"; else audit_block "required probe utilities are missing"; fi
+    if busybox stat -c '%t:%T' /proc/self >/dev/null 2>&1 &&
+       busybox losetup -f >/dev/null 2>&1; then
+        audit_pass "BusyBox stat/losetup applets"
+    else
+        audit_block "BusyBox stat/losetup applets are missing or unusable"
+    fi
     if busybox losetup -f 2>/dev/null | grep -qx /dev/loop0; then
         if [ ! -e /dev/loop0 ] && [ ! -L /dev/loop0 ]; then audit_pass "loop0 is free";
         elif [ -b /dev/loop0 ] && [ ! -L /dev/loop0 ] && [ "$(busybox stat -c '%t:%T' /dev/loop0 2>/dev/null)" = 7:0 ]; then audit_pass "existing loop0 is correct and free";
@@ -112,7 +132,7 @@ mounted_here() { awk -v p="$mountpoint" '$2==p {ok=1} END{exit !ok}' /proc/mount
 cleanup() {
     if [ "$made_mount" -eq 1 ]; then
         if mounted_here; then
-            umount "$mountpoint" || {
+            busybox umount "$mountpoint" || {
                 echo 'WARNING: test mount could not be unmounted; inspect with ADB' >&2
                 return
             }
