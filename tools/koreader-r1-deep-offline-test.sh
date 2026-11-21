@@ -63,6 +63,12 @@ done < <(find "$K" -type f \( -name luajit -o -name '*.so' -o -name '*.so.*' \) 
 rm -f "$REPORT/tmp-header"
 if [ -s "$REPORT/elf-unresolved.txt" ]; then cat "$REPORT/elf-unresolved.txt"; fail "Unresolved native shared libraries"; fi
 echo "PASS: $count packaged ELF objects have MIPS architecture and declared libraries are present"
+input_module="$K/libs/libkoreader-input.so"
+[ -f "$input_module" ] || fail "HiBy R1 native input module missing"
+if readelf -Ws "$input_module" | awk '$7 == "UND" && $8 == "generateFakeEvent" { found = 1 } END { exit !found }'; then
+  fail "HiBy R1 input module retains unresolved platform-specific generateFakeEvent callback"
+fi
+echo "PASS: HiBy R1 input module has no unresolved platform-specific fake-event callback"
 (
   cd "$K"
   export KO_PLATFORM=hibyr1

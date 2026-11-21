@@ -90,6 +90,28 @@ def main():
     # supplies portable input_event_sec/input_event_usec aliases.
     input_path = root / "base/input/input.c"
     input_source = input_path.read_text()
+    # This port opens the real, hardware-probed evdev node. Upstream's optional
+    # fake_events path calls generateFakeEvent(), which is supplied by selected
+    # platform headers; HiBy R1 has no such provider. Fail explicitly if that
+    # path is ever requested instead of shipping an unresolved callback in the
+    # native input module.
+    define_anchor = "#define _GNU_SOURCE\n"
+    fake_anchor = '    if (!strcmp("fake_events", inputdevice)) {\n'
+    fake_end = '    } else {\n        inputfds[fd_idx] = open(inputdevice, O_RDONLY | O_NONBLOCK | O_CLOEXEC);\n'
+    if (input_source.count(define_anchor) != 1 or
+            input_source.count(fake_anchor) != 1 or
+            input_source.count(fake_end) != 1):
+        parser.error("Upstream fake-event input branch changed")
+    input_source = input_source.replace(
+        define_anchor, define_anchor + "#define POCKETOS_HIBYR1 1\n", 1)
+    input_source = input_source.replace(
+        fake_anchor,
+        fake_anchor +
+        "#if defined(POCKETOS_HIBYR1)\n"
+        "        return luaL_error(L, \"fake_events is unsupported on HiBy R1; use the probed evdev device\");\n"
+        "#else\n",
+        1)
+    input_source = input_source.replace(fake_end, "#endif\n" + fake_end, 1)
     ev_anchor = "    struct input_event ev = { 0 };\n"
     timestamp_anchor = "    gettimeofday(&ev.time, NULL);\n"
     if (input_source.count(ev_anchor) != 1 or
