@@ -19,7 +19,7 @@ permissions:
 jobs:
   verify-current-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 24
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,9 +49,9 @@ jobs:
           # This gate is triggered alongside the native build. Poll for a completed
           # candidate whose entire build-input tree matches this commit; never use
           # an older rootfs/runtime/probe just because it is the newest success.
-          for attempt in $(seq 1 24); do
+          for attempt in $(seq 1 40); do
             runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
-              echo "GitHub Actions API read failed (attempt $attempt/24); retrying."
+              echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
               sleep 30
               continue
             }
@@ -81,10 +81,10 @@ jobs:
               break
             done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
             [ "$selected" -eq 1 ] && break
-            echo "No successful native KOReader candidate matches current ABI/runtime/rootfs/probe inputs yet (attempt $attempt/24); waiting 30 seconds."
+            echo "No successful native KOReader candidate matches current ABI/runtime/rootfs/probe inputs yet (attempt $attempt/40); waiting 30 seconds."
             sleep 30
           done
-          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current build inputs after bounded wait"; exit 1; }
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current build inputs after 40 bounded attempts; exit 1; }
       - uses: actions/download-artifact@v8
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE
