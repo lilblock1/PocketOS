@@ -39,17 +39,22 @@ jobs:
           sh -n "$probe"
           test_output="$(sh "$probe" --self-test)"
           printf '%s\n' "$test_output"
-          grep -Fxq 'PocketOS KOReader R1 read-only hardware probe v1' <<<"$test_output"
+          grep -Fxq 'PocketOS KOReader R1 read-only hardware probe v2' <<<"$test_output"
 
           usage_status=0
           usage_output="$(sh "$probe" 2>&1)" || usage_status=$?
           test "$usage_status" -eq 2
           grep -Fq 'Usage: sh r1-koreader-loop-probe.sh --audit|EXPECTED_SD_IMAGE_SHA256' <<<"$usage_output"
 
-          # Exercise only the read-only inventory path on the hosted runner.
-          # This is a shell smoke test, never evidence about physical R1 hardware.
-          audit_output="$(sh "$probe" --audit)"
-          grep -Fq 'AUDIT FINISHED; filesystem and boot image unchanged.' <<<"$audit_output"
+          # On a hosted runner the R1-only prerequisites must fail closed.
+          # This checks the audit's negative path only; it is not evidence about
+          # physical hardware and must never try a mount on the CI host.
+          audit_status=0
+          audit_output="$(sh "$probe" --audit 2>&1)" || audit_status=$?
+          printf '%s\n' "$audit_output"
+          test "$audit_status" -eq 1
+          grep -Fq 'AUDIT BLOCKED:' <<<"$audit_output"
+          grep -Fq 'no mounts or writes were attempted' <<<"$audit_output"
 
           # Keep the safety-critical probe contract explicit in CI.
           grep -Fq 'noexec' "$probe"
