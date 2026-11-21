@@ -221,7 +221,37 @@ jobs:
               continue
             }
             selected=0
-            while IFS=      - uses: actions/download-artifact@v8
+            while read -r run_id head_sha; do
+              [ -n "$run_id" ] || continue
+              comparison="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/compare/$head_sha...$GITHUB_SHA" 2>/dev/null)" || continue
+              if ! jq -e '[.files[]?.filename | select(. == ".github/workflows/pocketos-koreader-mips-ffi.yml" or . == "reader/koreader/normalize-mips-posix.py")] | length == 0' <<<"$comparison" >/dev/null; then
+                continue
+              fi
+              run_meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
+              # The run list is already scoped to the FFI workflow, but verify
+              # metadata and source compatibility before accepting an artifact.
+              jq -e --arg sha "$head_sha" \
+                '.path==".github/workflows/pocketos-koreader-mips-ffi.yml" and
+                 .head_branch=="reader-edition-koreader" and .head_sha==$sha and
+                 .status=="completed" and .conclusion=="success"' \
+                <<<"$run_meta" >/dev/null || continue
+              artifacts="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
+              artifact="$(jq -c '[.artifacts[] | select(.name=="KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+              [ -n "$artifact" ] || continue
+              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+              echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+              echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+              echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+              echo "Selected fresh ABI run $run_id at $head_sha, artifact $(jq -r .id <<<"$artifact") digest $(jq -r .digest <<<"$artifact")"
+              selected=1
+              break
+            done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success") | [.id,.head_sha] | @tsv' <<<"$runs")
+            [ "$selected" -eq 1 ] && break
+            echo "No successful MIPS ABI artifact with unchanged compiler assertions/normalizer yet (attempt $attempt/24); waiting 30 seconds."
+            sleep 30
+          done
+          [ "$selected" -eq 1 ] || { echo "::error::No successful MIPS ABI artifact with unchanged compiler assertions/normalizer after bounded wait"; exit 1; }
+      - uses: actions/download-artifact@v8
         with:
           name: KOReader-R1-TRUE-MIPS-POSIX-CDEFS-RESEARCH-NOT-FIRMWARE
           run-id: ${{ steps.abi-source.outputs.run_id }}
