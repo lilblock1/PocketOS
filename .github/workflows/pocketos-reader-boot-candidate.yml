@@ -39,7 +39,7 @@ jobs:
           sh -n "$probe"
           test_output="$(sh "$probe" --self-test)"
           printf '%s\n' "$test_output"
-          grep -Fxq 'PocketOS KOReader R1 read-only hardware probe v2' <<<"$test_output"
+          grep -Fxq 'PocketOS KOReader R1 read-only hardware probe v1' <<<"$test_output"
 
           usage_status=0
           usage_output="$(sh "$probe" 2>&1)" || usage_status=$?
