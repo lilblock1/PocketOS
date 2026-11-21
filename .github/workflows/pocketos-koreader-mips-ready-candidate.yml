@@ -49,6 +49,7 @@ jobs:
           # This gate is triggered alongside the native build. Poll for a completed
           # candidate whose entire build-input tree matches this commit; never use
           # an older rootfs/runtime/probe just because it is the newest success.
+          # Hosted MIPS assembly has exceeded 12 minutes; allow a full 20-minute poll window.
           for attempt in $(seq 1 40); do
             runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
               echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
