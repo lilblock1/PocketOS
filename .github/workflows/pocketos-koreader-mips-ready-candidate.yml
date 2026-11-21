@@ -4,6 +4,14 @@ on:
     branches: [reader-edition-koreader]
     paths:
       - '.github/workflows/pocketos-koreader-mips-ready-candidate.yml'
+      - '.github/workflows/pocketos-koreader-mips-build.yml'
+      - '.github/workflows/pocketos-koreader-mips-ffi.yml'
+      - 'reader/koreader/**'
+      - 'tools/extract-r1-system-upt.py'
+      - 'tools/build-r1-upt.py'
+      - 'tools/koreader-r1-deep-offline-test.sh'
+      - 'tools/r1-koreader-loop-probe.sh'
+      - 'apps/pack-update.py'
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,12 +53,12 @@ jobs:
             git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
               .github/workflows/pocketos-koreader-mips-build.yml \
               .github/workflows/pocketos-koreader-mips-ffi.yml \
-              reader/koreader/normalize-mips-posix.py \
-              reader/koreader/prepare-upstream.py \
-              reader/koreader/overlay \
-              reader/koreader/boot/pocketos-reader-start.sh \
-              reader/koreader/r1-touch-probe.c \
-              reader/koreader/build-reader-rootfs.py || continue
+              reader/koreader/ \
+              tools/extract-r1-system-upt.py \
+              tools/build-r1-upt.py \
+              tools/koreader-r1-deep-offline-test.sh \
+              tools/r1-koreader-loop-probe.sh \
+              apps/pack-update.py || continue
             meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
             jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
             artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"

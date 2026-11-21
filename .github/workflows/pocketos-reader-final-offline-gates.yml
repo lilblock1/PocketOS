@@ -12,6 +12,8 @@ on:
       - '.github/workflows/pocketos-koreader-upt-boot-audit.yml'
       - '.github/workflows/pocketos-koreader-verified-mips-integration.yml'
       - '.github/workflows/pocketos-reader-boot-candidate.yml'
+      - '.github/workflows/pocketos-koreader-mips-ready-candidate.yml'
+      - '.github/workflows/pocketos-reader-boot-audit.yml'
       - 'reader/koreader/**'
       - 'tools/extract-r1-system-upt.py'
       - 'tools/build-r1-upt.py'
@@ -55,10 +57,17 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          build = Path(".github/workflows/pocketos-koreader-mips-build.yml").read_text()
-          gate = Path(".github/workflows/pocketos-reader-final-offline-gates.yml").read_text()
-          signed = Path(".github/workflows/pocketos-koreader-signed-stage.yml").read_text()
-          integration = Path(".github/workflows/pocketos-koreader-verified-mips-integration.yml").read_text()
+          root = Path(".github/workflows")
+          build = (root / "pocketos-koreader-mips-build.yml").read_text()
+          gate = (root / "pocketos-reader-final-offline-gates.yml").read_text()
+          signed = (root / "pocketos-koreader-signed-stage.yml").read_text()
+          integration = (root / "pocketos-koreader-verified-mips-integration.yml").read_text()
+          new_image = (root / "pocketos-koreader-new-image-qemu.yml").read_text()
+          upt = (root / "pocketos-koreader-upt-boot-audit.yml").read_text()
+          candidate = (root / "pocketos-reader-boot-candidate.yml").read_text()
+          qemu_boot = (root / "pocketos-reader-qemu-boot-test.yml").read_text()
+          ready = (root / "pocketos-koreader-mips-ready-candidate.yml").read_text()
+          boot_audit = (root / "pocketos-reader-boot-audit.yml").read_text()
 
           def trigger_paths(text, label):
               lines = text.splitlines()
@@ -77,14 +86,17 @@ jobs:
           def selector_paths(text, label):
               marker = 'git diff --quiet "$head_sha" "$GITHUB_SHA" -- '
               assert marker in text, f"{label}: candidate freshness selector missing"
-              start = text.index("\n", text.rindex(marker)) + 1
-              end = text.index("|| continue", start)
+              start = text.rindex(marker) + len(marker)
+              tail = text[start:]
+              ends = [pos for token in ("|| continue", "|| {") if (pos := tail.find(token)) >= 0]
+              assert ends, f"{label}: freshness selector has no fail-closed terminator"
+              segment = tail[:min(ends)]
               paths = []
-              for line in text[start:end].splitlines():
+              for line in segment.splitlines():
                   item = line.strip()
                   if item.endswith("\\"):
                       item = item[:-1].strip()
-                  if item:
+                  if item and not item.startswith("#"):
                       paths.append(item)
               assert paths, f"{label}: empty candidate freshness selector"
               return paths
@@ -95,21 +107,43 @@ jobs:
               return path.rstrip("/")
 
           expected = {normalize(path) for path in trigger_paths(build, "native build")}
-          integration_triggers = {
-              normalize(path) for path in trigger_paths(integration, "MIPS integration gate")
-          }
-          missing_triggers = expected - integration_triggers
-          assert not missing_triggers, (
-              "MIPS integration workflow will not run for every native build input; "
-              f"missing={sorted(missing_triggers)}"
+          automatic_gates = (
+              ("final offline gate", gate),
+              ("MIPS integration gate", integration),
+              ("new-image QEMU gate", new_image),
+              ("UPT boot-chain audit", upt),
+              ("reader candidate gate", candidate),
+              ("reader QEMU boot gate", qemu_boot),
+              ("MIPS ready-candidate gate", ready),
+              ("reader boot audit", boot_audit),
           )
-          for label, workflow in (("final offline gate", gate), ("signed-stage gate", signed), ("MIPS integration gate", integration)):
+          for label, workflow in automatic_gates:
+              actual_triggers = {normalize(path) for path in trigger_paths(workflow, label)}
+              missing = expected - actual_triggers
+              assert not missing, (
+                  f"{label} will not run for every native build input; missing={sorted(missing)}"
+              )
+
+          freshness_gates = (
+              ("final offline gate", gate),
+              ("signed-stage gate", signed),
+              ("MIPS integration gate", integration),
+              ("new-image QEMU gate", new_image),
+              ("UPT boot-chain audit", upt),
+              ("reader candidate gate", candidate),
+              ("reader QEMU boot gate", qemu_boot),
+              ("MIPS ready-candidate gate", ready),
+              ("reader boot audit", boot_audit),
+          )
+          for label, workflow in freshness_gates:
               actual = {normalize(path) for path in selector_paths(workflow, label)}
               assert actual == expected, (
                   f"{label} freshness selector drifted from native build inputs; "
                   f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
               )
-          print("PASS: final offline and signed-stage selectors cover every native build/assembly input")
+
+          print("PASS: all automatic candidate gates trigger on every native build input")
+          print("PASS: all nine candidate consumers reject stale ABI/runtime/rootfs/probe artifacts")
           PY
       - name: Select latest successful current-source native KOReader candidate
         id: candidate
