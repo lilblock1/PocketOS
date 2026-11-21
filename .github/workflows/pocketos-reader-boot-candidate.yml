@@ -60,7 +60,10 @@ jobs:
           grep -Fq 'noexec' "$probe"
           grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
           grep -Fq 'TARGET=hiby-r1' "$probe"
-          grep -Fq '^[[:space:]]*7[[:space:]]+loop
+          grep -Fq '7[[:space:]]+loop' "$probe"
+          grep -Fq 'a:ed' "$probe"
+          grep -Fq '10:237' "$probe"
+          #
           grep -Fq '[ "$plugins" -ge 37 ]' "$probe"
           grep -Fq 'POCKETOS-R1-KOREADER-SD-SHA256=$actual' "$probe"
           grep -Fq 'POCKETOS-R1-KOREADER-READONLY-SD-LOOP-OK' "$probe"
