@@ -33,8 +33,17 @@ adb devices
 adb shell id
 adb push .\r1-koreader-loop-probe.sh /tmp/r1-koreader-loop-probe.sh
 adb shell sh /tmp/r1-koreader-loop-probe.sh --audit
+if ($LASTEXITCODE -ne 0) { throw "Read-only audit blocked. Stop here; do not run the mount probe." }
+
+# Review every AUDIT PASS line and confirm a known-good recovery path is preserved.
+# Continue only after that manual review; this prompt prevents accidental chaining.
+$approval = Read-Host "If the audit is clean and recovery is preserved, type PROCEED"
+if ($approval -cne "PROCEED") { throw "Stopped before any mount test." }
+
 $hash = (Get-Content .\candidate\reader-edition-report.json -Raw | ConvertFrom-Json).sd_payload_sha256
+if ($hash -notmatch '^[0-9a-f]{64}$') { throw "Candidate report has no valid lowercase SD SHA-256." }
 adb shell sh /tmp/r1-koreader-loop-probe.sh $hash
+if ($LASTEXITCODE -ne 0) { throw "Read-only runtime probe blocked. Preserve full ADB output and stop." }
 ```
 
 The `--audit` mode collects read-only kernel, RAM, framebuffer, touchscreen
