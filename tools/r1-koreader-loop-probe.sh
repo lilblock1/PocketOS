@@ -1,6 +1,6 @@
 #!/bin/sh
 # KOReader HiBy R1 pre-install hardware gate. NO NAND, OTA, recovery or GUI writes.
-# --audit: read-only device information.
+# --audit: read-only inventory plus fail-closed prerequisite checks; no mounts/writes.
 # <SHA256>: verified SD image read-only mount + native LuaJIT smoke, with cleanup.
 set -eu
 umask 077
