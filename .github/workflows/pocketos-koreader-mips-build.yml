@@ -7,6 +7,8 @@ on:
       - 'tools/extract-r1-system-upt.py'
       - 'tools/build-r1-upt.py'
       - 'tools/koreader-r1-deep-offline-test.sh'
+      # The preflight probe is packaged alongside each candidate; changes need a matching fresh build artifact.
+      - 'tools/r1-koreader-loop-probe.sh'
       - 'apps/pack-update.py'
       - '.github/workflows/pocketos-koreader-mips-ffi.yml'
       - '.github/workflows/pocketos-koreader-mips-build.yml'
