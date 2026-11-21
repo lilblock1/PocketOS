@@ -47,7 +47,12 @@ if ($LASTEXITCODE -ne 0) { throw "Read-only runtime probe blocked. Preserve full
 ```
 
 The `--audit` mode collects read-only kernel, RAM, framebuffer, touchscreen
-names and filesystem mount information. It makes no mounts or writes.
+names and filesystem mount information, then checks the prerequisites for the
+later probe: root access, expected R1 kernel/OS identity, loop and SquashFS
+support, volatile `/dev` and `/run`, FAT32 `noexec`, the expected runtime path,
+required utilities, a free loop0, and an unused temporary mountpoint. It exits
+nonzero and prints `AUDIT BLOCKED` if any check fails. It makes no mounts or
+writes. A clean audit is still not proof of recovery, GUI, LCD, touch, or boot.
 
 The SHA256 mode checks the SD image's exact checksum, makes an optional
 temporary `/dev/loop0` node **in volatile devtmpfs** if absent, mounts the
