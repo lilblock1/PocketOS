@@ -94,6 +94,27 @@ echo "PASS: HiBy R1 input module has no unresolved platform-specific fake-event 
     end
     if errors > 0 then os.exit(10) end
     local ffi = require("ffi")
+    -- Check the *packaged compiler-generated* cdefs against the canonical
+    -- GNU MIPS integer types. The compiler workflow checks C type identity;
+    -- these runtime checks ensure the exact merged LuaJIT declarations kept
+    -- those aliases, widths, alignments, and signedness in the SD candidate.
+    local function assert_abi_alias(name, canonical)
+      local ok, value = pcall(ffi.new, name)
+      assert(ok, "Missing generated POSIX typedef " .. name .. ": " .. tostring(value))
+      assert(ffi.sizeof(name) == ffi.sizeof(canonical),
+             name .. " width differs from " .. canonical)
+      assert(ffi.alignof(name) == ffi.alignof(canonical),
+             name .. " alignment differs from " .. canonical)
+      assert(ffi.istype(canonical, value),
+             name .. " is not ABI-compatible with " .. canonical)
+      print("PASS: generated POSIX alias " .. name .. " matches " .. canonical)
+    end
+    assert_abi_alias("time_t", "int64_t")
+    assert_abi_alias("off_t", "int64_t")
+    assert_abi_alias("ino_t", "uint64_t")
+    assert_abi_alias("blkcnt_t", "int64_t")
+    assert_abi_alias("fsblkcnt_t", "uint64_t")
+    assert_abi_alias("fsfilcnt_t", "uint64_t")
     -- Check generated LuaJIT declarations against the concrete GNU MIPS32
     -- ABI, not just symbol availability or typedef spelling.
     assert(ffi.sizeof("time_t") == 8, "GNU MIPS time_t must be 64-bit")
