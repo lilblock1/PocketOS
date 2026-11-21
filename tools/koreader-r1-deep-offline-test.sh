@@ -125,7 +125,7 @@ echo "PASS: $count packaged ELF objects have MIPS architecture and declared libr
     end
     print("PASS: RGB565 primary/white pixel packing, byte order and readback")
 
-    -- Linux input_event is a kernel evdev ABI, not glibc's public timeval:
+    -- Linux input_event is a kernel evdev ABI, not the public glibc timeval:
     -- MIPS32 long remains 32-bit, so this upstream cdef must stay 16 bytes
     -- even though GNU MIPS public time_t/timeval are 64-bit.
     require("ffi/linux_input_h")
