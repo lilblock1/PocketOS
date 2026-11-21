@@ -128,6 +128,35 @@ echo "PASS: HiBy R1 input module has no unresolved platform-specific fake-event 
       assert(ok, "Missing MIPS libc symbol " .. sym .. ": " .. tostring(err))
       print("PASS: native libc symbol " .. sym)
     end
+    -- Exercise real calls with the packaged generated declarations. Merely
+    -- resolving symbols cannot detect a time32/time64 struct mismatch.
+    local tv = ffi.new("struct timeval[1]")
+    local rc = ffi.C.gettimeofday(tv, nil)
+    assert(rc == 0, "gettimeofday failed through generated GNU MIPS cdefs")
+    assert(tv[0].tv_sec > 1700000000 and tv[0].tv_sec < 4102444800,
+           "gettimeofday timeval.tv_sec looks truncated or misaligned")
+    assert(tv[0].tv_usec >= 0 and tv[0].tv_usec < 1000000,
+           "gettimeofday timeval.tv_usec outside [0, 1000000)")
+    print("PASS: gettimeofday writes the packaged 64-bit timeval layout")
+
+    local ts = ffi.new("struct timespec[1]")
+    rc = ffi.C.clock_gettime(0, ts) -- CLOCK_REALTIME
+    assert(rc == 0, "clock_gettime failed through generated GNU MIPS cdefs")
+    assert(ts[0].tv_sec > 1700000000 and ts[0].tv_sec < 4102444800,
+           "clock_gettime timespec.tv_sec looks truncated or misaligned")
+    assert(ts[0].tv_nsec >= 0 and ts[0].tv_nsec < 1000000000,
+           "clock_gettime timespec.tv_nsec outside [0, 1000000000)")
+    print("PASS: clock_gettime writes the packaged 64-bit timespec layout")
+
+    local sv = ffi.new("struct statvfs[1]")
+    rc = ffi.C.statvfs(".", sv)
+    assert(rc == 0, "statvfs failed through generated GNU MIPS cdefs")
+    assert(sv[0].f_bsize > 0 and sv[0].f_frsize > 0,
+           "statvfs block-size fields are invalid")
+    assert(sv[0].f_blocks >= sv[0].f_bfree,
+           "statvfs block counts look misaligned")
+    print("PASS: statvfs writes plausible GNU MIPS filesystem fields")
+
     local BB = require("ffi/blitbuffer")
     local bb = BB.new(24, 24, BB.TYPE_BBRGB16)
     assert(bb and bb:getWidth() == 24 and bb:getHeight() == 24, "RGB565 framebuffer allocation failed")
