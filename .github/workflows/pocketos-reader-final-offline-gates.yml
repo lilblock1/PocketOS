@@ -166,6 +166,7 @@ jobs:
           # The native build starts concurrently with this gate and can take
           # several minutes. Refresh the run list on every bounded retry so a
           # build that completes after this job starts is not missed.
+          # Keep the wait budget aligned with the ready-candidate gate (20 minutes).
           for attempt in $(seq 1 40); do
             runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
               echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
