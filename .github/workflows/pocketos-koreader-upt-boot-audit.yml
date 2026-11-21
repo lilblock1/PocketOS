@@ -64,6 +64,7 @@ jobs:
                 tools/extract-r1-system-upt.py \
                 tools/build-r1-upt.py \
                 tools/koreader-r1-deep-offline-test.sh \
+                tools/r1-koreader-loop-probe.sh \
                 apps/pack-update.py || continue
               meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
               jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
