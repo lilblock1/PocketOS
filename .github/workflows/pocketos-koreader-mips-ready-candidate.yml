@@ -84,7 +84,7 @@ jobs:
             echo "No successful native KOReader candidate matches current ABI/runtime/rootfs/probe inputs yet (attempt $attempt/40); waiting 30 seconds."
             sleep 30
           done
-          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current build inputs after 40 bounded attempts; exit 1; }
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current build inputs after 40 bounded attempts"; exit 1; }
       - uses: actions/download-artifact@v8
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE

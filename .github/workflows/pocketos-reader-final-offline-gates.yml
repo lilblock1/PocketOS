@@ -28,7 +28,7 @@ permissions:
 jobs:
   offline-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout exact reader-edition branch
         uses: actions/checkout@v7
@@ -143,9 +143,13 @@ jobs:
               )
 
           print("PASS: all automatic candidate gates trigger on every native build input")
-          for label, workflow in (("MIPS ready-candidate gate", ready), ("reader boot audit", boot_audit)):
-              assert "for attempt in $(seq 1 24)" in workflow and "sleep 30" in workflow, (
-                  f"{label} must wait for a fresh native build when triggered concurrently"
+          for label, workflow, attempts in (
+              ("final offline gate", gate, 40),
+              ("MIPS ready-candidate gate", ready, 40),
+              ("reader boot audit", boot_audit, 24),
+          ):
+              assert f"for attempt in $(seq 1 {attempts})" in workflow and "sleep 30" in workflow, (
+                  f"{label} must wait long enough for a fresh native build when triggered concurrently"
               )
 
           print("PASS: all automatic candidate gates trigger on every native build input")
@@ -162,9 +166,9 @@ jobs:
           # The native build starts concurrently with this gate and can take
           # several minutes. Refresh the run list on every bounded retry so a
           # build that completes after this job starts is not missed.
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 40); do
             runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
-              echo "GitHub Actions API read failed (attempt $attempt/30); retrying."
+              echo "GitHub Actions API read failed (attempt $attempt/40); retrying."
               sleep 30
               continue
             }
@@ -197,7 +201,7 @@ jobs:
               break
             done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
             [ "$selected" -eq 1 ] && break
-            echo "No matching successful native candidate yet (attempt $attempt/30); waiting 30 seconds."
+            echo "No matching successful native candidate yet (attempt $attempt/40); waiting 30 seconds."
             sleep 30
           done
           [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
