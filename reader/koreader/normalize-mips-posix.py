@@ -37,6 +37,10 @@ def normalize(source: str) -> str:
     if n_priority != 1:
         raise ValueError("Expected one MIPS setpriority() glibc-private enum")
     seen["__priority_which_t -> int"] = n_priority
+    missing_aliases = [name for name, count in seen.items() if count == 0]
+    if missing_aliases:
+        raise ValueError("Expected MIPS ABI aliases absent from compiler output: " +
+                         ", ".join(missing_aliases))
     updated, asm_count = ASM_SPLIT_LITERAL.subn(r'__asm__("\1")', updated)
     if '__asm__("""' in updated:
         raise ValueError("Unresolved GNU asm symbol redirection")
