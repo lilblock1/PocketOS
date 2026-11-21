@@ -67,7 +67,7 @@ if [ "$1" = --audit ]; then
         audit_pass "loop-control node major/minor 10:237"
     else audit_block "loop-control node is missing or has wrong major/minor (expected 10:237)"; fi
     if grep -Eq '^[[:space:]]*7[[:space:]]+loop$' /proc/devices; then audit_pass "kernel loop driver major 7"; else audit_block "kernel loop driver major 7 is missing"; fi
-    if grep -q squashfs /proc/filesystems; then audit_pass "kernel SquashFS support"; else audit_block "kernel SquashFS support is missing"; fi
+    if awk '$NF=="squashfs" {ok=1} END{exit !ok}' /proc/filesystems; then audit_pass "kernel SquashFS support"; else audit_block "kernel SquashFS support is missing"; fi
     if grep " /dev devtmpfs " /proc/mounts >/dev/null; then audit_pass "volatile devtmpfs at /dev"; else audit_block "/dev is not devtmpfs"; fi
     if grep " /run tmpfs " /proc/mounts >/dev/null; then audit_pass "volatile tmpfs at /run"; else audit_block "/run is not tmpfs"; fi
     if grep " /mnt/sd_0 vfat " /proc/mounts | grep -q noexec; then audit_pass "FAT32 SD remains noexec"; else audit_block "SD is not mounted vfat with noexec"; fi
@@ -105,7 +105,7 @@ grep -Fxq TARGET=hiby-r1 /etc/pocketos-release || fail 'Unexpected device'
 [ "$(busybox stat -c '%t:%T' /dev/loop-control 2>/dev/null)" = a:ed ] ||
     fail 'Loop control node major/minor incorrect (expected 10:237)'
 grep -Eq '^[[:space:]]*7[[:space:]]+loop$' /proc/devices || fail 'Loop driver missing'
-grep -Eq '^[[:space:]]*squashfs$' /proc/filesystems || fail 'SquashFS kernel support missing'
+awk '$NF=="squashfs" {ok=1} END{exit !ok}' /proc/filesystems || fail 'SquashFS kernel support missing'
 awk '$2=="/dev" && $3=="devtmpfs" {ok=1} END{exit !ok}' /proc/mounts ||
     fail '/dev must be volatile devtmpfs'
 awk '$2=="/run" && $3=="tmpfs" {ok=1} END{exit !ok}' /proc/mounts ||
