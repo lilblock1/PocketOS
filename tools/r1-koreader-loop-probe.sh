@@ -70,7 +70,7 @@ if [ "$1" = --audit ]; then
     if awk '$NF=="squashfs" {ok=1} END{exit !ok}' /proc/filesystems; then audit_pass "kernel SquashFS support"; else audit_block "kernel SquashFS support is missing"; fi
     if grep " /dev devtmpfs " /proc/mounts >/dev/null; then audit_pass "volatile devtmpfs at /dev"; else audit_block "/dev is not devtmpfs"; fi
     if grep " /run tmpfs " /proc/mounts >/dev/null; then audit_pass "volatile tmpfs at /run"; else audit_block "/run is not tmpfs"; fi
-    if grep " /mnt/sd_0 vfat " /proc/mounts | grep -q noexec; then audit_pass "FAT32 SD remains noexec"; else audit_block "SD is not mounted vfat with noexec"; fi
+    if awk '$2=="/mnt/sd_0" && $3=="vfat" && $4 ~ /(^|,)noexec(,|$)/ {ok=1} END{exit !ok}' /proc/mounts; then audit_pass "FAT32 SD remains noexec"; else audit_block "SD is not mounted vfat with exact noexec option"; fi
     sd_dir=/mnt/sd_0/PocketOS/KOReaderRuntime
     sd_image=$sd_dir/KOReader-R1-SD-RUNTIME.squashfs
     if [ -d /mnt/sd_0/PocketOS ] && [ ! -L /mnt/sd_0/PocketOS ] && [ -d "$sd_dir" ] && [ ! -L "$sd_dir" ] && [ -f "$sd_image" ] && [ ! -L "$sd_image" ]; then audit_pass "runtime image path"; else audit_block "runtime image or SD directories are missing/unsafe"; fi
