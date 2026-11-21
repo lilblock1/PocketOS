@@ -46,12 +46,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")"
           selected=0
-          while IFS='|' read -r run_id head_sha; do
-            [ -n "$run_id" ] || continue
-            git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
-            git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
+          # This gate is triggered alongside the native build. Poll for a completed
+          # candidate whose entire build-input tree matches this commit; never use
+          # an older rootfs/runtime/probe just because it is the newest success.
+          for attempt in $(seq 1 24); do
+            runs="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/workflows/pocketos-koreader-mips-build.yml/runs?branch=reader-edition-koreader&status=completed&per_page=50")" || {
+              echo "GitHub Actions API read failed (attempt $attempt/24); retrying."
+              sleep 30
+              continue
+            }
+            while IFS=$'\t' read -r run_id head_sha; do
+              [ -n "$run_id" ] || continue
+              git merge-base --is-ancestor "$head_sha" "$GITHUB_SHA" || continue
+              git diff --quiet "$head_sha" "$GITHUB_SHA" -- \
               .github/workflows/pocketos-koreader-mips-build.yml \
               .github/workflows/pocketos-koreader-mips-ffi.yml \
               reader/koreader/ \
@@ -60,20 +68,24 @@ jobs:
               tools/koreader-r1-deep-offline-test.sh \
               tools/r1-koreader-loop-probe.sh \
               apps/pack-update.py || continue
-            meta="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
-            jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
-            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")"
-            artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
-            [ -n "$artifact" ] || continue
-            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-            echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
-            echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
-            echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
-            echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
-            selected=1
-            break
-          done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | "\(.id)|\(.head_sha)"' <<<"$runs")
-          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current ABI/runtime/rootfs sources"; exit 1; }
+              meta="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")" || continue
+              jq -e --arg sha "$head_sha" '.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .head_sha==$sha and .path==".github/workflows/pocketos-koreader-mips-build.yml"' <<<"$meta" >/dev/null || continue
+              artifacts="$(timeout 45 gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts")" || continue
+              artifact="$(jq -c '[.artifacts[] | select(.name=="PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE" and .expired==false and (.digest|type=="string" and startswith("sha256:")))] | sort_by(.created_at) | last // empty' <<<"$artifacts")"
+              [ -n "$artifact" ] || continue
+              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+              echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+              echo "artifact_id=$(jq -r .id <<<"$artifact")" >> "$GITHUB_OUTPUT"
+              echo "artifact_digest=$(jq -r .digest <<<"$artifact")" >> "$GITHUB_OUTPUT"
+              echo "Selected native candidate run $run_id at $head_sha; artifact $(jq -r .id <<<"$artifact"), digest $(jq -r .digest <<<"$artifact")"
+              selected=1
+              break
+            done < <(jq -r '.workflow_runs[] | select(.status=="completed" and .conclusion=="success" and .head_branch=="reader-edition-koreader" and .path==".github/workflows/pocketos-koreader-mips-build.yml") | [.id,.head_sha] | @tsv' <<<"$runs")
+            [ "$selected" -eq 1 ] && break
+            echo "No successful native KOReader candidate matches current ABI/runtime/rootfs/probe inputs yet (attempt $attempt/24); waiting 30 seconds."
+            sleep 30
+          done
+          [ "$selected" -eq 1 ] || { echo "::error::No successful native KOReader candidate matches current build inputs after bounded wait"; exit 1; }
       - uses: actions/download-artifact@v8
         with:
           name: PocketOS-Reader-KOReader-ONLY-ROOTFS-UNSIGNED-NOT-FIRMWARE

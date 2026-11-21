@@ -143,7 +143,14 @@ jobs:
               )
 
           print("PASS: all automatic candidate gates trigger on every native build input")
+          for label, workflow in (("MIPS ready-candidate gate", ready), ("reader boot audit", boot_audit)):
+              assert "for attempt in $(seq 1 24)" in workflow and "sleep 30" in workflow, (
+                  f"{label} must wait for a fresh native build when triggered concurrently"
+              )
+
+          print("PASS: all automatic candidate gates trigger on every native build input")
           print("PASS: all nine candidate consumers reject stale ABI/runtime/rootfs/probe artifacts")
+          print("PASS: ready-candidate and boot-audit gates poll instead of racing native build assembly")
           PY
       - name: Select latest successful current-source native KOReader candidate
         id: candidate
