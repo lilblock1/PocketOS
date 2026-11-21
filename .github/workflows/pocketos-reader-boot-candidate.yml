@@ -59,6 +59,9 @@ jobs:
           # Keep the safety-critical probe contract explicit in CI.
           grep -Fq 'noexec' "$probe"
           grep -Fq 'busybox mount -t squashfs -o ro,nosuid,nodev,loop,exec' "$probe"
+          grep -Fq 'required probe utilities missing:' "$probe"
+          grep -Fq 'BusyBox mount/umount applets unavailable' "$probe"
+          grep -Fq 'busybox umount "$mountpoint"' "$probe"
           grep -Fq 'TARGET=hiby-r1' "$probe"
           grep -Fq '7[[:space:]]+loop' "$probe"
           grep -Fq 'a:ed' "$probe"
